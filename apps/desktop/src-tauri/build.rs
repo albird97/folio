@@ -8,6 +8,7 @@ fn main() {
             "read_granted_file",
             "release_file",
             "take_pending_files",
+            "save_pdf_as",
             "app_info",
         ]),
     ))

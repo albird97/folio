@@ -3,11 +3,14 @@ import { useCallback, useEffect } from 'react';
 import { useCommands } from '../hooks/use-commands';
 import { useFileDrop } from '../hooks/use-file-drop';
 import { useActiveDocument, useUi, useWorkspace, useWorkspaceContext } from '../context';
+import type { WorkspaceDocument } from '../store/workspace';
+import { DocumentViewer } from '../viewer/document-viewer';
+import { forgetDocuments } from '../viewer/resources';
 import { ErrorState, LoadingState, PasswordState } from './document-states';
+import { FindBar } from './find-bar';
 import { DropOverlay, NoticeToast } from './overlays';
-import { PagePreview } from './page-preview';
-import { PagesPanel } from './pages-panel';
 import { PropertiesPanel } from './properties-panel';
+import { Sidebar } from './sidebar';
 import { StatusBar } from './status-bar';
 import { TabStrip } from './tab-strip';
 import { WorkspaceToolbar } from './toolbar';
@@ -22,8 +25,42 @@ export interface WorkspaceChrome {
   brand?: boolean;
 }
 
-function ActiveDocument() {
+/** Returns focus to the pages after the find bar closes. */
+function focusViewer() {
+  document.querySelector<HTMLElement>('[role="region"][aria-label="Page view"]')?.focus();
+}
+
+function ReadyDocument({ doc }: { doc: WorkspaceDocument }) {
   const { workspace } = useWorkspaceContext();
+  const handle = workspace.getHandle(doc.key);
+  const model = doc.editor?.model;
+  if (!handle || !model || !doc.view) return null;
+  return (
+    <div className="flex h-full flex-col">
+      {doc.search.open ? (
+        <FindBar
+          key={doc.key}
+          doc={doc}
+          onClose={() => {
+            workspace.getState().closeSearch(doc.key);
+            focusViewer();
+          }}
+        />
+      ) : null}
+      <div className="min-h-0 flex-1">
+        <DocumentViewer
+          key={doc.key}
+          doc={doc}
+          pages={model.pages}
+          view={doc.view}
+          handle={handle}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ActiveDocument() {
   const doc = useActiveDocument();
   if (!doc) return null;
   switch (doc.status) {
@@ -33,17 +70,8 @@ function ActiveDocument() {
       return <PasswordState key={doc.key} doc={doc} />;
     case 'error':
       return <ErrorState doc={doc} />;
-    case 'ready': {
-      const handle = workspace.getHandle(doc.key);
-      const pages = doc.editor?.model.pages ?? [];
-      const index = Math.max(
-        0,
-        pages.findIndex((page) => page.id === doc.view?.currentPageId),
-      );
-      const page = pages[index];
-      if (!handle || !page) return null;
-      return <PagePreview handle={handle} page={page} position={index} pageCount={pages.length} />;
-    }
+    case 'ready':
+      return <ReadyDocument doc={doc} />;
   }
 }
 
@@ -54,6 +82,7 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
   const leftPanelOpen = useUi((state) => state.leftPanelOpen);
   const rightPanelOpen = useUi((state) => state.rightPanelOpen);
   const hasDocuments = useWorkspace((state) => state.documents.length > 0);
+  const openKeys = useWorkspace((state) => state.documents.map((doc) => doc.key).join('\n'));
   const doc = useActiveDocument();
   const dispatch = useCommands();
   const { hovering, handlers } = useFileDrop();
@@ -66,6 +95,11 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
     [adapter, workspace],
   );
 
+  // Rendered pages of closed documents are dropped from the caches.
+  useEffect(() => {
+    forgetDocuments(new Set(openKeys ? openKeys.split('\n') : []));
+  }, [openKeys]);
+
   const activeFileName = doc?.fileName ?? null;
   useEffect(() => {
     adapter.setWindowTitle(activeFileName ? `${activeFileName} — Folio` : 'Folio');
@@ -73,6 +107,7 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
 
   if (!hydrated) return <div className="h-full bg-bg" />;
 
+  const handle = doc?.status === 'ready' ? workspace.getHandle(doc.key) : null;
   return (
     <div className="folio-chrome flex h-full flex-col bg-bg text-ink" {...handlers}>
       <TabStrip
@@ -81,9 +116,17 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
         dragRegion={chrome.dragRegion}
         brand={chrome.brand}
       />
-      <WorkspaceToolbar onOpen={open} />
+      <WorkspaceToolbar onCommand={dispatch} />
       <div className="flex min-h-0 flex-1">
-        {doc?.status === 'ready' && leftPanelOpen ? <PagesPanel doc={doc} /> : null}
+        {doc && handle && doc.editor && doc.view && leftPanelOpen ? (
+          <Sidebar
+            doc={doc}
+            pages={doc.editor.model.pages}
+            view={doc.view}
+            handle={handle}
+            onFind={() => dispatch('find')}
+          />
+        ) : null}
         <main
           aria-label={doc ? doc.fileName : 'Start'}
           className="relative min-w-0 flex-1 overflow-hidden bg-canvas"

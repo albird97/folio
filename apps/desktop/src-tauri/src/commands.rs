@@ -1,7 +1,8 @@
 use crate::files::{self, FileError, FileGrants, LaunchQueue, OpenedFiles, MAX_FILE_BYTES};
+use crate::save::{self, SaveError};
 use serde::Serialize;
 use std::path::PathBuf;
-use tauri::ipc::Response;
+use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
@@ -20,6 +21,21 @@ impl From<FileError> for CommandError {
             message: error.to_string(),
         }
     }
+}
+
+impl From<SaveError> for CommandError {
+    fn from(error: SaveError) -> Self {
+        CommandError {
+            code: error.code(),
+            message: error.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SavedFile {
+    /// File name only, for display. Never the full path.
+    name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +111,50 @@ pub fn release_file(grants: State<'_, FileGrants>, token: String) -> bool {
 #[tauri::command]
 pub fn take_pending_files(queue: State<'_, LaunchQueue>) -> OpenedFiles {
     queue.drain()
+}
+
+/// "Save a copy": shows the native save dialog and writes the PDF data sent as
+/// the raw request body to the file the user chose. The proposed name comes
+/// in the `x-folio-name` header. Anything that is not PDF data is refused
+/// before a dialog appears. Resolves to `null` when the user cancels; the
+/// webview only ever learns the chosen file's name.
+#[tauri::command]
+pub async fn save_pdf_as(
+    app: AppHandle,
+    window: WebviewWindow,
+    request: Request<'_>,
+) -> Result<Option<SavedFile>, CommandError> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err(SaveError::InvalidRequest.into());
+    };
+    save::check_pdf(bytes)?;
+    let proposed = save::suggested_file_name(
+        request
+            .headers()
+            .get(save::NAME_HEADER)
+            .and_then(|value| value.to_str().ok()),
+    );
+    let (sender, receiver) = tokio::sync::oneshot::channel::<Option<PathBuf>>();
+    app.dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("Save a Copy")
+        .set_file_name(&proposed)
+        .add_filter("PDF document", &["pdf"])
+        .save_file(move |path| {
+            let _ = sender.send(path.and_then(|path| path.into_path().ok()));
+        });
+    let Some(target) = receiver.await.ok().flatten() else {
+        return Ok(None);
+    };
+    // Writing borrows the request body, so it happens on this worker thread
+    // (without blocking other tasks) instead of copying the data to another.
+    tokio::task::block_in_place(|| save::write_atomically(&target, bytes))?;
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or(proposed);
+    Ok(Some(SavedFile { name }))
 }
 
 #[tauri::command]

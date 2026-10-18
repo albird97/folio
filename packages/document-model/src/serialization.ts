@@ -200,8 +200,10 @@ const snapshot = z.object({
   }),
   view: z.object({
     currentPageId: id('page').nullable(),
-    zoomMode: z.enum(['fit-width', 'fit-page', 'custom']),
+    pageOffset: finite.min(-1).max(1),
+    zoomMode: z.enum(['auto', 'fit-width', 'fit-page', 'custom']),
     zoom: finite.positive(),
+    rotation,
   }),
 });
 

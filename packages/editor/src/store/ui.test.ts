@@ -91,6 +91,20 @@ describe('ui store', () => {
       theme: 'light',
       leftPanelOpen: false,
       rightPanelOpen: true,
+      sidebarTab: 'pages',
     });
+  });
+
+  it('opens the sidebar on a tab and remembers the tab', async () => {
+    const storage = createMemoryStorage({
+      [UI_STORAGE_KEY]: { leftPanelOpen: false, sidebarTab: 'bookmarks' },
+    });
+    const store = createUiStore(storage);
+    await settle();
+    expect(store.getState()).toMatchObject({ leftPanelOpen: false, sidebarTab: 'pages' });
+    store.getState().showSidebar('results');
+    await settle();
+    expect(store.getState()).toMatchObject({ leftPanelOpen: true, sidebarTab: 'results' });
+    expect(storage.data.get(UI_STORAGE_KEY)).toMatchObject({ sidebarTab: 'results' });
   });
 });

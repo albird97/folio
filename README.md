@@ -7,17 +7,22 @@ Folio is a local-first PDF suite for **macOS**, **Windows** and **Google Chrome*
 product: the document model, PDF engine, design system and workspace UI are shared, and each
 target adds a thin platform adapter.
 
-> **Status: Phase 1 (Foundation) complete.** Folio opens PDFs on all three targets:
+> **Status: Phase 2 (Viewer) complete.** Folio opens and reads PDFs on all three targets:
 >
 > - Ways to open: file picker, drag and drop, launch arguments and Finder events on desktop, and a
->   side-panel hand-off in Chrome.
-> - Password-protected files can be unlocked.
-> - Viewing: multiple documents in tabs, a pages list, a preview of the selected page and full
->   document properties, in light and dark themes with keyboard shortcuts.
-> - On macOS and Windows, the native file dialog, drag and drop, menus, shortcuts and file
->   association are built in CI but not yet verified on a real Mac or Windows PC.
+>   side-panel hand-off in Chrome. Password-protected files can be unlocked.
+> - A continuous, virtualized page viewer that stays fast with thousands of pages: thumbnails,
+>   bookmarks, page navigation, zoom (fit width, fit page, presets, Ctrl+wheel and pinch), view
+>   rotation, text selection and copying, and whole-document search with highlights and a
+>   results list.
+> - **Save a copy** writes the original file to a new location (a save dialog on desktop, a
+>   download in Chrome). Folio never modifies the files you open.
+> - Multiple documents in tabs, document properties, light and dark themes, keyboard shortcuts.
+> - On macOS and Windows, the native file and save dialogs, drag and drop, menus, shortcuts,
+>   pinch zoom and file association are built in CI but not yet verified on a real Mac or
+>   Windows PC.
 >
-> Viewing tools, editing, saving and the advanced tools follow in later phases. See
+> Editing, saving changes and the advanced tools follow in later phases. See
 > [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the roadmap and
 > [PLATFORM_CAPABILITIES.md](PLATFORM_CAPABILITIES.md) for the support matrix.
 
@@ -31,10 +36,10 @@ the extension has no access to the websites you visit.
 | `apps/desktop`               | Tauri 2 app: React UI (`src/`), Rust commands, menus and packaging (`src-tauri/`) |
 | `apps/chrome-extension`      | Manifest V3 extension: popup, side panel, editor page, options, service worker    |
 | `packages/document-model`    | Document types, IDs, operations, undo/redo history, recovery snapshots            |
-| `packages/pdf-core`          | PDF.js engine wrapper, error classification, bundled PDF.js assets                |
+| `packages/pdf-core`          | PDF.js engine wrapper: loading, rendering, text, outlines, bundled PDF.js assets  |
 | `packages/platform-adapters` | Platform adapter contract, web/memory adapters, capability matrix                 |
 | `packages/shared-ui`         | Design tokens, Tailwind theme, accessible primitives, brand mark                  |
-| `packages/editor`            | The shared workspace (tabs, toolbar, panels, canvas) and its stores               |
+| `packages/editor`            | The shared workspace: tabs, toolbar, viewer, sidebar, search, and its stores      |
 | `tests/`                     | PDF fixtures, Playwright suites, the native desktop WebDriver test                |
 | `brand/`                     | Original Folio artwork (SVG sources and the 1024px app icon)                      |
 
@@ -85,17 +90,31 @@ Installers appear under `target/release/bundle/` (or `target/universal-apple-dar
    them on the command line (`target/release/folio-desktop file.pdf`). Nothing is dropped
    silently: files that are not PDFs are reported, and a file that was moved or deleted before
    Folio could open it gets an error tab.
+3. Scroll through the pages, or use the sidebar (thumbnails, bookmarks and search results), the
+   page number field and the zoom menu in the toolbar.
 
 **Shortcuts:**
 
-| Action                   | macOS        | Windows / Linux           |
-| ------------------------ | ------------ | ------------------------- |
-| Open                     | ⌘O           | Ctrl+O                    |
-| Close document           | ⌘W           | Ctrl+W                    |
-| Close window             | ⇧⌘W          | —                         |
-| Next / previous document | ⌃Tab / ⌃⇧Tab | Ctrl+Tab / Ctrl+Shift+Tab |
-| Pages panel              | ⌘⌥1          | Ctrl+Alt+1                |
-| Properties panel         | ⌘⌥2          | Ctrl+Alt+2                |
+| Action                   | macOS               | Windows / Linux                       |
+| ------------------------ | ------------------- | ------------------------------------- |
+| Open                     | ⌘O                  | Ctrl+O                                |
+| Save a copy              | ⇧⌘S                 | Ctrl+Shift+S                          |
+| Close document           | ⌘W                  | Ctrl+W                                |
+| Close window             | ⇧⌘W                 | —                                     |
+| Next / previous document | ⌃Tab / ⌃⇧Tab        | Ctrl+Tab / Ctrl+Shift+Tab             |
+| Sidebar                  | ⌘⌥1                 | Ctrl+Alt+1                            |
+| Properties panel         | ⌘⌥2                 | Ctrl+Alt+2                            |
+| Zoom in / out            | ⌘= / ⌘-             | Ctrl+= / Ctrl+-                       |
+| Actual size              | ⌘0                  | Ctrl+0                                |
+| Rotate view right / left | ⌘R / ⌘L             | Ctrl+R / Ctrl+L                       |
+| Go to page               | ⌘⌥G                 | Ctrl+Alt+G                            |
+| Find                     | ⌘F                  | Ctrl+F                                |
+| Find next / previous     | ⌘G / ⇧⌘G (F3 / ⇧F3) | Ctrl+G / Ctrl+Shift+G (F3 / Shift+F3) |
+
+In the page view, arrow keys, Page Up/Down and Space scroll, ← and → turn pages when the page
+fits the window's width, and Home/End go to the first and last page. Ctrl+wheel and trackpad or
+touch pinches zoom around the pointer. Fit width and Fit page are in
+the zoom menu and the **View** menu. Rotation only changes the view; the file is not modified.
 
 The macOS menus are Folio, File, Edit, View and Window. ⌘W closes the current document, so
 **Window → Close Window** uses ⇧⌘W. Windows and Linux have File, Edit, View and
@@ -103,8 +122,11 @@ Help (**Help → About Folio**). Switching the theme has no shortcut: use the to
 **View → Switch Theme**. Letter shortcuts follow your keyboard layout (AZERTY included), and
 AltGr combinations never trigger shortcuts.
 
-Folio never writes to the files you open in Phase 1. The webview can never read a file you did not
-choose: files are reachable only through tokens issued by the Rust layer.
+Folio never modifies the files you open. **File → Save a Copy…** writes the opened file,
+unchanged, to a new file you choose in the native save dialog: the Rust layer accepts only PDF
+data and writes it through a temporary file, so an interrupted save never leaves a half-written
+file. The webview never sees paths: files are reachable only through tokens issued by the Rust
+layer, and the save command returns only the chosen file's name.
 
 ## Installing and testing the Chrome extension
 
@@ -120,13 +142,21 @@ In development, click the reload icon on `chrome://extensions` after each rebuil
 shortcuts avoid keys Chrome reserves. Shortcuts without Ctrl/⌘ (Alt+W, Alt+PageDown/PageUp) are
 ignored while you type in a field:
 
-| Action                   | Shortcut                  |
-| ------------------------ | ------------------------- |
-| Open                     | Ctrl/⌘+O                  |
-| Close document           | Alt+W                     |
-| Next / previous document | Alt+PageDown / Alt+PageUp |
-| Pages panel              | Ctrl/⌘+Alt+1              |
-| Properties panel         | Ctrl/⌘+Alt+2              |
+| Action                   | Shortcut                           |
+| ------------------------ | ---------------------------------- |
+| Open                     | Ctrl/⌘+O                           |
+| Download a copy          | Ctrl/⌘+Shift+S                     |
+| Close document           | Alt+W                              |
+| Next / previous document | Alt+PageDown / Alt+PageUp          |
+| Sidebar                  | Ctrl/⌘+Alt+1                       |
+| Properties panel         | Ctrl/⌘+Alt+2                       |
+| Zoom in / out, actual    | Ctrl/⌘+= / Ctrl/⌘+- / Ctrl/⌘+0     |
+| Go to page               | Ctrl/⌘+Alt+G                       |
+| Find, next, previous     | Ctrl/⌘+F, Ctrl/⌘+G or F3, Shift+F3 |
+
+Folio's find bar replaces Chrome's in the editor (Chrome's would only see the pages on screen).
+Rotation uses the toolbar buttons: Chrome keeps Ctrl+R and Ctrl+L. **Download a copy** saves the
+original file through Chrome's downloads, which needs no extra permission.
 
 The extension requests only `storage` and `sidePanel`. Features that read PDFs from web pages
 (Phase 5) will ask for access when first used.
@@ -213,5 +243,6 @@ Folio's own code and artwork are original. Bundled third-party components:
 
 - PDF.js (Apache-2.0), including its OpenJPEG, JBIG2 and QCMS WASM decoders. Their license files
   ship in `pdfjs/wasm/`. PDF.js scripting is not used, so its QuickJS engine (`quickjs-eval.*`)
-  is not shipped.
+  is not shipped. The text layer styles in `packages/editor/src/viewer/viewer.css` are adapted
+  from PDF.js' viewer stylesheet (Apache-2.0).
 - React and Zustand (MIT), Radix UI (MIT), Lucide (ISC), Inter (OFL-1.1) and Tauri (MIT/Apache-2.0).

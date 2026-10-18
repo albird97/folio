@@ -8,6 +8,7 @@ export const TAURI_FEATURES: RuntimeFeatures = {
   fileAssociations: true,
   nativeMenus: true,
   saveInPlace: false,
+  saveCopy: true,
   printing: false,
   clipboardWrite: true,
   browserTabIntegration: false,

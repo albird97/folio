@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts",
+    "./testing": "./src/testing.ts",
     "./vite-plugin": "./vite/plugin.ts"
   },
   "scripts": {

@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
 import {
   chooseFiles,
   dropFiles,
   expectAccessible,
+  fixture,
   FIXTURE_PASSWORD,
   pageRendered,
 } from '../helpers';
@@ -29,26 +31,51 @@ test.describe('extension editor', () => {
     const properties = page.getByRole('complementary', { name: 'Properties' });
     await expect(properties).toContainText('Folio Test Suite');
     await expect(properties).toContainText('1.7');
-    await expect(
-      page.getByRole('complementary', { name: 'Pages' }).getByRole('button'),
-    ).toHaveCount(3);
+    await expect(page.getByRole('list', { name: 'Pages' }).getByRole('button')).toHaveCount(3);
     await expectAccessible(page, 'editor with document');
     await page.emulateMedia({ colorScheme: 'dark' });
     await expectAccessible(page, 'editor with document (dark)');
   });
 
-  test('navigates pages from the pages panel with the keyboard', async ({ page }) => {
+  test('navigates pages from the thumbnails with the keyboard', async ({ page }) => {
     await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
       'basic-3-pages.pdf',
     ]);
     await pageRendered(page);
-    const pages = page.getByRole('complementary', { name: 'Pages' });
-    await pages.getByRole('button', { name: /Page 3/ }).click();
-    await expect(page.getByRole('img', { name: 'Page 3 of 3' })).toBeVisible();
+    const pages = page.getByRole('list', { name: 'Pages' });
+    const pageField = page.getByRole('textbox', { name: /^Page number/ });
+    await pages.getByRole('button', { name: 'Page 3' }).click();
+    await expect(pageField).toHaveValue('3');
+    await expect(pages.getByRole('button', { name: 'Page 3' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     await page.keyboard.press('ArrowUp');
-    await expect(page.getByRole('img', { name: 'Page 2 of 3' })).toBeVisible();
-    await expect(pages.getByRole('button', { name: /Page 2/ })).toBeFocused();
+    await expect(pageField).toHaveValue('2');
+    await expect(pages.getByRole('button', { name: 'Page 2' })).toBeFocused();
+    await pageRendered(page, 2);
+  });
+
+  test('searches, selects text and downloads an exact copy', async ({ page }) => {
+    await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
+      'outline-and-text.pdf',
+    ]);
     await pageRendered(page);
+    // Chrome's own find bar would only search the visible text layer.
+    await page.keyboard.press('ControlOrMeta+F');
+    const find = page.getByRole('search', { name: 'Find in document' });
+    await find.getByRole('searchbox').fill('fox');
+    await expect(find.getByRole('status')).toHaveText('8 results');
+    await expect(page.locator('[data-page="1"] .folio-hit[data-active]')).toHaveCount(1);
+    await expect(page.locator('[data-page="1"] .textLayer span').first()).toBeAttached();
+
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download a copy' }).click();
+    const file = await download;
+    expect(file.suggestedFilename()).toBe('outline-and-text.pdf');
+    expect(readFileSync((await file.path())!)).toEqual(
+      readFileSync(fixture('outline-and-text.pdf')),
+    );
   });
 
   test('unlocks password-protected PDFs', async ({ page }) => {
@@ -114,7 +141,7 @@ test.describe('extension editor', () => {
       'page',
     );
     await page.keyboard.press('ControlOrMeta+Alt+1');
-    await expect(page.getByRole('complementary', { name: 'Pages' })).toBeHidden();
+    await expect(page.getByRole('complementary', { name: 'Sidebar' })).toBeHidden();
     await page.keyboard.press('ControlOrMeta+Alt+2');
     await expect(page.getByRole('complementary', { name: 'Properties' })).toBeHidden();
     await page.keyboard.press('Alt+W');

@@ -48,18 +48,31 @@ a note below the table.
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Render pages | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 2 | E2E in Chromium (extension, desktop UI) and in WebKitGTK through the real desktop binary (tauri-driver). |
-| Page thumbnails and navigation | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 2 | E2E. |
-| Text search | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 2 | — |
-| Zoom, fit-to-page and view rotation | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 2 | — |
-| Text selection and copying | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 2 | — |
+| Render pages (continuous, virtualized scrolling) | ✅ Full † | ✅ Full † | ✅ Full † | — | E2E in Chromium (extension, desktop UI) including a 1,500-page budget for time to first page, mounted pages and memory; WebKitGTK through the real desktop binary (tauri-driver). |
+| Page thumbnails and page navigation | ✅ Full † | ✅ Full † | ✅ Full † | — | E2E (Chromium) including keyboard navigation. |
+| Bookmarks (document outline) | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests for destination resolution; DOM tests for the tree; e2e (Chromium). |
+| Text search | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests for matching; e2e accuracy checks on fixtures (Chromium); highlighting in WebKitGTK (tauri-driver). |
+| Zoom, fit width/page and view rotation | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | E2E in Chromium for the toolbar, keyboard, Ctrl+wheel and synthetic pinch events, including the anchor point. WebKit gesture events and the desktop menus have not been exercised. |
+| Text selection and copying | ✅ Full † | ✅ Full † | ✅ Full † | — | E2E (Chromium) selects with the mouse and reads the clipboard; text layer placement in WebKitGTK (tauri-driver). |
 
-- **Render pages (macOS):** Single-page preview of the selected page. The continuous, virtualized viewer arrives in Phase 2.
-- **Render pages (Windows):** Single-page preview of the selected page. The continuous, virtualized viewer arrives in Phase 2.
-- **Render pages (Chrome):** Single-page preview of the selected page. The continuous, virtualized viewer arrives in Phase 2.
-- **Page thumbnails and navigation (macOS):** The Pages panel lists every page with its size and rotation; no thumbnails yet.
-- **Page thumbnails and navigation (Windows):** The Pages panel lists every page with its size and rotation; no thumbnails yet.
-- **Page thumbnails and navigation (Chrome):** The Pages panel lists every page with its size and rotation; no thumbnails yet.
+- **Render pages (continuous, virtualized scrolling) (macOS):** Only pages near the window are kept; renders are queued by distance and cached within a memory budget. Documents with thousands of pages open at the first page while the remaining page sizes are read in the background.
+- **Render pages (continuous, virtualized scrolling) (Windows):** Only pages near the window are kept; renders are queued by distance and cached within a memory budget. Documents with thousands of pages open at the first page while the remaining page sizes are read in the background.
+- **Render pages (continuous, virtualized scrolling) (Chrome):** Only pages near the window are kept; renders are queued by distance and cached within a memory budget. Documents with thousands of pages open at the first page while the remaining page sizes are read in the background.
+- **Page thumbnails and page navigation (macOS):** Virtualized thumbnails, page number field, previous/next page and keyboard navigation (arrow keys, Page Up/Down, Home/End).
+- **Page thumbnails and page navigation (Windows):** Virtualized thumbnails, page number field, previous/next page and keyboard navigation (arrow keys, Page Up/Down, Home/End).
+- **Page thumbnails and page navigation (Chrome):** Virtualized thumbnails, page number field, previous/next page and keyboard navigation (arrow keys, Page Up/Down, Home/End).
+- **Bookmarks (document outline) (macOS):** Explicit and named destinations, as an accessible tree. Bookmarks that link to websites are listed but not opened.
+- **Bookmarks (document outline) (Windows):** Explicit and named destinations, as an accessible tree. Bookmarks that link to websites are listed but not opened.
+- **Bookmarks (document outline) (Chrome):** Explicit and named destinations, as an accessible tree. Bookmarks that link to websites are listed but not opened.
+- **Text search (macOS):** Whole-document search with highlights, a results list, match case and whole words; ignores accents and finds words drawn in separate pieces. Scanned pages without a text layer cannot be searched until OCR arrives (Phase 6).
+- **Text search (Windows):** Whole-document search with highlights, a results list, match case and whole words; ignores accents and finds words drawn in separate pieces. Scanned pages without a text layer cannot be searched until OCR arrives (Phase 6).
+- **Text search (Chrome):** Whole-document search with highlights, a results list, match case and whole words; ignores accents and finds words drawn in separate pieces. Scanned pages without a text layer cannot be searched until OCR arrives (Phase 6).
+- **Zoom, fit width/page and view rotation (macOS):** Toolbar, menu and keyboard zoom and rotation; trackpad pinch through WebKit gesture events. Implemented and built in CI, but not yet verified on a real Mac.
+- **Zoom, fit width/page and view rotation (Windows):** Toolbar, menu and keyboard zoom and rotation; Ctrl+wheel and touchpad pinch. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Zoom, fit width/page and view rotation (Chrome):** Toolbar, menu and keyboard zoom, Ctrl+wheel and trackpad pinch (kept to the document, not the browser page), view rotation. Rotation is for viewing only.
+- **Text selection and copying (macOS):** Selectable text layer over each page.
+- **Text selection and copying (Windows):** Selectable text layer over each page.
+- **Text selection and copying (Chrome):** Selectable text layer over each page.
 
 ## Editing
 
@@ -93,13 +106,16 @@ a note below the table.
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
 | Save and Save As | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported † | 4 | — |
-| Export PDF | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 2 | — |
+| Save a copy of the original PDF | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Extension and desktop UI: e2e compares the SHA-256 of the saved file with the original. Desktop: Rust unit tests for validation, file names and atomic writes; tauri-driver checks that non-PDF data is refused. The native dialog cannot be automated. |
 | Export pages as images | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
 | Extract text | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
 | Print | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 4 | — |
 | Save the current webpage as PDF | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported | 5 | — |
 
 - **Save and Save As (Chrome):** Will download a copy; extensions cannot write back to the original file.
+- **Save a copy of the original PDF (macOS):** Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path. Implemented and built in CI, but not yet verified on a real Mac.
+- **Save a copy of the original PDF (Windows):** Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Save a copy of the original PDF (Chrome):** Downloaded through Chrome’s downloads; needs no extra permission.
 - **Save the current webpage as PDF (macOS):** Not applicable.
 - **Save the current webpage as PDF (Windows):** Not applicable.
 
@@ -122,23 +138,23 @@ a note below the table.
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
 | Native menus | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for command forwarding on Linux, macOS and Windows CI runners. No test builds or uses the menus. |
-| Keyboard shortcuts | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | Key matching: unit tests. Browser key set: extension and desktop UI e2e. Desktop key set and menu accelerators: no e2e yet. |
+| Keyboard shortcuts | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | Key matching: unit tests. Browser key set: extension e2e. Desktop key set: desktop UI e2e in Chromium. Menu accelerators: Rust unit tests only. |
 | Light, dark and system themes | ✅ Full | ✅ Full | ✅ Full | — | E2E (including axe checks in both themes). |
-| Clipboard | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | E2E. |
+| Clipboard | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | E2E (Chromium) reads the clipboard after copying. |
 | Autosave and crash recovery | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 4 | Serialization unit tests. |
 | Automatic updates | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 7 | — |
 | Installers | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | CI release builds on macOS and Windows runners (see README). |
 | Send documents between the extension and the desktop app | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
 
-- **Native menus (macOS):** Folio (app), File, Edit, View and Window menus. Implemented and built in CI, but not yet verified on a real Mac.
-- **Native menus (Windows):** File, Edit, View and Help menus in the window menu bar. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Native menus (macOS):** Folio (app), File, Edit, View and Window menus, with Save a Copy, Find and the zoom, rotation and Go to Page commands. Implemented and built in CI, but not yet verified on a real Mac.
+- **Native menus (Windows):** File, Edit, View and Help menus in the window menu bar, with the same commands. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Native menus (Chrome):** Not applicable.
-- **Keyboard shortcuts (macOS):** Open, close document, next/previous document, Pages panel and Properties panel, plus Close Window. Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Mac.
-- **Keyboard shortcuts (Windows):** Open, close document, next/previous document, Pages panel and Properties panel. Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Windows PC.
-- **Keyboard shortcuts (Chrome):** Open, close document, next/previous document, Pages panel and Properties panel. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab. Switching the theme has no shortcut.
-- **Clipboard (macOS):** Copying document property values. Page content copying arrives with text selection.
-- **Clipboard (Windows):** Copying document property values. Page content copying arrives with text selection.
-- **Clipboard (Chrome):** Copying document property values. Page content copying arrives with text selection.
+- **Keyboard shortcuts (macOS):** Open, Save a copy, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, rotate (⌘R/⌘L) and Close Window. Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Mac.
+- **Keyboard shortcuts (Windows):** Open, Save a copy, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, rotate (Ctrl+R/Ctrl+L). Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Keyboard shortcuts (Chrome):** Open, Save a copy, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab; rotation has no shortcut because Chrome keeps Ctrl+R and Ctrl+L. Switching the theme has no shortcut.
+- **Clipboard (macOS):** Document property values and selected page text. Implemented and built in CI, but not yet verified on a real Mac.
+- **Clipboard (Windows):** Document property values and selected page text. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Clipboard (Chrome):** Document property values and selected page text.
 - **Autosave and crash recovery (macOS):** The validated recovery snapshot format exists in the shared core.
 - **Autosave and crash recovery (Windows):** The validated recovery snapshot format exists in the shared core.
 - **Autosave and crash recovery (Chrome):** The validated recovery snapshot format exists in the shared core.

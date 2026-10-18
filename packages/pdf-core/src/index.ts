@@ -4,3 +4,6 @@ export * from './sniff';
 export * from './hash';
 export * from './metadata';
 export * from './descriptor';
+export * from './outline';
+export * from './page-info';
+export * from './text';

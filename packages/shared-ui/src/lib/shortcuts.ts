@@ -2,10 +2,13 @@ export type ShortcutPlatform = 'macos' | 'other';
 
 /**
  * Shortcut notation: "Mod+O", "Mod+Shift+]", "Ctrl+Tab". `Mod` is ⌘ on macOS
- * and Ctrl elsewhere.
+ * and Ctrl elsewhere. The plus key is written "Plus" ("Mod+Plus").
  */
+const KEY_NAMES: Record<string, string> = { Plus: '+' };
+
 export function formatShortcut(shortcut: string, platform: ShortcutPlatform): string[] {
-  return shortcut.split('+').map((part) => {
+  return shortcut.split('+').map((token) => {
+    const part = KEY_NAMES[token] ?? token;
     if (platform === 'macos') {
       switch (part) {
         case 'Mod':
@@ -45,6 +48,16 @@ export function usesCommandModifier(shortcut: string): boolean {
   return modifiers.includes('Mod') || modifiers.includes('Ctrl');
 }
 
+/**
+ * Whether a shortcut may run while a text field has focus: Ctrl/⌘ shortcuts
+ * and function keys (F3 is "find next" in text fields too) never type text.
+ */
+export function worksInTextFields(shortcut: string): boolean {
+  return (
+    usesCommandModifier(shortcut) || /^F([1-9]|1[0-9]|2[0-4])$/.test(shortcut.split('+').at(-1)!)
+  );
+}
+
 /** Matches a keyboard event against shortcut notation. */
 export function matchesShortcut(
   event: KeyLike,
@@ -55,7 +68,7 @@ export function matchesShortcut(
   // reports it as Ctrl+Alt, which would otherwise look like Mod+Alt.
   if (event.getModifierState?.('AltGraph')) return false;
   const parts = shortcut.split('+');
-  const key = parts.at(-1)!;
+  const key = KEY_NAMES[parts.at(-1)!] ?? parts.at(-1)!;
   const wants = new Set(parts.slice(0, -1));
   const mod = platform === 'macos' ? event.metaKey : event.ctrlKey;
   const ctrlRequired = wants.has('Ctrl') || (wants.has('Mod') && platform !== 'macos');

@@ -3,7 +3,6 @@ import {
   type DocumentMetadata,
   type EncryptionState,
   type Rotation,
-  type Size,
 } from '@folio/document-model';
 import {
   GlobalWorkerOptions,
@@ -14,14 +13,25 @@ import {
   PasswordResponses,
   PermissionFlag,
   RenderingCancelledException,
+  TextLayer,
   VerbosityLevel,
   getDocument,
   type PDFDocumentLoadingTask,
   type PDFDocumentProxy,
+  type PDFPageProxy,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PdfError } from './errors';
 import { normalizeMetadata, type PdfJsInfo, type XmpLike } from './metadata';
+import { resolveOutline, type OutlineItem, type RawOutlineNode } from './outline';
+import {
+  estimatePageInfo,
+  pageInfoFrom,
+  samePageInfo,
+  type PageInfoUpdate,
+  type PdfPageInfo,
+} from './page-info';
 import { sniffPdf } from './sniff';
+import { pageTextFrom, type PageText, type TextContentLike } from './text';
 
 /**
  * Folio uses PDF.js' *legacy* build on every target. The modern build calls
@@ -52,22 +62,18 @@ export interface PdfPermissions {
   assemble: boolean;
 }
 
-export interface PdfPageInfo {
-  /**
-   * Unrotated crop-box size in points, with /UserUnit applied: the size that
-   * `renderPage` draws at scale 1.
-   */
-  size: Size;
-  rotation: Rotation;
-  /** Points per user-space unit (/UserUnit, usually 1). */
-  userUnit: number;
-}
-
 export interface PdfDocumentInfo {
   pageCount: number;
   pdfVersion: string | null;
   metadata: DocumentMetadata;
+  /**
+   * One entry per page. Large documents open before every page has been
+   * read: entries from `exactPageCount` on are estimates, and the exact values
+   * arrive through `PdfDocumentHandle.onPageInfo`.
+   */
   pages: PdfPageInfo[];
+  /** How many leading entries of `pages` were read exactly before opening. */
+  exactPageCount: number;
   encryption: EncryptionState;
   /** Null when the document is not encrypted (everything allowed). */
   permissions: PdfPermissions | null;
@@ -84,6 +90,8 @@ export interface RenderOptions {
   devicePixelRatio?: number;
   /** Largest canvas area to allocate, in device pixels. */
   maxCanvasPixels?: number;
+  /** Set the canvas' CSS size to the page size (default). Off when a layout sizes it. */
+  styleCanvas?: boolean;
 }
 
 export interface RenderJob {
@@ -92,9 +100,52 @@ export interface RenderJob {
   cancel(): void;
 }
 
+export interface ViewOptions {
+  /** CSS pixels per PDF point. */
+  scale: number;
+  /** User rotation added on top of the page's own /Rotate. */
+  rotation?: Rotation;
+}
+
+/** Maps PDF user space to CSS pixels inside the (rotated) page box. */
+export interface PageViewportInfo {
+  width: number;
+  height: number;
+  transform: number[];
+}
+
+export interface TextLayerResult {
+  /** One element per text run of `getPageText(pageIndex).items`, in order. */
+  textDivs: readonly HTMLElement[];
+}
+
+export interface TextLayerJob {
+  /** Resolves to null when the job was cancelled. */
+  promise: Promise<TextLayerResult | null>;
+  cancel(): void;
+}
+
 export interface PdfDocumentHandle {
   readonly info: PdfDocumentInfo;
+  /** True once every entry of `info.pages` has been read exactly. */
+  readonly pagesComplete: boolean;
+  /** Resolves when exact info for every page has been delivered. */
+  readonly pagesReady: Promise<void>;
+  /**
+   * Exact page info for pages whose entry in `info.pages` was an estimate, as
+   * they are read (in the background or on demand). A new listener first
+   * receives every correction made before it subscribed.
+   */
+  onPageInfo(listener: (updates: readonly PageInfoUpdate[]) => void): () => void;
   renderPage(pageIndex: number, canvas: HTMLCanvasElement, options: RenderOptions): RenderJob;
+  /** Text runs of a page, extracted in the PDF.js worker. */
+  getPageText(pageIndex: number): Promise<PageText>;
+  /** Renders selectable, invisible text over a page for copy and search highlights. */
+  renderTextLayer(pageIndex: number, container: HTMLElement, options: ViewOptions): TextLayerJob;
+  getViewport(pageIndex: number, options: ViewOptions): Promise<PageViewportInfo>;
+  getOutline(): Promise<OutlineItem[]>;
+  /** Frees cached rendering resources of a page that is no longer on screen. */
+  releasePage(pageIndex: number): void;
   destroy(): Promise<void>;
 }
 
@@ -109,6 +160,9 @@ export interface PdfEngine {
 
 const DEFAULT_MAX_CANVAS_PIXELS = 4096 * 4096;
 const PAGE_INFO_BATCH = 32;
+/** Pages read before a document opens; the rest stream in afterwards. */
+export const EAGER_PAGE_COUNT = 64;
+const TEXT_CACHE_SIZE = 24;
 
 /**
  * Maps the raw /P bits that PDF.js reports. The high-quality print bit (12)
@@ -126,36 +180,24 @@ export function permissionsFrom(flags: ReadonlySet<number> | null): PdfPermissio
   };
 }
 
-async function readPageInfo(document: PDFDocumentProxy): Promise<PdfPageInfo[]> {
-  const pages: PdfPageInfo[] = new Array(document.numPages);
-  for (let start = 0; start < document.numPages; start += PAGE_INFO_BATCH) {
-    const end = Math.min(document.numPages, start + PAGE_INFO_BATCH);
-    const batch = [];
-    for (let index = start; index < end; index += 1) {
-      batch.push(
-        document.getPage(index + 1).then((page) => {
-          const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = page.view;
-          // Viewports are scaled by /UserUnit (large-format pages; PDF.js
-          // defaults it to 1), so sizes must be as well.
-          const unit = page.userUnit;
-          let rotation: Rotation = 0;
-          try {
-            rotation = normalizeRotation(page.rotate);
-          } catch {
-            rotation = 0;
-          }
-          pages[index] = {
-            size: { width: Math.abs(x2 - x1) * unit, height: Math.abs(y2 - y1) * unit },
-            rotation,
-            userUnit: unit,
-          };
-        }),
-      );
+async function readPageRange(
+  document: PDFDocumentProxy,
+  start: number,
+  end: number,
+): Promise<PdfPageInfo[]> {
+  const pages: PdfPageInfo[] = [];
+  for (let from = start; from < end; from += PAGE_INFO_BATCH) {
+    const to = Math.min(end, from + PAGE_INFO_BATCH);
+    const batch: Array<Promise<PdfPageInfo>> = [];
+    for (let index = from; index < to; index += 1) {
+      batch.push(document.getPage(index + 1).then(pageInfoFrom));
     }
-    await Promise.all(batch);
+    pages.push(...(await Promise.all(batch)));
   }
   return pages;
 }
+
+const yieldToRenders = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 function classify(error: unknown, usedPassword: boolean): PdfError {
   if (error instanceof PdfError) return error;
@@ -174,6 +216,15 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
   #task: PDFDocumentLoadingTask;
   #document: PDFDocumentProxy;
   #destroyed = false;
+  #pages: PdfPageInfo[];
+  #exact: boolean[];
+  #remaining: number;
+  #listeners = new Set<(updates: readonly PageInfoUpdate[]) => void>();
+  #textCache = new Map<number, Promise<TextContentLike>>();
+  /** Pages PDF.js has loaded (and may hold rendering resources for). */
+  #loaded = new Set<number>();
+  #resolvePagesReady!: () => void;
+  readonly pagesReady: Promise<void>;
 
   constructor(
     task: PDFDocumentLoadingTask,
@@ -182,6 +233,84 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
   ) {
     this.#task = task;
     this.#document = document;
+    this.#pages = [...info.pages];
+    this.#exact = info.pages.map((_, index) => index < info.exactPageCount);
+    this.#remaining = info.pageCount - info.exactPageCount;
+    this.pagesReady = new Promise((resolve) => {
+      this.#resolvePagesReady = resolve;
+    });
+    if (this.#remaining === 0) this.#resolvePagesReady();
+    else void this.#readRemainingPages(info.exactPageCount);
+  }
+
+  get pagesComplete(): boolean {
+    return this.#remaining === 0;
+  }
+
+  onPageInfo(listener: (updates: readonly PageInfoUpdate[]) => void): () => void {
+    this.#listeners.add(listener);
+    // Pages are read in the background from the moment the document opens,
+    // so corrections made before this listener subscribed are replayed.
+    const earlier: PageInfoUpdate[] = [];
+    this.#pages.forEach((info, index) => {
+      if (info !== this.info.pages[index]) earlier.push({ index, info });
+    });
+    if (earlier.length > 0) listener(earlier);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  #record(pages: ReadonlyArray<{ index: number; info: PdfPageInfo }>): void {
+    const updates: PageInfoUpdate[] = [];
+    for (const { index, info } of pages) {
+      if (this.#exact[index]) continue;
+      this.#exact[index] = true;
+      this.#remaining -= 1;
+      // Only report pages whose estimate was wrong; the others already match.
+      if (!samePageInfo(this.#pages[index]!, info)) {
+        this.#pages[index] = info;
+        updates.push({ index, info });
+      }
+    }
+    if (updates.length > 0) for (const listener of this.#listeners) listener(updates);
+    if (this.#remaining === 0) this.#resolvePagesReady();
+  }
+
+  async #readRemainingPages(from: number): Promise<void> {
+    for (let start = from; start < this.info.pageCount; start += PAGE_INFO_BATCH * 4) {
+      if (this.#destroyed) return;
+      await yieldToRenders();
+      const end = Math.min(this.info.pageCount, start + PAGE_INFO_BATCH * 4);
+      try {
+        const infos = await readPageRange(this.#document, start, end);
+        this.#record(infos.map((info, offset) => ({ index: start + offset, info })));
+      } catch {
+        // A page that cannot be read keeps its estimate; rendering reports the error.
+        for (let index = start; index < end; index += 1) {
+          if (!this.#exact[index]) {
+            this.#exact[index] = true;
+            this.#remaining -= 1;
+          }
+        }
+        if (this.#remaining === 0) this.#resolvePagesReady();
+      }
+    }
+  }
+
+  async #getPage(pageIndex: number): Promise<PDFPageProxy> {
+    if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= this.info.pageCount) {
+      throw new RangeError(`Page ${pageIndex} does not exist.`);
+    }
+    const page = await this.#document.getPage(pageIndex + 1);
+    this.#loaded.add(pageIndex);
+    if (!this.#exact[pageIndex]) this.#record([{ index: pageIndex, info: pageInfoFrom(page) }]);
+    return page;
+  }
+
+  #viewport(page: PDFPageProxy, options: ViewOptions) {
+    const rotation = normalizeRotation(page.rotate + (options.rotation ?? 0));
+    return page.getViewport({ scale: options.scale, rotation });
   }
 
   renderPage(pageIndex: number, canvas: HTMLCanvasElement, options: RenderOptions): RenderJob {
@@ -189,19 +318,20 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
     let cancelTask: (() => void) | null = null;
     const promise = (async () => {
       if (this.#destroyed) return false;
-      const page = await this.#document.getPage(pageIndex + 1);
-      if (cancelled) return false;
-      const rotation = normalizeRotation(page.rotate + (options.rotation ?? 0));
-      const cssViewport = page.getViewport({ scale: options.scale, rotation });
+      const page = await this.#getPage(pageIndex);
+      if (cancelled || this.#destroyed) return false;
+      const cssViewport = this.#viewport(page, options);
       const maxPixels = options.maxCanvasPixels ?? DEFAULT_MAX_CANVAS_PIXELS;
       let ratio = options.devicePixelRatio ?? 1;
       const area = cssViewport.width * cssViewport.height * ratio * ratio;
       if (area > maxPixels) ratio = Math.sqrt(maxPixels / (cssViewport.width * cssViewport.height));
-      const viewport = page.getViewport({ scale: options.scale * ratio, rotation });
+      const viewport = this.#viewport(page, { ...options, scale: options.scale * ratio });
       canvas.width = Math.max(1, Math.floor(viewport.width));
       canvas.height = Math.max(1, Math.floor(viewport.height));
-      canvas.style.width = `${Math.floor(cssViewport.width)}px`;
-      canvas.style.height = `${Math.floor(cssViewport.height)}px`;
+      if (options.styleCanvas !== false) {
+        canvas.style.width = `${Math.floor(cssViewport.width)}px`;
+        canvas.style.height = `${Math.floor(cssViewport.height)}px`;
+      }
       const task = page.render({ canvas, viewport });
       cancelTask = () => task.cancel();
       try {
@@ -221,9 +351,94 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
     };
   }
 
+  #textContent(pageIndex: number): Promise<TextContentLike> {
+    const cached = this.#textCache.get(pageIndex);
+    if (cached) {
+      // Refresh its position in the LRU order.
+      this.#textCache.delete(pageIndex);
+      this.#textCache.set(pageIndex, cached);
+      return cached;
+    }
+    const content = this.#getPage(pageIndex).then(
+      (page) => page.getTextContent({ includeMarkedContent: false }) as Promise<TextContentLike>,
+    );
+    content.catch(() => this.#textCache.delete(pageIndex));
+    this.#textCache.set(pageIndex, content);
+    if (this.#textCache.size > TEXT_CACHE_SIZE) {
+      this.#textCache.delete(this.#textCache.keys().next().value!);
+    }
+    return content;
+  }
+
+  async getPageText(pageIndex: number): Promise<PageText> {
+    return pageTextFrom(await this.#textContent(pageIndex));
+  }
+
+  renderTextLayer(pageIndex: number, container: HTMLElement, options: ViewOptions): TextLayerJob {
+    let cancelled = false;
+    let layer: TextLayer | null = null;
+    const promise = (async (): Promise<TextLayerResult | null> => {
+      const [page, content] = await Promise.all([
+        this.#getPage(pageIndex),
+        this.#textContent(pageIndex),
+      ]);
+      if (cancelled || this.#destroyed) return null;
+      container.replaceChildren();
+      layer = new TextLayer({
+        textContentSource: content as never,
+        container,
+        viewport: this.#viewport(page, options),
+      });
+      try {
+        await layer.render();
+      } catch (error) {
+        if (cancelled) return null;
+        throw error;
+      }
+      if (cancelled) return null;
+      // Lets a selection drag past the last line without jumping (as PDF.js' viewer does).
+      const end = container.ownerDocument.createElement('div');
+      end.className = 'endOfContent';
+      container.append(end);
+      return { textDivs: layer.textDivs };
+    })();
+    return {
+      promise,
+      cancel: () => {
+        cancelled = true;
+        layer?.cancel();
+      },
+    };
+  }
+
+  async getViewport(pageIndex: number, options: ViewOptions): Promise<PageViewportInfo> {
+    const viewport = this.#viewport(await this.#getPage(pageIndex), options);
+    return { width: viewport.width, height: viewport.height, transform: [...viewport.transform] };
+  }
+
+  async getOutline(): Promise<OutlineItem[]> {
+    const outline = (await this.#document.getOutline()) as RawOutlineNode[] | null;
+    return resolveOutline(outline, {
+      pageCount: this.info.pageCount,
+      getDestination: (name) => this.#document.getDestination(name),
+      getPageIndex: (ref) => this.#document.getPageIndex(ref as never),
+    });
+  }
+
+  releasePage(pageIndex: number): void {
+    if (this.#destroyed || !this.#loaded.has(pageIndex)) return;
+    // getPage resolves from PDF.js' cache; cleanup() is a no-op while rendering.
+    void this.#document
+      .getPage(pageIndex + 1)
+      .then((page) => page.cleanup())
+      .catch(() => undefined);
+  }
+
   async destroy(): Promise<void> {
     if (this.#destroyed) return;
     this.#destroyed = true;
+    this.#listeners.clear();
+    this.#textCache.clear();
     await this.#task.destroy();
   }
 }
@@ -270,11 +485,17 @@ export function createPdfEngine(config: PdfEngineConfig): PdfEngine {
         throw classify(error, usedPassword);
       }
       try {
-        const [{ info, metadata }, permissions, pages] = await Promise.all([
+        const exactPageCount = Math.min(document.numPages, EAGER_PAGE_COUNT);
+        const [{ info, metadata }, permissions, eager] = await Promise.all([
           document.getMetadata(),
           document.getPermissions(),
-          readPageInfo(document),
+          readPageRange(document, 0, exactPageCount),
         ]);
+        const estimate = estimatePageInfo(eager);
+        const pages = [
+          ...eager,
+          ...Array.from({ length: document.numPages - exactPageCount }, () => estimate),
+        ];
         const pdfInfo = info as PdfJsInfo;
         const encrypted = typeof pdfInfo.EncryptFilterName === 'string';
         const encryption: EncryptionState = !encrypted
@@ -292,6 +513,7 @@ export function createPdfEngine(config: PdfEngineConfig): PdfEngine {
             PDFDateString.toDateObject(value),
           ),
           pages,
+          exactPageCount,
           encryption,
           permissions: encrypted ? permissionsFrom(permissions) : null,
           isLinearized: pdfInfo.IsLinearized === true,

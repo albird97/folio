@@ -4,9 +4,12 @@
   "private": true,
   "description": "The shared Folio workspace: document state, tabs, panels and canvas used by the desktop app and the extension editor.",
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "*.css"
+  ],
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./viewer.css": "./src/viewer/viewer.css"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

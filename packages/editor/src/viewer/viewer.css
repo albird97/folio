@@ -1,0 +1,112 @@
+/*
+ * Page text layer. The rules for `.textLayer` are adapted from PDF.js
+ * (web/pdf_viewer.css, Copyright Mozilla Foundation, Apache-2.0): PDF.js lays
+ * out the invisible text runs and relies on these rules and on the
+ * --scale-factor/--user-unit variables set on the page element.
+ */
+.folio-page {
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  direction: ltr;
+}
+
+.folio-page .textLayer {
+  color-scheme: only light;
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.folio-page .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.folio-page .textLayer > :not(.markedContent),
+.folio-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.folio-page .textLayer .markedContent {
+  display: contents;
+}
+
+.folio-page .textLayer ::selection {
+  background: oklch(0.6 0.12 210 / 0.32);
+  color: transparent;
+}
+
+.folio-page .textLayer br::selection {
+  background: transparent;
+}
+
+.folio-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.folio-page .textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+.folio-page [data-main-rotation='90'] {
+  transform: rotate(90deg) translateY(-100%);
+}
+.folio-page [data-main-rotation='180'] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+.folio-page [data-main-rotation='270'] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+/* Search hits sit over white pages in both themes. */
+.folio-page .folio-hit {
+  position: absolute;
+  border-radius: 2px;
+  background: oklch(0.86 0.16 88 / 0.5);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.folio-page .folio-hit[data-active] {
+  background: oklch(0.72 0.19 52 / 0.55);
+  box-shadow: 0 0 0 2px oklch(0.62 0.2 45 / 0.9);
+}
+
+@media (forced-colors: active) {
+  .folio-page .folio-hit {
+    background: Highlight;
+    mix-blend-mode: normal;
+    opacity: 0.4;
+  }
+}

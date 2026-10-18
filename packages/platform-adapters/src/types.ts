@@ -20,12 +20,59 @@ export interface IncomingFile {
 /** Commands that a native menu or the keyboard can trigger. */
 export type AppCommand =
   | 'open'
+  | 'save-copy'
   | 'close-tab'
   | 'next-tab'
   | 'previous-tab'
   | 'toggle-left-panel'
   | 'toggle-right-panel'
-  | 'cycle-theme';
+  | 'cycle-theme'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'zoom-actual-size'
+  | 'zoom-fit-width'
+  | 'zoom-fit-page'
+  | 'rotate-clockwise'
+  | 'rotate-counterclockwise'
+  | 'go-to-page'
+  | 'find'
+  | 'find-next'
+  | 'find-previous';
+
+export const APP_COMMANDS: readonly AppCommand[] = [
+  'open',
+  'save-copy',
+  'close-tab',
+  'next-tab',
+  'previous-tab',
+  'toggle-left-panel',
+  'toggle-right-panel',
+  'cycle-theme',
+  'zoom-in',
+  'zoom-out',
+  'zoom-actual-size',
+  'zoom-fit-width',
+  'zoom-fit-page',
+  'rotate-clockwise',
+  'rotate-counterclockwise',
+  'go-to-page',
+  'find',
+  'find-next',
+  'find-previous',
+];
+
+export interface SaveFileRequest {
+  /** File name to propose, e.g. "Report.pdf". */
+  suggestedName: string;
+  bytes: Uint8Array;
+}
+
+export type SaveFileResult =
+  /** Written where the user chose in a save dialog. */
+  | { status: 'saved'; name: string }
+  /** Handed to the browser's downloads. */
+  | { status: 'downloaded'; name: string }
+  | { status: 'cancelled' };
 
 export interface KeyValueStorage {
   get<T>(key: string): Promise<T | undefined>;
@@ -48,6 +95,8 @@ export interface RuntimeFeatures {
   fileAssociations: boolean;
   nativeMenus: boolean;
   saveInPlace: boolean;
+  /** Writing a new file: a save dialog on desktop, a download in browsers. */
+  saveCopy: boolean;
   printing: boolean;
   clipboardWrite: boolean;
   browserTabIntegration: boolean;
@@ -69,4 +118,6 @@ export interface PlatformAdapter {
   onNativeDragHover(listener: (hovering: boolean) => void): Unsubscribe;
   writeClipboardText(text: string): Promise<void>;
   setWindowTitle(title: string): void;
+  /** Saves a new PDF file (never overwrites the open document without the user choosing it). */
+  saveFileAs(request: SaveFileRequest): Promise<SaveFileResult>;
 }

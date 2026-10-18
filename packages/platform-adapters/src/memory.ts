@@ -41,6 +41,7 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
   const hover = new Channel<boolean>();
   const picks: IncomingFile[][] = [];
   const clipboard: string[] = [];
+  const saved: Array<{ name: string; bytes: Uint8Array }> = [];
   const titles: string[] = [];
   const adapter: PlatformAdapter = {
     platform: 'web',
@@ -57,11 +58,16 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
     setWindowTitle: (title) => {
       titles.push(title);
     },
+    saveFileAs: async ({ suggestedName, bytes }) => {
+      saved.push({ name: suggestedName, bytes: bytes.slice() });
+      return { status: 'saved', name: suggestedName };
+    },
   };
   return {
     adapter,
     clipboard,
     titles,
+    saved,
     queuePick: (files: IncomingFile[]) => picks.push(files),
     deliver: (files: IncomingFile[]) => incoming.emit(files),
     command: (command: AppCommand) => commands.emit(command),

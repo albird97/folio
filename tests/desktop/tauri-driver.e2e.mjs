@@ -110,6 +110,62 @@ try {
     assert.ok(inked > 200, `expected rendered text, found ${inked} dark pixels`);
   });
 
+  await test('lays out selectable text over the page in WebKit', async () => {
+    const text = await waitFor(`
+      const spans = [...document.querySelectorAll('[data-page="1"] .textLayer span')];
+      return spans.length > 0 && spans.map((span) => span.textContent).join(' ');
+    `);
+    assert.match(text, /The quick brown fox jumps over the lazy dog\./);
+    // The invisible text sits over the drawn text: the span is inside the page box.
+    const inside = await run(`
+      const page = document.querySelector('[data-page="1"]').getBoundingClientRect();
+      const span = [...document.querySelectorAll('[data-page="1"] .textLayer span')]
+        .find((s) => s.textContent.includes('quick brown fox')).getBoundingClientRect();
+      return span.width > 50 && span.left > page.left && span.right < page.right &&
+        span.top > page.top && span.bottom < page.bottom;
+    `);
+    assert.equal(inside, true);
+  });
+
+  await test('finds and highlights text in WebKit', async () => {
+    await run(`document.querySelector('button[aria-label="Find"]').click()`);
+    await waitFor(`return document.activeElement?.id === 'folio-find-input'`);
+    await run(`
+      const input = document.getElementById('folio-find-input');
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setValue.call(input, 'lazy dog');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    `);
+    const status = await waitFor(
+      `return document.querySelector('[role="search"] [role="status"]')?.textContent || null`,
+    );
+    assert.equal(status, '3 results');
+    await waitFor(
+      `return document.querySelectorAll('[data-page="1"] .folio-hit[data-active]').length === 1`,
+    );
+    await run(`
+      const input = document.getElementById('folio-find-input');
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    `);
+    await waitFor(`return document.querySelector('[role="search"]') === null`);
+  });
+
+  await test('"Save a copy" refuses anything but PDF data before showing a dialog', async () => {
+    const notPdf = await runAsync(`
+      const done = arguments[arguments.length - 1];
+      window.__TAURI_INTERNALS__.invoke('save_pdf_as', new Uint8Array([35, 33, 47, 98, 105, 110]), {
+        headers: { 'x-folio-name': 'evil.sh' },
+      }).then(() => done('resolved'), (e) => done(e));
+    `);
+    assert.equal(notPdf.code, 'not-pdf');
+    const notRaw = await runAsync(`
+      const done = arguments[arguments.length - 1];
+      window.__TAURI_INTERNALS__.invoke('save_pdf_as', { path: '/tmp/evil.pdf' })
+        .then(() => done('resolved'), (e) => done(e));
+    `);
+    assert.equal(notRaw.code, 'invalid-request');
+  });
+
   await test('the content security policy blocks nothing Folio needs', async () => {
     const violations = await run('return window.__folioCspViolations');
     assert.deepEqual(violations, []);

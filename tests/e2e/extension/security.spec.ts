@@ -1,3 +1,4 @@
+import { pageRendered } from '../helpers';
 import { expect, test } from './fixtures';
 
 test.describe('extension security', () => {
@@ -80,10 +81,7 @@ test.describe('extension security', () => {
     const chooser = page.waitForEvent('filechooser');
     await page.getByRole('button', { name: /Choose PDF/ }).click();
     await (await chooser).setFiles(`${import.meta.dirname}/../../fixtures/basic-3-pages.pdf`);
-    await expect(page.locator('[data-testid="page-canvas"]')).toHaveAttribute(
-      'data-render-state',
-      'done',
-    );
+    await pageRendered(page);
     expect(external).toEqual([]);
   });
 });

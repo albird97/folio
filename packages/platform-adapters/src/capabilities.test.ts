@@ -62,6 +62,9 @@ describe('capability matrix', () => {
       'open-file-association',
       'native-menus',
       'shortcuts',
+      'zoom-rotate-view',
+      'export-pdf',
+      'clipboard',
     ];
     for (const id of untested) {
       const entry = capability(id);

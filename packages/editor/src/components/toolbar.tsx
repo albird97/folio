@@ -7,11 +7,24 @@ import {
   nextThemePreference,
   type ThemePreference,
 } from '@folio/shared-ui';
-import { FolderOpen, Monitor, Moon, PanelLeft, PanelRight, Sun } from 'lucide-react';
+import {
+  FileDown,
+  FolderOpen,
+  Monitor,
+  Moon,
+  PanelLeft,
+  PanelRight,
+  RotateCcw,
+  RotateCw,
+  Search,
+  Sun,
+} from 'lucide-react';
 import { Toolbar as ToolbarPrimitive } from 'radix-ui';
+import type { AppCommand } from '@folio/platform-adapters';
 import { COMMAND_SHORTCUTS } from '../commands';
 import { useActiveDocument, useUi, useWorkspaceContext } from '../context';
 import { formatBytes } from '../format';
+import { PageControls, ZoomControls } from './viewer-controls';
 
 const THEME_META: Record<ThemePreference, { label: string; Icon: typeof Sun }> = {
   system: { label: 'Theme: match system', Icon: Monitor },
@@ -19,8 +32,10 @@ const THEME_META: Record<ThemePreference, { label: string; Icon: typeof Sun }> =
   dark: { label: 'Theme: dark', Icon: Moon },
 };
 
-export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
-  const { profile, shortcutPlatform } = useWorkspaceContext();
+const Separator = () => <ToolbarPrimitive.Separator className="mx-1 h-5 w-px bg-line" />;
+
+export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand): void }) {
+  const { adapter, profile, shortcutPlatform } = useWorkspaceContext();
   const doc = useActiveDocument();
   const leftPanelOpen = useUi((state) => state.leftPanelOpen);
   const rightPanelOpen = useUi((state) => state.rightPanelOpen);
@@ -29,10 +44,17 @@ export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
   const theme = useUi((state) => state.theme);
   const setTheme = useUi((state) => state.setTheme);
   const shortcuts = COMMAND_SHORTCUTS[profile];
-  const ready = doc?.status === 'ready';
+  const shortcut = (command: AppCommand) => {
+    const keys = shortcuts[command][0];
+    return keys ? { keys, platform: shortcutPlatform } : undefined;
+  };
+  const ready = doc?.status === 'ready' && doc.editor !== null && doc.view !== null;
+  const pages = ready ? doc.editor!.model.pages : null;
+  const view = ready ? doc.view : null;
   const source = doc?.editor ? primarySource(doc.editor.model) : null;
   const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];
   const nextTheme = THEME_META[nextThemePreference(theme)].label.replace('Theme: ', '');
+  const saveLabel = adapter.platform === 'desktop' ? 'Save a copy…' : 'Download a copy';
 
   return (
     <ToolbarPrimitive.Root
@@ -42,35 +64,46 @@ export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
       {/* Panel toggles keep a fixed name; `pressed` says whether the panel is shown. */}
       <ToolbarPrimitive.Button asChild>
         <IconButton
-          label="Pages panel"
+          label="Sidebar"
           icon={<PanelLeft size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
           pressed={ready && leftPanelOpen}
           disabled={!ready}
           onClick={toggleLeftPanel}
-          shortcut={{ keys: shortcuts['toggle-left-panel'][0]!, platform: shortcutPlatform }}
+          shortcut={shortcut('toggle-left-panel')}
         />
       </ToolbarPrimitive.Button>
-      <ToolbarPrimitive.Separator className="mx-1 h-5 w-px bg-line" />
+      <Separator />
       <ToolbarPrimitive.Button asChild>
-        <Button variant="ghost" onClick={onOpen}>
+        <Button variant="ghost" onClick={() => onCommand('open')}>
           <FolderOpen size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
           Open
           <Kbd
             shortcut={shortcuts.open[0]!}
             platform={shortcutPlatform}
-            className="ml-1 text-ink-subtle"
+            className="ml-1 hidden text-ink-subtle xl:inline-flex"
           />
         </Button>
       </ToolbarPrimitive.Button>
+      {adapter.features.saveCopy ? (
+        <ToolbarPrimitive.Button asChild>
+          <IconButton
+            label={saveLabel}
+            icon={<FileDown size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+            disabled={!ready}
+            onClick={() => onCommand('save-copy')}
+            shortcut={shortcut('save-copy')}
+          />
+        </ToolbarPrimitive.Button>
+      ) : null}
 
-      <div className="mx-3 flex min-w-0 flex-1 items-baseline gap-2">
+      <div className="mx-2 flex min-w-0 flex-1 items-baseline gap-2">
         {doc ? (
           <>
             <h1 className="truncate text-sm font-semibold" title={doc.fileName}>
               {doc.editor?.model.metadata.title || doc.fileName}
             </h1>
             {source ? (
-              <span className="shrink-0 text-xs text-ink-muted tabular">
+              <span className="hidden shrink-0 text-xs text-ink-muted tabular 2xl:inline">
                 {source.pageCount} {source.pageCount === 1 ? 'page' : 'pages'} ·{' '}
                 {formatBytes(source.byteLength)}
               </span>
@@ -78,6 +111,41 @@ export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
           </>
         ) : null}
       </div>
+
+      {ready && pages && view ? (
+        <>
+          <PageControls docKey={doc.key} pages={pages} view={view} />
+          <Separator />
+          <ZoomControls docKey={doc.key} view={view} />
+          <Separator />
+          <ToolbarPrimitive.Button asChild>
+            <IconButton
+              label="Rotate counterclockwise"
+              icon={<RotateCcw size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+              onClick={() => onCommand('rotate-counterclockwise')}
+              shortcut={shortcut('rotate-counterclockwise')}
+            />
+          </ToolbarPrimitive.Button>
+          <ToolbarPrimitive.Button asChild>
+            <IconButton
+              label="Rotate clockwise"
+              icon={<RotateCw size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+              onClick={() => onCommand('rotate-clockwise')}
+              shortcut={shortcut('rotate-clockwise')}
+            />
+          </ToolbarPrimitive.Button>
+          <Separator />
+          <ToolbarPrimitive.Button asChild>
+            <IconButton
+              label="Find"
+              icon={<Search size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+              pressed={doc.search.open}
+              onClick={() => onCommand('find')}
+              shortcut={shortcut('find')}
+            />
+          </ToolbarPrimitive.Button>
+        </>
+      ) : null}
 
       <ToolbarPrimitive.Button asChild>
         <IconButton
@@ -93,7 +161,7 @@ export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
           pressed={doc !== null && rightPanelOpen}
           disabled={doc === null}
           onClick={toggleRightPanel}
-          shortcut={{ keys: shortcuts['toggle-right-panel'][0]!, platform: shortcutPlatform }}
+          shortcut={shortcut('toggle-right-panel')}
         />
       </ToolbarPrimitive.Button>
     </ToolbarPrimitive.Root>

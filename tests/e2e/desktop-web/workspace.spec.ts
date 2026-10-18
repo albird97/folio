@@ -37,8 +37,10 @@ test.describe('desktop workspace (web adapter)', () => {
     await expect(page.getByRole('toolbar').getByRole('heading')).toHaveText(
       'Folio Rotation Fixture',
     );
-    await expect(page.getByRole('complementary', { name: 'Pages' })).toContainText('90°');
     await pageRendered(page);
+    // Page 2 is stored with /Rotate 90, so it is shown in landscape.
+    const rotatedPage = await page.locator('[data-page="2"]').boundingBox();
+    expect(rotatedPage!.width).toBeGreaterThan(rotatedPage!.height);
     await expect(page).toHaveTitle('rotated-pages.pdf — Folio');
     await tabs.getByRole('button', { name: 'Close rotated-pages.pdf' }).click();
     await expect(tabs.getByRole('button', { name: /^basic-3-pages\.pdf/ })).toHaveAttribute(
@@ -53,14 +55,14 @@ test.describe('desktop workspace (web adapter)', () => {
       'basic-3-pages.pdf',
     ]);
     await pageRendered(page);
-    const pagesToggle = page.getByRole('button', { name: 'Pages panel', exact: true });
+    const pagesToggle = page.getByRole('button', { name: 'Sidebar', exact: true });
     const propertiesToggle = page.getByRole('button', { name: 'Properties panel', exact: true });
     await expect(pagesToggle).toHaveAttribute('aria-pressed', 'true');
     await pagesToggle.click();
-    await expect(page.getByRole('complementary', { name: 'Pages' })).toBeHidden();
+    await expect(page.getByRole('complementary', { name: 'Sidebar' })).toBeHidden();
     await expect(pagesToggle).toHaveAttribute('aria-pressed', 'false');
     await page.keyboard.press('Control+Alt+1');
-    await expect(page.getByRole('complementary', { name: 'Pages' })).toBeVisible();
+    await expect(page.getByRole('complementary', { name: 'Sidebar' })).toBeVisible();
     await expect(pagesToggle).toHaveAttribute('aria-pressed', 'true');
     await page.keyboard.press('Control+Alt+2');
     await expect(page.getByRole('complementary', { name: 'Properties' })).toBeHidden();
@@ -104,15 +106,15 @@ test.describe('desktop workspace (web adapter)', () => {
     await expect(page.getByText('Drop PDFs to open them')).toBeHidden();
   });
 
-  test('renders whichever page is selected in the pages panel', async ({ page }) => {
+  test('shows whichever page is selected in the thumbnails', async ({ page }) => {
     await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
       'basic-3-pages.pdf',
     ]);
-    const pages = page.getByRole('complementary', { name: 'Pages' });
-    for (const label of ['Page 2', 'Page 3', 'Page 1']) {
-      await pages.getByRole('button', { name: new RegExp(label) }).click();
-      await pageRendered(page);
+    const pages = page.getByRole('list', { name: 'Pages' });
+    for (const number of [2, 3, 1]) {
+      await pages.getByRole('button', { name: `Page ${number}` }).click();
+      await pageRendered(page, number);
+      await expect(page.getByRole('contentinfo')).toContainText(`Page ${number} of 3 · PDF 1.7`);
     }
-    await expect(page.getByRole('contentinfo')).toContainText('Page 1 of 3 · PDF 1.7');
   });
 });

@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import '@folio/shared-ui/theme.css';
+@import '@folio/editor/viewer.css';
 
 @source '../../../packages/shared-ui/src';
 @source '../../../packages/editor/src';

@@ -55,7 +55,8 @@ const REAL_MACHINE: Record<DesktopTarget, string> = {
 const unverified = (target: DesktopTarget, note: string): TargetSupport =>
   limited(`${note} Implemented and built in CI, but not yet verified on ${REAL_MACHINE[target]}.`);
 
-const SHORTCUTS = 'Open, close document, next/previous document, Pages panel and Properties panel';
+const SHORTCUTS =
+  'Open, Save a copy, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous';
 const NO_THEME_SHORTCUT = 'Switching the theme has no shortcut.';
 
 export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
@@ -176,49 +177,82 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   {
     id: 'render-pages',
     area: 'Viewing',
-    feature: 'Render pages',
-    plannedPhase: 2,
+    feature: 'Render pages (continuous, virtualized scrolling)',
+    plannedPhase: null,
     targets: all(
-      limited(
-        'Single-page preview of the selected page. The continuous, virtualized viewer arrives in Phase 2.',
+      full(
+        'Only pages near the window are kept; renders are queued by distance and cached within a memory budget. Documents with thousands of pages open at the first page while the remaining page sizes are read in the background.',
       ),
     ),
     verification:
-      'E2E in Chromium (extension, desktop UI) and in WebKitGTK through the real desktop binary (tauri-driver).',
+      'E2E in Chromium (extension, desktop UI) including a 1,500-page budget for time to first page, mounted pages and memory; WebKitGTK through the real desktop binary (tauri-driver).',
   },
   {
     id: 'thumbnails',
     area: 'Viewing',
-    feature: 'Page thumbnails and navigation',
-    plannedPhase: 2,
+    feature: 'Page thumbnails and page navigation',
+    plannedPhase: null,
     targets: all(
-      limited('The Pages panel lists every page with its size and rotation; no thumbnails yet.'),
+      full(
+        'Virtualized thumbnails, page number field, previous/next page and keyboard navigation (arrow keys, Page Up/Down, Home/End).',
+      ),
     ),
-    verification: 'E2E.',
+    verification: 'E2E (Chromium) including keyboard navigation.',
+  },
+  {
+    id: 'outline',
+    area: 'Viewing',
+    feature: 'Bookmarks (document outline)',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'Explicit and named destinations, as an accessible tree. Bookmarks that link to websites are listed but not opened.',
+      ),
+    ),
+    verification: 'Unit tests for destination resolution; DOM tests for the tree; e2e (Chromium).',
   },
   {
     id: 'search',
     area: 'Viewing',
     feature: 'Text search',
-    plannedPhase: 2,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'Whole-document search with highlights, a results list, match case and whole words; ignores accents and finds words drawn in separate pieces. Scanned pages without a text layer cannot be searched until OCR arrives (Phase 6).',
+      ),
+    ),
+    verification:
+      'Unit tests for matching; e2e accuracy checks on fixtures (Chromium); highlighting in WebKitGTK (tauri-driver).',
   },
   {
     id: 'zoom-rotate-view',
     area: 'Viewing',
-    feature: 'Zoom, fit-to-page and view rotation',
-    plannedPhase: 2,
-    targets: all(none()),
-    verification: '—',
+    feature: 'Zoom, fit width/page and view rotation',
+    plannedPhase: 4,
+    targets: {
+      macos: unverified(
+        'macos',
+        'Toolbar, menu and keyboard zoom and rotation; trackpad pinch through WebKit gesture events.',
+      ),
+      windows: unverified(
+        'windows',
+        'Toolbar, menu and keyboard zoom and rotation; Ctrl+wheel and touchpad pinch.',
+      ),
+      chrome: full(
+        'Toolbar, menu and keyboard zoom, Ctrl+wheel and trackpad pinch (kept to the document, not the browser page), view rotation. Rotation is for viewing only.',
+      ),
+    },
+    verification:
+      'E2E in Chromium for the toolbar, keyboard, Ctrl+wheel and synthetic pinch events, including the anchor point. WebKit gesture events and the desktop menus have not been exercised.',
   },
   {
     id: 'text-selection',
     area: 'Viewing',
     feature: 'Text selection and copying',
-    plannedPhase: 2,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: all(full('Selectable text layer over each page.')),
+    verification:
+      'E2E (Chromium) selects with the mouse and reads the clipboard; text layer placement in WebKitGTK (tauri-driver).',
   },
   // Editing
   {
@@ -318,10 +352,22 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   {
     id: 'export-pdf',
     area: 'Saving and export',
-    feature: 'Export PDF',
-    plannedPhase: 2,
-    targets: all(none()),
-    verification: '—',
+    feature: 'Save a copy of the original PDF',
+    plannedPhase: 4,
+    targets: {
+      macos: unverified(
+        'macos',
+        'Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path.',
+      ),
+      windows: unverified(
+        'windows',
+        'Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path.',
+      ),
+      chrome: full('Downloaded through Chrome’s downloads; needs no extra permission.'),
+    },
+    verification:
+      'Extension and desktop UI: e2e compares the SHA-256 of the saved file with the original. Desktop: Rust unit tests for validation, file names and atomic writes; tauri-driver checks that non-PDF data is refused. The native dialog cannot be automated.',
+    runtimeFeature: 'saveCopy',
   },
   {
     id: 'export-images',
@@ -404,8 +450,14 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Native menus',
     plannedPhase: 4,
     targets: {
-      macos: unverified('macos', 'Folio (app), File, Edit, View and Window menus.'),
-      windows: unverified('windows', 'File, Edit, View and Help menus in the window menu bar.'),
+      macos: unverified(
+        'macos',
+        'Folio (app), File, Edit, View and Window menus, with Save a Copy, Find and the zoom, rotation and Go to Page commands.',
+      ),
+      windows: unverified(
+        'windows',
+        'File, Edit, View and Help menus in the window menu bar, with the same commands.',
+      ),
       chrome: none('Not applicable.'),
     },
     verification:
@@ -418,14 +470,17 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Keyboard shortcuts',
     plannedPhase: 4,
     targets: {
-      macos: unverified('macos', `${SHORTCUTS}, plus Close Window. ${NO_THEME_SHORTCUT}`),
-      windows: unverified('windows', `${SHORTCUTS}. ${NO_THEME_SHORTCUT}`),
+      macos: unverified(
+        'macos',
+        `${SHORTCUTS}, rotate (⌘R/⌘L) and Close Window. ${NO_THEME_SHORTCUT}`,
+      ),
+      windows: unverified('windows', `${SHORTCUTS}, rotate (Ctrl+R/Ctrl+L). ${NO_THEME_SHORTCUT}`),
       chrome: limited(
-        `${SHORTCUTS}. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab. ${NO_THEME_SHORTCUT}`,
+        `${SHORTCUTS}. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab; rotation has no shortcut because Chrome keeps Ctrl+R and Ctrl+L. ${NO_THEME_SHORTCUT}`,
       ),
     },
     verification:
-      'Key matching: unit tests. Browser key set: extension and desktop UI e2e. Desktop key set and menu accelerators: no e2e yet.',
+      'Key matching: unit tests. Browser key set: extension e2e. Desktop key set: desktop UI e2e in Chromium. Menu accelerators: Rust unit tests only.',
   },
   {
     id: 'themes',
@@ -440,12 +495,12 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'App and platform',
     feature: 'Clipboard',
     plannedPhase: 4,
-    targets: all(
-      limited(
-        'Copying document property values. Page content copying arrives with text selection.',
-      ),
-    ),
-    verification: 'E2E.',
+    targets: {
+      macos: unverified('macos', 'Document property values and selected page text.'),
+      windows: unverified('windows', 'Document property values and selected page text.'),
+      chrome: full('Document property values and selected page text.'),
+    },
+    verification: 'E2E (Chromium) reads the clipboard after copying.',
     runtimeFeature: 'clipboardWrite',
   },
   {

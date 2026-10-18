@@ -37,6 +37,45 @@ export function incomingFromFile(file: File): IncomingFile {
   };
 }
 
+/** A safe download file name: no path separators or control characters, ending in `.pdf`. */
+export function pdfFileName(name: string): string {
+  const cleaned = Array.from(name, (char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code < 0x20 || code === 0x7f || '\\/:*?"<>|'.includes(char) ? ' ' : char;
+  })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '');
+  const base = cleaned.length > 0 ? cleaned : 'Document';
+  return /\.pdf$/i.test(base) ? base : `${base}.pdf`;
+}
+
+/**
+ * Saves through the browser's download mechanism: an object URL clicked as a
+ * download link. Needs no extension permission; Chrome's own settings decide
+ * whether a "Save as" dialog appears.
+ */
+export function downloadBytes(
+  name: string,
+  bytes: Uint8Array,
+  doc: Document = globalThis.document,
+): void {
+  const url = URL.createObjectURL(
+    new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }),
+  );
+  const link = doc.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.rel = 'noopener';
+  link.style.display = 'none';
+  doc.body.append(link);
+  link.click();
+  link.remove();
+  // Revoking at once can cancel the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 /** Opens a hidden `<input type="file">`. Resolves to [] when the user cancels. */
 export function pickFilesWithInput(
   options: { multiple?: boolean; doc?: Document } = {},
@@ -124,6 +163,7 @@ export const WEB_FEATURES: RuntimeFeatures = {
   fileAssociations: false,
   nativeMenus: false,
   saveInPlace: false,
+  saveCopy: true,
   printing: false,
   clipboardWrite: true,
   browserTabIntegration: false,
@@ -163,6 +203,11 @@ export function createWebPlatformAdapter(options: WebAdapterOptions = {}): Platf
     },
     setWindowTitle(title) {
       globalThis.document.title = title;
+    },
+    async saveFileAs({ suggestedName, bytes }) {
+      const name = pdfFileName(suggestedName);
+      downloadBytes(name, bytes);
+      return { status: 'downloaded', name };
     },
     deliverFiles(files) {
       incoming.emit(files);

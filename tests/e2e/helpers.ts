@@ -50,5 +50,9 @@ export async function dropFiles(
   }
 }
 
-export const pageRendered = (page: Page) =>
-  expect(page.locator('[data-testid="page-canvas"]')).toHaveAttribute('data-render-state', 'done');
+/** Waits until page `pageNumber` (1-based) of the active document has been drawn. */
+export const pageRendered = (page: Page, pageNumber = 1) =>
+  expect(page.locator(`[data-page="${pageNumber}"] [data-testid="page-canvas"]`)).toHaveAttribute(
+    'data-render-state',
+    'done',
+  );

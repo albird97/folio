@@ -16,6 +16,17 @@ export {
   DialogTrigger,
 } from './components/dialog';
 export { Input, Label } from './components/field';
+export {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './components/menu';
 export { Switch } from './components/switch';
 export { SegmentedControl, type SegmentedOption } from './components/segmented-control';
 export { Banner } from './components/banner';

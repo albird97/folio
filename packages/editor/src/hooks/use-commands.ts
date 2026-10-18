@@ -1,9 +1,12 @@
 import type { AppCommand } from '@folio/platform-adapters';
-import { matchesShortcut, nextThemePreference, usesCommandModifier } from '@folio/shared-ui';
+import { matchesShortcut, nextThemePreference, worksInTextFields } from '@folio/shared-ui';
 import { useCallback, useEffect, useRef } from 'react';
 import { COMMAND_DEDUPE_MS, COMMAND_SHORTCUTS } from '../commands';
+import { FIND_INPUT_ID } from '../components/find-bar';
+import { PAGE_INPUT_ID } from '../components/viewer-controls';
 import { useWorkspaceContext } from '../context';
 import { useCloseDocument } from './use-close-document';
+import { useSaveCopy } from './use-save-copy';
 
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 
@@ -17,6 +20,7 @@ export function useCommands(): (command: AppCommand) => void {
   const { adapter, workspace, ui, profile, shortcutPlatform } = useWorkspaceContext();
   const last = useRef<{ command: AppCommand; at: number } | null>(null);
   const closeDocument = useCloseDocument();
+  const saveCopy = useSaveCopy();
 
   const dispatch = useCallback(
     (command: AppCommand) => {
@@ -24,6 +28,16 @@ export function useCommands(): (command: AppCommand) => void {
       if (last.current?.command === command && now - last.current.at < COMMAND_DEDUPE_MS) return;
       last.current = { command, at: now };
       const state = workspace.getState();
+      const active = state.documents.find((doc) => doc.key === state.activeKey);
+      // Viewer commands need an open, readable document.
+      const key = active?.status === 'ready' ? active.key : null;
+      const focusField = (id: string) => {
+        const field = document.getElementById(id);
+        if (field instanceof HTMLInputElement) {
+          field.focus();
+          field.select();
+        }
+      };
       switch (command) {
         case 'open':
           void adapter.pickPdfFiles({ multiple: true }).then(
@@ -49,9 +63,51 @@ export function useCommands(): (command: AppCommand) => void {
         case 'cycle-theme':
           ui.getState().setTheme(nextThemePreference(ui.getState().theme));
           break;
+        case 'save-copy':
+          if (key) saveCopy(key);
+          break;
+        case 'zoom-in':
+          if (key) state.zoomBy(key, 1);
+          break;
+        case 'zoom-out':
+          if (key) state.zoomBy(key, -1);
+          break;
+        case 'zoom-actual-size':
+          if (key) state.setZoom(key, 'custom', 1);
+          break;
+        case 'zoom-fit-width':
+          if (key) state.setZoom(key, 'fit-width');
+          break;
+        case 'zoom-fit-page':
+          if (key) state.setZoom(key, 'fit-page');
+          break;
+        case 'rotate-clockwise':
+          if (key) state.rotateView(key, 90);
+          break;
+        case 'rotate-counterclockwise':
+          if (key) state.rotateView(key, -90);
+          break;
+        case 'go-to-page':
+          if (key) focusField(PAGE_INPUT_ID);
+          break;
+        case 'find':
+          if (!key) break;
+          // An open find bar takes focus again; a new one focuses itself.
+          if (active?.search.open) focusField(FIND_INPUT_ID);
+          else state.openSearch(key);
+          break;
+        case 'find-next':
+        case 'find-previous':
+          if (!key) break;
+          if (active?.search.open && active.search.matches.length > 0) {
+            state.stepSearch(key, command === 'find-next' ? 1 : -1);
+          } else if (!active?.search.open) {
+            state.openSearch(key);
+          }
+          break;
       }
     },
-    [adapter, workspace, ui, closeDocument],
+    [adapter, workspace, ui, closeDocument, saveCopy],
   );
 
   useEffect(() => adapter.onCommand(dispatch), [adapter, dispatch]);
@@ -60,8 +116,8 @@ export function useCommands(): (command: AppCommand) => void {
     const shortcuts = COMMAND_SHORTCUTS[profile];
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      // In text fields only Ctrl/⌘ shortcuts apply; other keys type text
-      // (⌥W is "∑" on a Mac).
+      // In text fields only Ctrl/⌘ shortcuts and function keys apply; other
+      // keys type text (⌥W is "∑" on a Mac).
       const editable = isEditable(event.target);
       // Windows also types AltGr characters with Ctrl+Alt, without reporting
       // AltGraph (Ctrl+Alt+2 is "@" on Spanish keyboards), including dead keys
@@ -77,7 +133,7 @@ export function useCommands(): (command: AppCommand) => void {
         if (
           keys.some(
             (keyCombo) =>
-              (!editable || usesCommandModifier(keyCombo)) &&
+              (!editable || worksInTextFields(keyCombo)) &&
               matchesShortcut(event, keyCombo, shortcutPlatform),
           )
         ) {

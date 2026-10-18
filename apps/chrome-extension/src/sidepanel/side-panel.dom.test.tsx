@@ -1,4 +1,6 @@
+import { EMPTY_METADATA } from '@folio/document-model';
 import type { PdfDocumentHandle, PdfEngine } from '@folio/pdf-core';
+import { fakeDocumentHandle } from '@folio/pdf-core/testing';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SidePanel } from './side-panel';
@@ -18,30 +20,11 @@ vi.mock('../shared/surface', () => ({ openEditor: mocks.openEditor }));
 vi.mock('../shared/messages', () => ({ sendMessage: mocks.sendMessage }));
 
 function fakeHandle(title: string): PdfDocumentHandle {
-  return {
-    info: {
-      pageCount: 1,
-      pdfVersion: '1.7',
-      metadata: {
-        title,
-        author: '',
-        subject: '',
-        keywords: [],
-        creator: '',
-        producer: '',
-        creationDate: null,
-        modificationDate: null,
-      },
-      pages: [{ size: { width: 612, height: 792 }, rotation: 0, userUnit: 1 }],
-      encryption: 'none',
-      permissions: null,
-      isLinearized: false,
-      forms: 'none',
-      hasSignatures: false,
-    },
+  return fakeDocumentHandle({
+    info: { metadata: { ...EMPTY_METADATA, title } },
     renderPage: () => ({ promise: new Promise<boolean>(() => undefined), cancel: () => undefined }),
     destroy: vi.fn(async () => undefined),
-  };
+  });
 }
 
 /** An engine whose open() calls finish only when the test says so, in any order. */

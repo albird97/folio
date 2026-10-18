@@ -1,0 +1,21 @@
+[
+  "open",
+  "save-copy",
+  "close-tab",
+  "next-tab",
+  "previous-tab",
+  "toggle-left-panel",
+  "toggle-right-panel",
+  "cycle-theme",
+  "zoom-in",
+  "zoom-out",
+  "zoom-actual-size",
+  "zoom-fit-width",
+  "zoom-fit-page",
+  "rotate-clockwise",
+  "rotate-counterclockwise",
+  "go-to-page",
+  "find",
+  "find-next",
+  "find-previous"
+]

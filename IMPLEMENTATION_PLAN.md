@@ -4,7 +4,8 @@ Folio is one PDF product with three targets: a macOS app, a Windows app (both Ta
 Chrome extension (Manifest V3). Document logic is written once in shared packages; each target
 contributes only a thin platform adapter and its own shell.
 
-- **Status:** Phase 1 (Foundation) is complete. See [Phase 1 results](#6-phase-1-results).
+- **Status:** Phases 1 (Foundation) and 2 (Shared PDF viewer) are complete. See
+  [Phase 2 results](#phase-2-results) and [Phase 1 results](#phase-1-results).
 - **What works where:** [PLATFORM_CAPABILITIES.md](PLATFORM_CAPABILITIES.md) (generated, tested).
 - **How to build and run:** [README.md](README.md).
 
@@ -199,24 +200,34 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
 - [x] CI: checks, Linux build and native e2e on every push. macOS and Windows installers run on
       main, tags, PRs, on demand, or with `[desktop]` in a commit message.
 
-### Phase 2: Shared PDF viewer 🔜
+### Phase 2: Shared PDF viewer ✅
 
-1. A continuous, virtualized page viewer (`editor/viewer`): render queue, canvas recycling, a
-   per-zoom render cache, devicePixelRatio handling, and memory limits for 1,000+ page files.
-2. Lazy page sizes: read the first page eagerly and the rest on demand, so huge documents open
-   instantly. Today all page dictionaries are read up front, which is fine for typical files and
-   tested at 400 pages.
-3. Thumbnails in the pages panel (low-resolution renders, IntersectionObserver).
-4. Zoom (fit width, fit page, custom, ⌘/Ctrl +/−, pinch) and view rotation, using
-   `DocumentViewState`.
-5. A PDF.js text layer for selection and copying, plus search with highlights (worker-side text
-   extraction, a results panel, ⌘/Ctrl F).
-6. Export the original file: desktop “Save a copy” (Rust save dialog + grant), extension download.
-7. Outline/bookmarks panel.
-8. Tests: a large-document performance budget (time to first page, memory), search accuracy on
-   fixtures, and keyboard navigation.
+- [x] A continuous, virtualized page viewer (`packages/editor/src/viewer`). Only pages near the
+      window are mounted; one render queue (`RenderScheduler`) orders work by distance from the
+      window and drops it when pages scroll away; rendered canvases are cached per zoom,
+      rotation and devicePixelRatio within a 40-megapixel budget (`CanvasCache`), visible ones
+      pinned; the previous zoom's canvas stays on screen, stretched, until the new one is ready.
+- [x] Lazy page sizes: the first 64 pages are read before a document opens and the rest in the
+      background (or on demand when a page is shown). Estimates are corrected as pages are read,
+      with the view anchored so nothing jumps.
+- [x] Thumbnails in a sidebar tab. They are virtualized by arithmetic (every slot has the same
+      height) rather than with IntersectionObserver, which made scrolling and keyboard focus
+      simpler; a page already rendered in the viewer is downscaled instead of drawn again.
+- [x] Zoom (automatic, fit width, fit page, presets, ⌘/Ctrl +/−/0, Ctrl+wheel steps, smooth
+      trackpad and touch pinch, WebKit gesture events) anchored at the pointer or the middle of
+      the window, and view rotation, all stored in `DocumentViewState`.
+- [x] The PDF.js text layer for selection and copying; search with highlights (text extracted in
+      the PDF.js worker, accent- and case-insensitive by default, whole words, matches across
+      separately drawn runs, progressive results, a results list in the sidebar, ⌘/Ctrl F, ⌘G/F3).
+- [x] Save a copy of the original file: on desktop a `save_pdf_as` command shows the native save
+      dialog, accepts only PDF data and writes through a temporary file; in browsers a download.
+- [x] Bookmarks: explicit and named destinations, shown as a WAI-ARIA tree.
+- [x] Tests: a 1,500-page performance budget (time to first page, mounted pages, canvases, DOM
+      size, JS heap), search accuracy on fixtures, keyboard navigation, zoom anchoring, outline
+      destinations, text selection and copying, byte-identical saved copies, axe in both themes,
+      and WebKitGTK checks of the text layer, highlights and the save command in the real binary.
 
-### Phase 3: Core editing ⏳
+### Phase 3: Core editing 🔜
 
 - Annotation layer (pointer events, not HTML5 drag and drop, because Tauri's native drop handling
   disables DOM drag and drop on Windows): highlight, underline and strikethrough from text
@@ -270,9 +281,44 @@ Capability audit, accessibility review (screen readers on macOS, Windows and Chr
 performance profiling, a security review (IPC fuzzing, CSP, permissions), auto-update
 (`tauri-plugin-updater` with signed manifests), Web Store submission and release notes.
 
-## 6. Phase 1 results
+## 6. Results
 
-### Verified in this environment
+### Phase 2 results
+
+#### Verified in this environment
+
+| Area                   | What was run                                                                      | Result                                                                                                                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared packages        | `pnpm test` (Vitest)                                                              | 222 tests passed (36 files): viewer layout, zoom, render queue and canvas cache; search matching; page-size streaming, text and outlines from real PDFs; store actions; find bar, bookmarks and results panels                |
+| Types, lint, format    | `pnpm typecheck`, `pnpm lint`, `pnpm format:check`                                | Clean                                                                                                                                                                                                                         |
+| Rust                   | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`                     | Clean, 24 tests passed (adds PDF-only validation, file names and atomic writes for Save a Copy, and the menu ↔ frontend command list)                                                                                         |
+| Extension              | `pnpm build:extension` + Playwright (unpacked in Chromium 141)                    | 18 tests passed, adding search, text layer and a byte-identical downloaded copy                                                                                                                                               |
+| Desktop UI             | `pnpm build:desktop:web` + Playwright                                             | 16 tests passed: scrolling, keyboard navigation, zoom (toolbar, menu, keys, Ctrl+wheel, pinch with a fixed anchor), rotation, bookmarks, search accuracy, selection and copying, Save a copy, axe in both themes, 1,500 pages |
+| Desktop binary (Linux) | `pnpm build:desktop:linux` → `Folio_0.1.0_amd64.deb`; tauri-driver e2e under Xvfb | 10 tests passed, adding the text layer's placement and search highlights in WebKitGTK and `save_pdf_as` refusing non-PDF data and non-binary requests                                                                         |
+
+Performance budget (1,500 generated pages, Chromium, this environment): first page drawn
+536 ms after choosing the file (budget 5 s); after jumping to the end, to page 1,234 and
+flinging back through about 140 pages, 4 pages and 16 canvases were mounted (budget 8 and
+40), 377 DOM elements (budget 2,000) and a 13 MB JavaScript heap (budget 250 MB). Searching
+all 1,500 pages for the last-but-one page's marker finds it and scrolls there. The budget runs
+in CI on every push.
+
+#### Verified only in CI
+
+The macOS and Windows installer workflow builds the Phase 2 code on real runners (see the README
+badge for the latest status) and runs the Rust unit tests there, including the Save a Copy
+validation. Nothing in those runs opens the save dialog, uses a menu or pinches.
+
+#### Not yet verified anywhere
+
+- On a real Mac or Windows PC: everything listed for Phase 1, plus the Save a Copy dialog, the new
+  menu items and accelerators, trackpad pinch through WebKit gesture events (macOS) and
+  precision-touchpad pinch (Windows). The capability matrix rates these Limited.
+- Touch-screen pinch zoom has only been exercised with synthetic events.
+
+### Phase 1 results
+
+#### Verified in this environment
 
 | Area                   | What was run                                                                      | Result                                                                                                                                                                |
 | ---------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -283,7 +329,7 @@ performance profiling, a security review (IPC fuzzing, CSP, permissions), auto-u
 | Desktop UI             | `pnpm build:desktop:web` + Playwright                                             | 6 tests passed                                                                                                                                                        |
 | Desktop binary (Linux) | `pnpm build:desktop:linux` → `Folio_0.1.0_amd64.deb`; tauri-driver e2e under Xvfb | 7 tests passed: launch-argument open, WebKitGTK rendering, zero CSP violations, token-only file access, ungranted plugin denied, double-click zoom allowed, close tab |
 
-### Verified only in CI
+#### Verified only in CI
 
 macOS (universal `.dmg`) and Windows (`.msi`, NSIS `.exe`) builds, plus `cargo test` on those
 platforms, run in `.github/workflows/desktop.yml`. The first run (commit `16d3f6a`) succeeded on
@@ -292,7 +338,7 @@ badge at the top of the README, and on each pull request. These runs compile the
 code and run the Rust unit tests; nothing in them opens a dialog, drops a file or uses a menu, and
 nothing beyond that is claimed here.
 
-### Not yet verified anywhere
+#### Not yet verified anywhere
 
 - On a real Mac or Windows PC: native file dialogs, native drag and drop, menus and their
   shortcuts, and Finder “Open With” / Explorer file association. No manual checks have been done
@@ -301,9 +347,18 @@ nothing beyond that is claimed here.
 
 ## 7. Known limitations
 
-- **Viewing:** a single-page preview only; no text selection, search or zoom until Phase 2.
-- **Opening:** page dictionaries are read up front. A 400-page file opens in well under a second in
-  tests; files with tens of thousands of pages will be slow until Phase 2's lazy loading.
+- **Rendering at high zoom:** each page is drawn into one canvas of at most 16.7 megapixels, so at
+  very high zoom on high-density screens pages are drawn at a lower resolution and look soft.
+  Tiled rendering of the visible part would fix this.
+- **Text layer:** it is measured once per page and orientation and then scaled with CSS, so
+  selections can drift slightly from the drawn text at zoom levels far from the first one.
+- **Interactive PDF content:** link annotations are drawn but not clickable, form fields are
+  drawn but not editable (Phase 6), and bookmarks that point to websites or other files are listed
+  but not followed.
+- **Page labels:** page numbers are physical positions; `/PageLabels` (such as roman numerals for
+  front matter) are not shown yet.
+- **Search:** scanned pages have no text until OCR (Phase 6); right-to-left and vertical text are
+  untested; results stop at 10,000 matches (the find bar says so).
 - **macOS and Windows:** the native dialog, drag and drop, menus, shortcuts and file association
   are built in CI but have not been tried on a real machine yet (Phase 4).
 - **Windows:** a second file opened from Explorer while Folio runs starts a second instance (Phase 4).

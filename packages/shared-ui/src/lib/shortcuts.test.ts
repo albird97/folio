@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatShortcut, matchesShortcut, shortcutLabel, usesCommandModifier } from './shortcuts';
+import {
+  formatShortcut,
+  matchesShortcut,
+  shortcutLabel,
+  usesCommandModifier,
+  worksInTextFields,
+} from './shortcuts';
 
 const key = (
   k: string,
@@ -129,5 +135,24 @@ describe('shortcuts', () => {
     expect(usesCommandModifier('Ctrl+Shift+Tab')).toBe(true);
     expect(usesCommandModifier('Alt+W')).toBe(false);
     expect(usesCommandModifier('Alt+PageDown')).toBe(false);
+    // Function keys never type text either, so they also work in fields.
+    expect(worksInTextFields('F3')).toBe(true);
+    expect(worksInTextFields('Shift+F3')).toBe(true);
+    expect(worksInTextFields('Mod+G')).toBe(true);
+    expect(worksInTextFields('Alt+W')).toBe(false);
+    expect(worksInTextFields('F')).toBe(false);
+  });
+
+  it('names the plus key and does not require Shift for symbols', () => {
+    expect(shortcutLabel('Mod+Plus', 'other')).toBe('Ctrl++');
+    expect(matchesShortcut(key('+', { ctrlKey: true, shiftKey: true }), 'Mod+Plus', 'other')).toBe(
+      true,
+    );
+    expect(matchesShortcut(key('=', { metaKey: true }), 'Mod+=', 'macos')).toBe(true);
+    expect(matchesShortcut(key('-', { ctrlKey: true }), 'Mod+-', 'other')).toBe(true);
+    expect(
+      matchesShortcut({ ...key('F3', { shiftKey: true }), code: 'F3' }, 'Shift+F3', 'other'),
+    ).toBe(true);
+    expect(matchesShortcut({ ...key('F3'), code: 'F3' }, 'Shift+F3', 'other')).toBe(false);
   });
 });

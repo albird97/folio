@@ -12,19 +12,37 @@ use tauri::{AppHandle, Runtime};
 /// (id, label, accelerator)
 pub type MenuEntry = (&'static str, &'static str, Option<&'static str>);
 
-/// Items forwarded to the frontend as commands.
+/// Items forwarded to the frontend as commands. The ids are also listed in
+/// `apps/desktop/src/platform/menu-commands.json`, which the frontend accepts
+/// (a test keeps both in step). Shortcuts match `packages/editor/src/commands.ts`.
 pub const MENU_COMMANDS: &[MenuEntry] = &[
     ("open", "Open…", Some("CmdOrCtrl+O")),
+    ("save-copy", "Save a Copy…", Some("CmdOrCtrl+Shift+S")),
     ("close-tab", "Close Document", Some("CmdOrCtrl+W")),
     ("next-tab", "Next Document", Some("Ctrl+Tab")),
     ("previous-tab", "Previous Document", Some("Ctrl+Shift+Tab")),
-    ("toggle-left-panel", "Pages Panel", Some("CmdOrCtrl+Alt+1")),
+    ("toggle-left-panel", "Sidebar", Some("CmdOrCtrl+Alt+1")),
     (
         "toggle-right-panel",
         "Properties Panel",
         Some("CmdOrCtrl+Alt+2"),
     ),
     ("cycle-theme", "Switch Theme", None),
+    ("zoom-in", "Zoom In", Some("CmdOrCtrl+=")),
+    ("zoom-out", "Zoom Out", Some("CmdOrCtrl+-")),
+    ("zoom-actual-size", "Actual Size", Some("CmdOrCtrl+0")),
+    ("zoom-fit-width", "Fit Width", None),
+    ("zoom-fit-page", "Fit Page", None),
+    ("rotate-clockwise", "Rotate Clockwise", Some("CmdOrCtrl+R")),
+    (
+        "rotate-counterclockwise",
+        "Rotate Counterclockwise",
+        Some("CmdOrCtrl+L"),
+    ),
+    ("go-to-page", "Go to Page…", Some("CmdOrCtrl+Alt+G")),
+    ("find", "Find…", Some("CmdOrCtrl+F")),
+    ("find-next", "Find Next", Some("CmdOrCtrl+G")),
+    ("find-previous", "Find Previous", Some("CmdOrCtrl+Shift+G")),
 ];
 
 /// macOS Window > Close Window, handled in Rust rather than forwarded. ⌘W
@@ -73,6 +91,7 @@ fn about_metadata<R: Runtime>(app: &AppHandle<R>) -> AboutMetadata<'static> {
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let file = SubmenuBuilder::new(app, "File")
         .item(&item(app, "open")?)
+        .item(&item(app, "save-copy")?)
         .separator()
         .item(&item(app, "close-tab")?);
     #[cfg(not(target_os = "macos"))]
@@ -88,9 +107,24 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .copy()
         .paste()
         .select_all()
+        .separator()
+        .item(&item(app, "find")?)
+        .item(&item(app, "find-next")?)
+        .item(&item(app, "find-previous")?)
         .build()?;
 
     let view = SubmenuBuilder::new(app, "View")
+        .item(&item(app, "zoom-in")?)
+        .item(&item(app, "zoom-out")?)
+        .item(&item(app, "zoom-actual-size")?)
+        .item(&item(app, "zoom-fit-width")?)
+        .item(&item(app, "zoom-fit-page")?)
+        .separator()
+        .item(&item(app, "rotate-clockwise")?)
+        .item(&item(app, "rotate-counterclockwise")?)
+        .separator()
+        .item(&item(app, "go-to-page")?)
+        .separator()
         .item(&item(app, "toggle-left-panel")?)
         .item(&item(app, "toggle-right-panel")?)
         .separator()
@@ -177,6 +211,25 @@ mod tests {
         accelerators.sort_unstable();
         accelerators.dedup();
         assert_eq!(accelerators.len(), count);
+    }
+
+    #[test]
+    fn the_frontend_accepts_exactly_these_commands() {
+        let accepted: Vec<String> =
+            serde_json::from_str(include_str!("../../src/platform/menu-commands.json")).unwrap();
+        let declared: Vec<&str> = MENU_COMMANDS.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(accepted, declared);
+    }
+
+    #[test]
+    fn every_command_is_in_a_menu() {
+        let source = include_str!("menu.rs");
+        for (id, _, _) in MENU_COMMANDS {
+            assert!(
+                source.contains(&format!("item(app, \"{id}\")")),
+                "{id} is declared but never added to a menu"
+            );
+        }
     }
 
     #[test]

@@ -2,18 +2,25 @@ import { isThemePreference, type ThemePreference } from '@folio/shared-ui';
 import type { KeyValueStorage } from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
+export type SidebarTab = 'pages' | 'outline' | 'results';
+export const SIDEBAR_TABS: readonly SidebarTab[] = ['pages', 'outline', 'results'];
+
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {
   theme: ThemePreference;
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
+  sidebarTab: SidebarTab;
   hydrated: boolean;
   setTheme(theme: ThemePreference): void;
   toggleLeftPanel(): void;
   toggleRightPanel(): void;
+  /** Shows the sidebar on the given tab. */
+  showSidebar(tab: SidebarTab): void;
+  setSidebarTab(tab: SidebarTab): void;
 }
 
-type Persisted = Pick<UiState, 'theme' | 'leftPanelOpen' | 'rightPanelOpen'>;
+type Persisted = Pick<UiState, 'theme' | 'leftPanelOpen' | 'rightPanelOpen' | 'sidebarTab'>;
 
 export const UI_STORAGE_KEY = 'workspace-ui';
 
@@ -24,6 +31,8 @@ function sanitize(value: unknown): Partial<Persisted> {
   if (isThemePreference(raw.theme)) out.theme = raw.theme;
   if (typeof raw.leftPanelOpen === 'boolean') out.leftPanelOpen = raw.leftPanelOpen;
   if (typeof raw.rightPanelOpen === 'boolean') out.rightPanelOpen = raw.rightPanelOpen;
+  if (SIDEBAR_TABS.includes(raw.sidebarTab as SidebarTab))
+    out.sidebarTab = raw.sidebarTab as SidebarTab;
   return out;
 }
 
@@ -32,10 +41,13 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     theme: 'system',
     leftPanelOpen: true,
     rightPanelOpen: true,
+    sidebarTab: 'pages',
     hydrated: false,
     setTheme: (theme) => set({ theme }),
     toggleLeftPanel: () => set((state) => ({ leftPanelOpen: !state.leftPanelOpen })),
     toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
+    showSidebar: (tab) => set({ leftPanelOpen: true, sidebarTab: tab }),
+    setSidebarTab: (tab) => set({ sidebarTab: tab }),
   }));
 
   void storage.get<unknown>(UI_STORAGE_KEY).then((stored) => {
@@ -69,12 +81,14 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
       if (
         state.theme !== previous.theme ||
         state.leftPanelOpen !== previous.leftPanelOpen ||
-        state.rightPanelOpen !== previous.rightPanelOpen
+        state.rightPanelOpen !== previous.rightPanelOpen ||
+        state.sidebarTab !== previous.sidebarTab
       ) {
         const persisted: Persisted = {
           theme: state.theme,
           leftPanelOpen: state.leftPanelOpen,
           rightPanelOpen: state.rightPanelOpen,
+          sidebarTab: state.sidebarTab,
         };
         if (storage.watch) {
           unechoedWrites.push(JSON.stringify(persisted));

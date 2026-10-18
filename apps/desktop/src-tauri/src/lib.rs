@@ -1,6 +1,7 @@
 mod commands;
 pub mod files;
 pub mod menu;
+pub mod save;
 
 use files::{FileGrants, LaunchQueue};
 use std::path::PathBuf;
@@ -75,6 +76,7 @@ pub fn run() {
             commands::read_granted_file,
             commands::release_file,
             commands::take_pending_files,
+            commands::save_pdf_as,
             commands::app_info,
         ])
         .build(tauri::generate_context!())

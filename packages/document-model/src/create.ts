@@ -70,8 +70,10 @@ export function createDocumentModel(descriptor: SourceDescriptor): DocumentModel
 export function createViewState(model: DocumentModel): DocumentViewState {
   return {
     currentPageId: model.pages[0]?.id ?? null,
-    zoomMode: 'fit-width',
+    pageOffset: 0,
+    zoomMode: 'auto',
     zoom: 1,
+    rotation: 0,
   };
 }
 

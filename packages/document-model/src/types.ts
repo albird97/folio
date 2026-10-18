@@ -181,14 +181,26 @@ export interface DocumentModel {
   exportConfig: ExportConfig;
 }
 
-export type ZoomMode = 'fit-width' | 'fit-page' | 'custom';
+/**
+ * "auto" fits the page width (up to 125%), or the whole page for landscape
+ * pages; the fit modes follow the window size; "custom" keeps `zoom`.
+ */
+export type ZoomMode = 'auto' | 'fit-width' | 'fit-page' | 'custom';
 
 /** Per-document UI state: persisted for recovery, but never part of undo history. */
 export interface DocumentViewState {
   currentPageId: PageId | null;
+  /**
+   * Where the top of the window is relative to the current page, in page
+   * heights: 0 at its top edge, 0.5 halfway down, negative when the window
+   * starts above the page. 0 exactly means "show the page from its top".
+   */
+  pageOffset: number;
   zoomMode: ZoomMode;
-  /** 1 = 100%. Meaningful when `zoomMode` is "custom". */
+  /** 1 = 100%. In the fit modes, the scale last computed for the window size. */
   zoom: number;
+  /** Rotation added to every page for viewing only; never saved into the PDF. */
+  rotation: Rotation;
 }
 
 export const DEFAULT_EXPORT_CONFIG: ExportConfig = {

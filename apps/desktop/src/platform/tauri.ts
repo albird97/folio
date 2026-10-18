@@ -1,5 +1,6 @@
 import { PdfError } from '@folio/pdf-core';
 import {
+  APP_COMMANDS,
   Channel,
   createLocalStorage,
   type AppCommand,
@@ -11,6 +12,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TAURI_FEATURES } from './features';
+import menuCommands from './menu-commands.json';
 
 /** Mirrors `files::GrantedFile` in Rust. */
 interface GrantedFile {
@@ -39,15 +41,19 @@ interface CommandError {
   message: string;
 }
 
-const MENU_COMMANDS: ReadonlySet<string> = new Set<AppCommand>([
-  'open',
-  'close-tab',
-  'next-tab',
-  'previous-tab',
-  'toggle-left-panel',
-  'toggle-right-panel',
-  'cycle-theme',
-]);
+/** Mirrors `files::SavedFile`: the chosen file's name, never its path. */
+interface SavedFile {
+  name: string;
+}
+
+/** Commands the native menus send (shared with `menu.rs`, which tests the same list). */
+export const MENU_COMMANDS: ReadonlySet<AppCommand> = new Set(
+  (menuCommands as string[]).filter((id): id is AppCommand =>
+    (APP_COMMANDS as readonly string[]).includes(id),
+  ),
+);
+/** Header carrying the proposed file name for `save_pdf_as` (see `save.rs`). */
+const NAME_HEADER = 'x-folio-name';
 
 const notFound = () =>
   new PdfError('unknown', 'The file could not be found. It may have been moved or deleted.');
@@ -131,7 +137,8 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
 
   await listen<OpenedFiles>('folio://files-opened', (event) => deliver(event.payload));
   await listen<string>('folio://menu', (event) => {
-    if (MENU_COMMANDS.has(event.payload)) commands.emit(event.payload as AppCommand);
+    const command = event.payload as AppCommand;
+    if (MENU_COMMANDS.has(command)) commands.emit(command);
   });
   await listen<boolean>('folio://drag-hover', (event) => hover.emit(event.payload === true));
   // Files from launch arguments or Finder arrive before the UI exists; they
@@ -159,6 +166,18 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
     },
     setWindowTitle(title) {
       void window.setTitle(title).catch(() => undefined);
+    },
+    async saveFileAs({ suggestedName, bytes }) {
+      try {
+        // The bytes travel as the raw request body; the name as a header.
+        const saved = await invoke<SavedFile | null>('save_pdf_as', bytes, {
+          headers: { [NAME_HEADER]: encodeURIComponent(suggestedName) },
+        });
+        return saved ? { status: 'saved', name: saved.name } : { status: 'cancelled' };
+      } catch (error) {
+        const message = (error as Partial<CommandError> | undefined)?.message;
+        throw new Error(message ?? 'The file could not be saved.');
+      }
     },
   };
 }
