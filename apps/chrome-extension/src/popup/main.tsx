@@ -1,7 +1,7 @@
 import '../styles.css';
 import { FolioMark, ICON, IconButton } from '@folio/shared-ui';
 import { ChevronRight, FileText, PanelRightOpen, Settings, ShieldCheck } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { describeActivity } from '../shared/activity';
 import { sendMessage } from '../shared/messages';
 import { mountSurface, openEditor } from '../shared/surface';
@@ -88,10 +88,16 @@ function RecentActivity() {
 }
 
 function Popup() {
-  const openSidePanel = async () => {
-    const window = await chrome.windows.getCurrent();
-    if (window.id !== undefined) await chrome.sidePanel.open({ windowId: window.id });
-    globalThis.close();
+  // Resolved up front: chrome.sidePanel.open() must be called directly in the
+  // click handler, because awaiting another API first can lose the user gesture.
+  const [windowId, setWindowId] = useState<number | null>(null);
+  useEffect(() => {
+    void chrome.windows.getCurrent().then((window) => setWindowId(window.id ?? null));
+  }, []);
+
+  const openSidePanel = () => {
+    if (windowId === null) return;
+    void chrome.sidePanel.open({ windowId }).then(() => globalThis.close());
   };
 
   return (
@@ -119,7 +125,7 @@ function Popup() {
           icon={<PanelRightOpen size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
           title="Open side panel"
           description="Inspect a PDF next to the page you’re on"
-          onClick={() => void openSidePanel()}
+          onClick={openSidePanel}
         />
       </nav>
       <RecentActivity />

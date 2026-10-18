@@ -84,7 +84,13 @@ function SidePanel() {
 
   const inspect = async (file: File) => {
     setState({ kind: 'loading', name: file.name });
-    const bytes = await incomingFromFile(file).read();
+    let bytes: Uint8Array;
+    try {
+      bytes = await incomingFromFile(file).read();
+    } catch {
+      setState({ kind: 'error', name: file.name, message: 'The file could not be read.' });
+      return;
+    }
     try {
       const handle = await engine.open(bytes);
       setState({ kind: 'ready', name: file.name, bytes, handle });

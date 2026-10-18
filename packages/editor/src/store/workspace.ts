@@ -47,6 +47,7 @@ export interface WorkspaceState {
   activate(key: string): void;
   activateRelative(delta: 1 | -1): void;
   setCurrentPage(key: string, pageId: PageId): void;
+  showNotice(message: string): void;
   dismissNotice(): void;
 }
 
@@ -142,16 +143,11 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         const pdfs = files.filter((file) => isLikelyPdfName(file.name));
         const skipped = files.length - pdfs.length;
         if (skipped > 0) {
-          noticeId += 1;
-          set({
-            notice: {
-              id: noticeId,
-              message:
-                skipped === 1
-                  ? 'Skipped 1 file that is not a PDF.'
-                  : `Skipped ${skipped} files that are not PDFs.`,
-            },
-          });
+          get().showNotice(
+            skipped === 1
+              ? 'Skipped 1 file that is not a PDF.'
+              : `Skipped ${skipped} files that are not PDFs.`,
+          );
         }
         for (const file of files) if (!pdfs.includes(file)) file.release?.();
         if (pdfs.length === 0) return;
@@ -217,6 +213,11 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         const doc = get().documents.find((entry) => entry.key === key);
         if (!doc?.view || !doc.editor?.model.pages.some((page) => page.id === pageId)) return;
         patch(key, { view: { ...doc.view, currentPageId: pageId } });
+      },
+
+      showNotice(message) {
+        noticeId += 1;
+        set({ notice: { id: noticeId, message } });
       },
 
       dismissNotice() {

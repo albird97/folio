@@ -66,9 +66,10 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
     [adapter, workspace],
   );
 
+  const activeFileName = doc?.fileName ?? null;
   useEffect(() => {
-    adapter.setWindowTitle(doc ? `${doc.fileName} — Folio` : 'Folio');
-  }, [adapter, doc]);
+    adapter.setWindowTitle(activeFileName ? `${activeFileName} — Folio` : 'Folio');
+  }, [adapter, activeFileName]);
 
   if (!hydrated) return <div className="h-full bg-bg" />;
 

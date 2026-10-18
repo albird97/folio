@@ -73,11 +73,12 @@ pub async fn pick_pdf_files(
         });
     }
     let paths = receiver.await.unwrap_or_default();
-    let mut granted = Vec::with_capacity(paths.len());
-    for path in &paths {
-        granted.push(grants.grant(path)?);
-    }
-    Ok(granted)
+    // A file that disappeared between picking and granting is skipped rather
+    // than failing the whole selection.
+    Ok(paths
+        .iter()
+        .filter_map(|path| grants.grant(path).ok())
+        .collect())
 }
 
 /// Returns the bytes of a granted file as a binary IPC response.

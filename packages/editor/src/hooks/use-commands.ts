@@ -17,7 +17,10 @@ export function useCommands(): (command: AppCommand) => void {
       const state = workspace.getState();
       switch (command) {
         case 'open':
-          void adapter.pickPdfFiles({ multiple: true }).then((files) => state.openFiles(files));
+          void adapter.pickPdfFiles({ multiple: true }).then(
+            (files) => state.openFiles(files),
+            () => state.showNotice('The file picker could not be opened.'),
+          );
           break;
         case 'close-tab':
           if (state.activeKey) void state.close(state.activeKey);
