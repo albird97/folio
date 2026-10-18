@@ -291,10 +291,12 @@ On Windows, also set the registry key's default value to the manifest's path
 (`reg add "HKCU\Software\Google\Chrome\NativeMessagingHosts\io.github.albird97.folio" /ve /t REG_SZ /d "<path to manifest>" /f`),
 and use a `folio-desktop.exe` path with escaped backslashes in the JSON.
 
-Before publishing the extension to the Chrome Web Store, remove `key` from its manifest and
-replace the development ID in `OFFICIAL_EXTENSION_IDS` (`apps/desktop/src-tauri/src/native_messaging.rs`)
-with the ID the store assigns: until then, any unpacked extension that copies the public key gets
-the same ID (transfers are still confirmed in the app).
+Before publishing the extension to the Chrome Web Store, replace the development ID in
+`OFFICIAL_EXTENSION_IDS` (`apps/desktop/src-tauri/src/native_messaging.rs`) with the ID the store
+assigns, and register that ID in the host manifest. The Web Store zip
+(`pnpm --filter @folio/chrome-extension package`) already leaves out the manifest's development
+`key`. Until then, any unpacked extension that copies the public key gets the development ID
+(transfers are still confirmed in the app).
 
 ## Packaging releases
 
