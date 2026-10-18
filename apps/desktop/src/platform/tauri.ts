@@ -34,6 +34,11 @@ interface OpenedFiles {
   skipped: string[];
   /** Names of files that could no longer be found when they were granted. */
   unavailable: string[];
+  /**
+   * Names of files Folio does not open as ordinary files: its own data, and
+   * documents in a Chrome spool (those open once their transfer is accepted).
+   */
+  refused?: string[];
 }
 
 interface AppInfo {
@@ -143,6 +148,12 @@ function headerText(text: string): string {
 const notFound = () =>
   new PdfError('unknown', 'The file could not be found. It may have been moved or deleted.');
 
+const reserved = () =>
+  new PdfError(
+    'unknown',
+    'Folio does not open files from its own data folder. Documents sent from Chrome open once you accept them in Folio.',
+  );
+
 function commandError(error: unknown): Partial<CommandError> {
   if (typeof error === 'string') return { message: error };
   return (error ?? {}) as Partial<CommandError>;
@@ -208,11 +219,15 @@ function failedToIncoming(name: string, error: () => Error): IncomingFile {
   };
 }
 
-function toIncoming({ files, skipped, unavailable }: OpenedFiles, writable = true): IncomingFile[] {
+function toIncoming(
+  { files, skipped, unavailable, refused = [] }: OpenedFiles,
+  writable = true,
+): IncomingFile[] {
   return [
     ...files.map((file) => grantedToIncoming(file, writable)),
     ...skipped.map((name) => failedToIncoming(name, () => new PdfError('not-a-pdf'))),
     ...unavailable.map((name) => failedToIncoming(name, notFound)),
+    ...refused.map((name) => failedToIncoming(name, reserved)),
   ];
 }
 

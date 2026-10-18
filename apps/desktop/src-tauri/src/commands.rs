@@ -189,6 +189,10 @@ pub async fn save_pdf_as(
     let Some(target) = receiver.await.ok().flatten() else {
         return Ok(None);
     };
+    // Never into Folio's own data: the file would be granted and listed.
+    if block_in_place(|| grants.is_reserved(&target)) {
+        return Err(SaveError::Reserved.into());
+    }
     // Writing borrows the request body, so it happens on this worker thread
     // (without blocking other tasks) instead of copying the data to another.
     block_in_place(|| save::write_atomically(&target, bytes))?;

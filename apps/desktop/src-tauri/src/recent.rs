@@ -1,8 +1,9 @@
 //! Recently used files, kept in `recent.json` in the app data directory.
 //! Only ids, names and dates reach the webview; the paths stay here and are
-//! granted again (as new tokens) when a recent file is reopened.
+//! granted again (as new tokens) when a recent file is reopened. Folio's own
+//! files and spooled documents are never listed (`files::is_reserved_path`).
 
-use crate::paths;
+use crate::{files, paths};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -59,8 +60,12 @@ impl RecentFiles {
             .and_then(|file| paths::read_limited(file, MAX_STORED_BYTES).ok())
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
+        let data_dir = file.as_deref().and_then(Path::parent);
         entries.retain(|entry| {
-            is_valid_id(&entry.id) && entry.path.is_absolute() && !entry.name.is_empty()
+            is_valid_id(&entry.id)
+                && entry.path.is_absolute()
+                && !entry.name.is_empty()
+                && !files::is_reserved_path(&entry.path, data_dir)
         });
         let mut seen = Vec::new();
         entries.retain(|entry| {
@@ -98,6 +103,10 @@ impl RecentFiles {
     /// Puts a file the user opened or saved at the top, keeping its id if it
     /// was listed already. Returns whether the list changed.
     pub fn record(&self, path: &Path, name: &str) -> bool {
+        let data_dir = self.file.as_deref().and_then(Path::parent);
+        if files::is_reserved_path(path, data_dir) {
+            return false;
+        }
         let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         // The list is stored as JSON, which cannot hold other paths.
         if path.to_str().is_none() || !path.is_absolute() || name.is_empty() {
@@ -205,7 +214,7 @@ mod tests {
     #[test]
     fn lists_files_newest_first_and_without_paths() {
         let dir = tempfile::tempdir().unwrap();
-        let recent = RecentFiles::load(Some(dir.path().join("recent.json")));
+        let recent = RecentFiles::load(Some(dir.path().join("data").join("recent.json")));
         assert!(recent.record(&pdf(dir.path(), "a.pdf"), "a.pdf"));
         assert!(recent.record(&pdf(dir.path(), "b.pdf"), "b.pdf"));
         assert_eq!(names(&recent), ["b.pdf", "a.pdf"]);
@@ -271,7 +280,8 @@ mod tests {
     #[test]
     fn ignores_a_damaged_list() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("recent.json");
+        fs::create_dir(dir.path().join("data")).unwrap();
+        let file = dir.path().join("data").join("recent.json");
         fs::write(&file, b"{ not json").unwrap();
         assert!(RecentFiles::load(Some(file.clone())).list().is_empty());
         let absolute = |name: &str| dir.path().join(name).to_string_lossy().into_owned();
@@ -310,6 +320,32 @@ mod tests {
             labels,
             ["Notes.pdf", "Taxes.pdf — 2026", "Taxes.pdf — 2025"]
         );
+    }
+
+    #[test]
+    fn never_lists_folios_own_files_or_spooled_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let spool = dir
+            .path()
+            .join(crate::incoming::INCOMING_DIR)
+            .join(crate::incoming::new_id());
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&spool).unwrap();
+        let file = data.join("recent.json");
+        let recent = RecentFiles::load(Some(file.clone()));
+        assert!(!recent.record(&pdf(&data, "own.pdf"), "own.pdf"));
+        let spooled = pdf(&spool, crate::incoming::DOCUMENT_FILE);
+        assert!(!recent.record(&spooled, "From Chrome.pdf"));
+        assert!(recent.list().is_empty());
+        // Nor when an older list holds them.
+        let entries = serde_json::json!([
+            { "id": "0123456789abcdef0123456789abcde0", "name": "a.pdf", "path": spooled, "openedAt": "x" },
+            { "id": "0123456789abcdef0123456789abcde1", "name": "b.pdf", "path": data.join("own.pdf"), "openedAt": "x" },
+            { "id": "0123456789abcdef0123456789abcde2", "name": "c.pdf", "path": pdf(dir.path(), "c.pdf"), "openedAt": "x" }
+        ]);
+        fs::write(&file, serde_json::to_vec(&entries).unwrap()).unwrap();
+        assert_eq!(names(&RecentFiles::load(Some(file))), ["c.pdf"]);
     }
 
     #[test]

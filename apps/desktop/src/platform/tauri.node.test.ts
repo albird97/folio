@@ -122,6 +122,20 @@ describe('desktop platform adapter', () => {
     expect((missing as Error).message).toMatch(/could not be found/);
   });
 
+  it("explains that Folio's own files and spooled documents are not opened", async () => {
+    const adapter = await createTauriPlatformAdapter();
+    const received: IncomingFile[][] = [];
+    adapter.onIncomingFiles((files) => received.push(files));
+    fire('folio://files-opened', { ...nothing, refused: ['document.pdf'] });
+    const [refused] = received[0] ?? [];
+    expect(refused?.name).toBe('document.pdf');
+    expect(refused?.origin).toEqual({ kind: 'local-file', handle: null });
+    const error = await readError(refused);
+    expect(isPdfError(error, 'unknown')).toBe(true);
+    expect((error as Error).message).toMatch(/own data folder/);
+    expect(callsTo('read_granted_file')).toEqual([]);
+  });
+
   it('delivers files that vanished before the UI was ready as errors', async () => {
     tauri.responses.set('take_pending_files', { ...nothing, unavailable: ['gone.pdf'] });
     const adapter = await createTauriPlatformAdapter();

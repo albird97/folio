@@ -37,6 +37,8 @@ pub enum SaveError {
     WriteFailed,
     #[error("This file is read-only.")]
     ReadOnly,
+    #[error("Folio keeps its own data in this folder. Choose another folder.")]
+    Reserved,
 }
 
 impl SaveError {
@@ -47,6 +49,7 @@ impl SaveError {
             SaveError::InvalidRequest => "invalid-request",
             SaveError::WriteFailed => "write-failed",
             SaveError::ReadOnly => "read-only",
+            SaveError::Reserved => "reserved-location",
         }
     }
 }

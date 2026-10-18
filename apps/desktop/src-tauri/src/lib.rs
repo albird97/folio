@@ -124,24 +124,26 @@ fn deliver(app: &AppHandle, opened: OpenedFiles) {
     focus_main_window(app);
 }
 
-/// Grants user-provided paths and delivers them to the UI. Documents in the
-/// Chrome spool (macOS hands them over through LaunchServices) are offered
-/// as transfers instead, so the user is asked first.
+/// Grants user-provided paths and delivers them to the UI. A document of a
+/// transfer waiting in Folio's own spool (macOS hands them over through
+/// LaunchServices) is offered as that transfer, so the user is asked first.
+/// Anything else in Folio's data folder or shaped like a spooled document
+/// is refused with a notice and never granted (see `files::is_reserved_path`).
 fn open_paths(app: &AppHandle, paths: &[PathBuf]) {
     let base = app.state::<Storage>().incoming.clone();
-    let (transfers, files): (Vec<_>, Vec<_>) = paths.iter().partition(|path| {
-        base.as_deref()
-            .and_then(|base| incoming::transfer_for_document(base, path))
-            .is_some()
-    });
-    if let Some(base) = base.as_deref() {
-        let ids: Vec<String> = transfers
-            .iter()
-            .filter_map(|path| incoming::transfer_for_document(base, path))
-            .collect();
-        offer_transfers(app, &ids);
+    let mut requests = Vec::new();
+    let mut files = Vec::new();
+    for path in paths {
+        let request = base.as_deref().and_then(|base| {
+            let id = incoming::transfer_for_document(base, path)?;
+            incoming::request_for(base, &id)
+        });
+        match request {
+            Some(request) => requests.push(request),
+            None => files.push(path.clone()),
+        }
     }
-    let files: Vec<PathBuf> = files.into_iter().cloned().collect();
+    offer_requests(app, requests);
     let opened = grant_paths(app, &files);
     deliver(app, opened);
 }
@@ -162,6 +164,7 @@ pub(crate) fn open_recent(app: &AppHandle, id: &str) -> OpenedFiles {
             opened.files.push(file);
         }
         Err(FileError::NotPdf) => opened.skipped.push(name),
+        Err(FileError::Reserved) => opened.refused.push(name),
         Err(_) => opened.unavailable.push(name),
     }
     opened
@@ -294,7 +297,7 @@ pub fn run() {
     builder
         .plugin(window_state_plugin(data_dir.as_deref()))
         .plugin(tauri_plugin_dialog::init())
-        .manage(FileGrants::default())
+        .manage(FileGrants::new(data_dir.clone()))
         .manage(LaunchQueue::default())
         .manage(TransferQueue::default())
         .manage(CloseGuard::default())

@@ -276,6 +276,18 @@ pub fn pending_requests(base: &Path) -> Vec<TransferRequest> {
     pending.into_iter().map(|(_, request)| request).collect()
 }
 
+/// Whether `path` has the shape of a spooled document of any Folio:
+/// `…/incoming/<uuid>/document.pdf` (or its `.part`).
+pub fn looks_like_spool_document(path: &Path) -> bool {
+    let name = path.file_name();
+    let dir = path.parent();
+    let id = dir.and_then(Path::file_name).and_then(|id| id.to_str());
+    let spool = dir.and_then(Path::parent).and_then(Path::file_name);
+    (name == Some(DOCUMENT_FILE.as_ref()) || name == Some(PART_FILE.as_ref()))
+        && id.is_some_and(is_valid_id)
+        && spool == Some(INCOMING_DIR.as_ref())
+}
+
 /// The transfer whose spooled document `path` is (macOS hands the app the
 /// document instead of `--incoming <uuid>`).
 pub fn transfer_for_document(base: &Path, path: &Path) -> Option<String> {
@@ -567,6 +579,29 @@ mod tests {
             transfer_for_document(dir.path(), &other.join(DOCUMENT_FILE)),
             None
         );
+    }
+
+    #[test]
+    fn recognizes_the_shape_of_spooled_documents() {
+        let id = new_id();
+        let base = Path::new("/somewhere/io.github.albird97.folio/incoming");
+        for name in [DOCUMENT_FILE, PART_FILE] {
+            assert!(looks_like_spool_document(&base.join(&id).join(name)));
+        }
+        assert!(looks_like_spool_document(
+            &Path::new("/other/incoming").join(&id).join(DOCUMENT_FILE)
+        ));
+        for path in [
+            base.join(&id).join(META_FILE),
+            base.join("not-a-uuid").join(DOCUMENT_FILE),
+            Path::new("/somewhere/outgoing")
+                .join(&id)
+                .join(DOCUMENT_FILE),
+            base.join(DOCUMENT_FILE),
+            PathBuf::from(DOCUMENT_FILE),
+        ] {
+            assert!(!looks_like_spool_document(&path), "{}", path.display());
+        }
     }
 
     #[test]
