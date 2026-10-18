@@ -96,10 +96,15 @@ describe('capability matrix', () => {
 
   it('flags adapters that claim unsupported features', () => {
     // What the extension reports, plus a feature it does not have.
-    const chrome = { ...WEB_FEATURES, openFromUrl: true, browserTabIntegration: true };
+    const chrome = {
+      ...WEB_FEATURES,
+      openFromUrl: true,
+      browserTabIntegration: true,
+      nativeMessaging: true,
+    };
     expect(runtimeMismatches(chrome, 'chrome')).toEqual([]);
-    expect(runtimeMismatches({ ...chrome, nativeMessaging: true }, 'chrome')).toEqual([
-      expect.stringContaining('native-messaging'),
+    expect(runtimeMismatches({ ...chrome, fileAssociations: true }, 'chrome')).toEqual([
+      expect.stringContaining('open-file-association'),
     ]);
   });
 });

@@ -90,10 +90,7 @@ async function handle(
     case 'status/get':
       return {
         ok: true,
-        status: {
-          version: chrome.runtime.getManifest().version,
-          desktopIntegration: 'unavailable',
-        },
+        status: { version: chrome.runtime.getManifest().version },
       };
   }
 }

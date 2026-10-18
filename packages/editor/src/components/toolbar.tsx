@@ -33,6 +33,7 @@ import { COMMAND_SHORTCUTS } from '../commands';
 import { useActiveDocument, useUi, useWorkspaceContext } from '../context';
 import { formatBytes } from '../format';
 import { useSaveAs } from '../hooks/use-save-as';
+import { useSendToDesktop } from '../hooks/use-send-to-desktop';
 import { PageControls, ZoomControls } from './viewer-controls';
 
 const THEME_META: Record<ThemePreference, { label: string; Icon: typeof Sun }> = {
@@ -65,6 +66,7 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
   const nextTheme = THEME_META[nextThemePreference(theme)].label.replace('Theme: ', '');
   const desktop = adapter.platform === 'desktop';
   const saveAs = useSaveAs();
+  const sendToDesktop = useSendToDesktop();
   const inPlace = adapter.features.saveInPlace && doc?.saveTarget != null;
 
   return (
@@ -169,6 +171,14 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
               <DropdownMenuItem onSelect={() => onCommand('save-copy')}>
                 {desktop ? 'Save a copy of the original…' : 'Download the original'}
               </DropdownMenuItem>
+              {sendToDesktop ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => doc && sendToDesktop(doc.key)}>
+                    Open in Folio for desktop…
+                  </DropdownMenuItem>
+                </>
+              ) : null}
               {adapter.features.printing ? (
                 <>
                   <DropdownMenuSeparator />

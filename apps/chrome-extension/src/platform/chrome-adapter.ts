@@ -8,6 +8,7 @@ import {
   type RuntimeFeatures,
 } from '@folio/platform-adapters';
 import { createChromeStorage } from '../shared/chrome-storage';
+import { requestDesktopAccess, sendToDesktop } from '../shared/desktop';
 import { downloadPdf, originPattern, parseWebUrl } from '../shared/web-pdf';
 
 /** What the extension supports today. Checked against the capability matrix in tests. */
@@ -17,6 +18,7 @@ export const CHROME_FEATURES: RuntimeFeatures = {
   clipboardWrite: true,
   openFromUrl: true,
   browserTabIntegration: true,
+  nativeMessaging: true,
 };
 
 /**
@@ -64,5 +66,10 @@ export function createChromePlatformAdapter(): PlatformAdapter & {
       storage: createChromeStorage(),
     }),
     openUrl: (url, options = {}) => openWebPdf(url, { ...options, ask: true }),
+    async sendToDesktop({ name, bytes, onProgress }) {
+      // First, while the click still counts: Chrome asks only the first time.
+      if (!(await requestDesktopAccess())) return { status: 'permission-denied' };
+      return sendToDesktop({ name, bytes: await bytes() }, onProgress ? { onProgress } : {});
+    },
   };
 }

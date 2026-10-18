@@ -572,6 +572,30 @@ function PrintDialog({ request }: { request: Of<'print'> }) {
   );
 }
 
+function DesktopMissingDialog() {
+  return (
+    <DialogContent>
+      <DialogTitle>Folio for desktop is not connected</DialogTitle>
+      <DialogDescription>
+        Chrome could not reach the Folio desktop app. To open documents from Chrome there:
+      </DialogDescription>
+      <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm">
+        <li>Install Folio for desktop on this computer (macOS or Windows) and open it.</li>
+        <li>
+          Choose <span className="font-medium">Connect to Chrome…</span> in its File menu and allow
+          it.
+        </li>
+        <li>Try again here. Folio for desktop asks you before it opens anything.</li>
+      </ol>
+      <DialogFooter>
+        <DialogClose asChild>
+          <Button variant="primary">OK</Button>
+        </DialogClose>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
 /** The dialog the workspace asked for, if any; then documents sent from Chrome. */
 export function Dialogs() {
   const dialog = useUi((state) => state.dialog);
@@ -603,6 +627,8 @@ export function Dialogs() {
         <PrintDialog key={dialog.docKey} request={dialog} />
       ) : dialog?.kind === 'open-url' ? (
         <OpenUrlDialog request={dialog} />
+      ) : dialog?.kind === 'desktop-missing' ? (
+        <DesktopMissingDialog />
       ) : null}
     </Dialog>
   );

@@ -11,6 +11,7 @@ import {
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { useStore, type StoreApi } from 'zustand';
+import { checkDesktop, requestDesktopAccess, type DesktopStatus } from '../shared/desktop';
 import { sendMessage } from '../shared/messages';
 import {
   HOST_ACCESS_EXPLANATION,
@@ -196,6 +197,38 @@ function SiteAccess() {
   );
 }
 
+function DesktopConnection() {
+  const [status, setStatus] = useState<DesktopStatus | 'checking' | 'denied' | null>(null);
+  const check = () => {
+    setStatus('checking');
+    // Straight from the click: Chrome asks for the permission the first time.
+    void requestDesktopAccess().then(
+      (allowed) => (allowed ? checkDesktop().then(setStatus) : setStatus('denied')),
+      () => setStatus('denied'),
+    );
+  };
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <p className="max-w-prose text-xs text-ink-muted" role="status">
+        {status === null
+          ? 'To connect, install Folio for desktop and choose File › Connect to Chrome… there.'
+          : status === 'checking'
+            ? 'Checking…'
+            : status === 'denied'
+              ? 'Folio was not allowed to talk to the desktop app.'
+              : status.status === 'connected'
+                ? `Connected to Folio for desktop${status.version ? ` ${status.version}` : ''}.`
+                : status.status === 'not-installed'
+                  ? 'Not connected. Install Folio for desktop and choose File › Connect to Chrome… there.'
+                  : status.message}
+      </p>
+      <Button size="sm" onClick={check} disabled={status === 'checking'}>
+        Check connection
+      </Button>
+    </div>
+  );
+}
+
 function Options({ ui }: { ui: StoreApi<UiState> }) {
   const theme = useStore(ui, (state) => state.theme);
   const setTheme = useStore(ui, (state) => state.setTheme);
@@ -284,9 +317,9 @@ function Options({ ui }: { ui: StoreApi<UiState> }) {
 
           <Section
             title="Folio for desktop"
-            description="Sending documents from Chrome to the Folio desktop app is not available in this version. When it arrives, Folio will always ask before transferring a file."
+            description="Documents can be handed to the Folio desktop app from the editor and the side panel. Folio for desktop always asks before it opens a document, and declined documents are deleted."
           >
-            <p className="text-xs text-ink-muted">Status: not connected.</p>
+            <DesktopConnection />
           </Section>
         </div>
       </div>

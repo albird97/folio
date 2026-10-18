@@ -184,7 +184,16 @@ export type SendToDesktopResult =
   | { status: 'sent' }
   /** The desktop app is not installed or not registered for the extension. */
   | { status: 'not-installed' }
+  /** The user did not allow the extension to talk to the desktop app. */
+  | { status: 'permission-denied' }
   | { status: 'failed'; message: string };
+
+export interface SendToDesktopRequest {
+  name: string;
+  /** Read once the platform may send: after its permission prompt. */
+  bytes(): Promise<Uint8Array>;
+  onProgress?(sent: number, total: number): void;
+}
 
 export type OpenUrlErrorCode =
   /** The user did not grant access to the site. */
@@ -290,6 +299,10 @@ export interface PlatformAdapter {
    * Fails with {@link OpenUrlError}.
    */
   openUrl?(url: string, options?: OpenUrlOptions): Promise<IncomingFile>;
-  /** Extension: hands a document to the Folio desktop app through native messaging. */
-  sendToDesktop?(request: { name: string; bytes: Uint8Array }): Promise<SendToDesktopResult>;
+  /**
+   * Extension: hands a document to the Folio desktop app through native
+   * messaging; the app asks the user before opening it. Call it straight
+   * from a click: Chrome may ask for permission first.
+   */
+  sendToDesktop?(request: SendToDesktopRequest): Promise<SendToDesktopResult>;
 }

@@ -657,8 +657,17 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'App and platform',
     feature: 'Send documents between the extension and the desktop app',
     plannedPhase: 5,
-    targets: all(none()),
-    verification: '—',
+    targets: {
+      macos: none('The desktop side (native messaging host and approval prompt) is being merged.'),
+      windows: none(
+        'The desktop side (native messaging host and approval prompt) is being merged.',
+      ),
+      chrome: full(
+        'Open in Folio for desktop, from the editor (with your changes) or the side panel. Chrome asks for the permission the first time; the desktop app asks before it opens anything. When the app is missing or not connected, Folio explains how to set it up.',
+      ),
+    },
+    verification:
+      'Unit tests of the protocol against a scripted host; e2e (Chromium, Linux) sends documents from the side panel and the editor to the real desktop host binary, with the permission granted at install in a test copy of the extension (Chrome’s prompt cannot be automated).',
     runtimeFeature: 'nativeMessaging',
   },
   // Extension surfaces

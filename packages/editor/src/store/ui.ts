@@ -114,6 +114,8 @@ export type DialogRequest =
   /** Unsaved work kept from an earlier session. */
   | { kind: 'recover'; records: RecoveryRecord[] }
   | { kind: 'print'; docKey: string }
+  /** The Chrome extension could not reach the desktop app: how to set it up. */
+  | { kind: 'desktop-missing' }
   /** `url` and `error` show an address that failed to open (e.g. from the toolbar popup). */
   | {
       kind: 'open-url';

@@ -34,7 +34,6 @@ export type ExtensionMessage = z.infer<typeof messageSchema>;
 
 export interface ExtensionStatus {
   version: string;
-  desktopIntegration: 'unavailable';
 }
 
 export type MessageResponse =

@@ -176,7 +176,7 @@ a note below the table.
 | Autosave and crash recovery | ⛔ Not supported † | ⛔ Not supported † | ✅ Full † | 4 | Unit tests restore documents with their history, passwords asked again and damaged records refused; e2e (Chromium) restores after closing the tab and checks that saved work leaves nothing behind. |
 | Automatic updates | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 7 | — |
 | Installers | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | CI release builds on macOS and Windows runners (see README). |
-| Send documents between the extension and the desktop app | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
+| Send documents between the extension and the desktop app | ⛔ Not supported † | ⛔ Not supported † | ✅ Full † | 5 | Unit tests of the protocol against a scripted host; e2e (Chromium, Linux) sends documents from the side panel and the editor to the real desktop host binary, with the permission granted at install in a test copy of the extension (Chrome’s prompt cannot be automated). |
 
 - **Native menus (macOS):** Folio (app), File, Edit, View and Window menus, with Save a Copy, Find and the zoom, rotation and Go to Page commands. Implemented and built in CI, but not yet verified on a real Mac.
 - **Native menus (Windows):** File, Edit, View and Help menus in the window menu bar, with the same commands. Implemented and built in CI, but not yet verified on a real Windows PC.
@@ -196,6 +196,9 @@ a note below the table.
 - **Installers (macOS):** Unsigned .app/.dmg; Developer ID signing and notarization need Apple credentials.
 - **Installers (Windows):** Unsigned NSIS .exe and .msi; Authenticode signing needs a certificate.
 - **Installers (Chrome):** Unpacked build and a Web Store zip; not yet published.
+- **Send documents between the extension and the desktop app (macOS):** The desktop side (native messaging host and approval prompt) is being merged.
+- **Send documents between the extension and the desktop app (Windows):** The desktop side (native messaging host and approval prompt) is being merged.
+- **Send documents between the extension and the desktop app (Chrome):** Open in Folio for desktop, from the editor (with your changes) or the side panel. Chrome asks for the permission the first time; the desktop app asks before it opens anything. When the app is missing or not connected, Folio explains how to set it up.
 
 ## Chrome extension
 

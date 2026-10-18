@@ -2,8 +2,9 @@ import { formatBytes, formatPageSize } from '@folio/editor';
 import { isPdfError, type PdfDocumentHandle, type PdfEngine } from '@folio/pdf-core';
 import { incomingFromFile, pickFilesWithInput } from '@folio/platform-adapters';
 import { Banner, Button, cn, FolioWordmark, ICON, Spinner } from '@folio/shared-ui';
-import { ExternalLink, FileUp, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { ExternalLink, FileUp, LockKeyhole, Monitor, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { requestDesktopAccess, sendToDesktop } from '../shared/desktop';
 import { sendMessage } from '../shared/messages';
 import { deleteHandoff, putHandoff } from '../shared/handoff';
 import { openEditor } from '../shared/surface';
@@ -57,6 +58,62 @@ function Fact({ label, value }: { label: string; value: string }) {
       <dd className="min-w-0 truncate text-right" data-selectable>
         {value}
       </dd>
+    </div>
+  );
+}
+
+/** Hands the inspected PDF to the desktop app, which asks the user before opening it. */
+function SendToDesktop({ name, bytes }: { name: string; bytes: Uint8Array }) {
+  const [state, setState] = useState<
+    { kind: 'idle' } | { kind: 'sending' } | { kind: 'done'; tone: 'info' | 'danger'; text: string }
+  >({ kind: 'idle' });
+  const send = () => {
+    setState({ kind: 'sending' });
+    // Straight from the click: Chrome asks for the permission the first time.
+    void requestDesktopAccess()
+      .then((allowed) =>
+        allowed ? sendToDesktop({ name, bytes }) : ({ status: 'permission-denied' } as const),
+      )
+      .then(
+        (result) =>
+          setState(
+            result.status === 'sent'
+              ? {
+                  kind: 'done',
+                  tone: 'info',
+                  text: 'Sent. Open it from Folio for desktop’s prompt.',
+                }
+              : result.status === 'not-installed'
+                ? {
+                    kind: 'done',
+                    tone: 'danger',
+                    text: 'Folio for desktop is not connected. Install it, choose File › Connect to Chrome… there, then try again.',
+                  }
+                : result.status === 'permission-denied'
+                  ? {
+                      kind: 'done',
+                      tone: 'info',
+                      text: 'Folio was not allowed to talk to the desktop app, so nothing was sent.',
+                    }
+                  : { kind: 'done', tone: 'danger', text: result.message },
+          ),
+        () => setState({ kind: 'done', tone: 'danger', text: 'The document could not be sent.' }),
+      );
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Button disabled={state.kind === 'sending'} onClick={send}>
+        <Monitor size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
+        {state.kind === 'sending' ? 'Sending…' : 'Open in Folio for desktop'}
+      </Button>
+      {state.kind === 'done' ? (
+        <p
+          role={state.tone === 'danger' ? 'alert' : 'status'}
+          className={state.tone === 'danger' ? 'text-xs text-danger-ink' : 'text-xs text-ink-muted'}
+        >
+          {state.text}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -290,6 +347,7 @@ export function SidePanel({ engine }: { engine: PdfEngine }) {
               <ExternalLink size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
               Open in editor
             </Button>
+            <SendToDesktop name={state.name} bytes={state.bytes} />
             <PdfTools
               key={`${state.name}:${state.bytes.byteLength}`}
               name={state.name}

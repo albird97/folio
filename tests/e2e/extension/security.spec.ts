@@ -39,10 +39,7 @@ test.describe('extension security', () => {
     expect(responses.malformed).toEqual({ ok: false, error: 'invalid-message' });
     expect(responses.oversized).toEqual({ ok: false, error: 'invalid-message' });
     expect(responses.badHandoff).toEqual({ ok: false, error: 'invalid-message' });
-    expect(responses.status).toMatchObject({
-      ok: true,
-      status: { desktopIntegration: 'unavailable' },
-    });
+    expect(responses.status).toMatchObject({ ok: true, status: { version: expect.any(String) } });
   });
 
   test('the content security policy blocks sending data to other servers', async ({
