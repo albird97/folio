@@ -301,5 +301,8 @@ export function movePagesOperation(
   if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex > rest.length) {
     throw new OperationError('invalid-index', `Cannot move pages to index ${toIndex}.`);
   }
-  return { type: 'pages/reorder', order: [...rest.slice(0, toIndex), ...moved, ...rest.slice(toIndex)] };
+  return {
+    type: 'pages/reorder',
+    order: [...rest.slice(0, toIndex), ...moved, ...rest.slice(toIndex)],
+  };
 }

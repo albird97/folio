@@ -39,7 +39,11 @@ export interface KeyLike {
 }
 
 /** Matches a keyboard event against shortcut notation. */
-export function matchesShortcut(event: KeyLike, shortcut: string, platform: ShortcutPlatform): boolean {
+export function matchesShortcut(
+  event: KeyLike,
+  shortcut: string,
+  platform: ShortcutPlatform,
+): boolean {
   const parts = shortcut.split('+');
   const key = parts.at(-1)!;
   const wants = new Set(parts.slice(0, -1));

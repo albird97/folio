@@ -11,6 +11,7 @@ export type FixtureName =
   | 'rotated-pages.pdf'
   | 'encrypted-user-password.pdf'
   | 'encrypted-owner-restricted.pdf'
+  | 'encrypted-rc4.pdf'
   | 'not-a-pdf.pdf'
   | 'empty.pdf'
   | 'header-only.pdf';

@@ -8,8 +8,10 @@ import type { WorkspaceDocument } from '../store/workspace';
 export function LoadingState({ doc }: { doc: WorkspaceDocument }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-ink-muted">
-      <Spinner label={`Opening ${doc.fileName}`} />
-      <p className="text-sm">Opening {doc.fileName}…</p>
+      <Spinner />
+      <p role="status" className="text-sm">
+        Opening {doc.fileName}…
+      </p>
     </div>
   );
 }
@@ -41,8 +43,8 @@ export function PasswordState({ doc }: { doc: WorkspaceDocument }) {
           This PDF is password protected
         </h2>
         <p className="mt-1 text-sm text-ink-muted">
-          Enter the password to open <span className="font-medium text-ink">{doc.fileName}</span>. It is only
-          kept in memory on this device.
+          Enter the password to open <span className="font-medium text-ink">{doc.fileName}</span>.
+          It is only kept in memory on this device.
         </p>
         <div className="mt-4 flex flex-col gap-1.5">
           <Label htmlFor={`${id}-password`}>Password</Label>
@@ -90,7 +92,9 @@ export function ErrorState({ doc }: { doc: WorkspaceDocument }) {
         <span className="flex size-10 items-center justify-center rounded-md bg-danger-soft text-danger-ink">
           <FileWarning size={ICON.lg} strokeWidth={ICON.stroke} aria-hidden />
         </span>
-        <h2 className="mt-4 text-lg font-semibold">{ERROR_TITLES[code] ?? 'Couldn’t open this file'}</h2>
+        <h2 className="mt-4 text-lg font-semibold">
+          {ERROR_TITLES[code] ?? 'Couldn’t open this file'}
+        </h2>
         <p className="mt-1 text-sm text-ink-muted">
           <span className="font-medium text-ink">{doc.fileName}</span> — {doc.error?.message}
         </p>

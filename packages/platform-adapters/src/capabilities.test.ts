@@ -31,7 +31,10 @@ describe('capability matrix', () => {
   });
 
   it('keeps PLATFORM_CAPABILITIES.md in sync (run `pnpm capabilities:generate`)', () => {
-    const file = readFileSync(join(import.meta.dirname, '../../../PLATFORM_CAPABILITIES.md'), 'utf8');
+    const file = readFileSync(
+      join(import.meta.dirname, '../../../PLATFORM_CAPABILITIES.md'),
+      'utf8',
+    );
     expect(file).toBe(renderCapabilityMarkdown());
   });
 

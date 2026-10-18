@@ -34,8 +34,7 @@ export const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends ComponentPropsWithRef<'button'>,
-    VariantProps<typeof buttonVariants> {
+  extends ComponentPropsWithRef<'button'>, VariantProps<typeof buttonVariants> {
   /** Render the child element (e.g. a link) with button styling. */
   asChild?: boolean;
 }

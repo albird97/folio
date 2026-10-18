@@ -6,12 +6,12 @@ import {
   type IncomingFile,
   type OperatingSystem,
   type PlatformAdapter,
-  type RuntimeFeatures,
 } from '@folio/platform-adapters';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { TAURI_FEATURES } from './features';
 
 /** Mirrors `files::GrantedFile` in Rust. */
 interface GrantedFile {
@@ -38,20 +38,6 @@ interface CommandError {
   message: string;
 }
 
-/** What the desktop build supports. Checked against the capability matrix in tests. */
-export const TAURI_FEATURES: RuntimeFeatures = {
-  nativeFileDialogs: true,
-  webDragAndDrop: false,
-  nativeDragAndDrop: true,
-  fileAssociations: true,
-  nativeMenus: true,
-  saveInPlace: false,
-  printing: false,
-  clipboardWrite: true,
-  browserTabIntegration: false,
-  nativeMessaging: false,
-};
-
 const MENU_COMMANDS: ReadonlySet<string> = new Set<AppCommand>([
   'open',
   'close-tab',
@@ -65,7 +51,11 @@ const MENU_COMMANDS: ReadonlySet<string> = new Set<AppCommand>([
 function toPdfError(error: unknown): Error {
   const value = error as Partial<CommandError> | undefined;
   if (value?.code === 'too-large') return new PdfError('too-large');
-  if (value?.code === 'not-found') return new PdfError('unknown', 'The file could not be found. It may have been moved or deleted.');
+  if (value?.code === 'not-found')
+    return new PdfError(
+      'unknown',
+      'The file could not be found. It may have been moved or deleted.',
+    );
   return new PdfError('unknown', value?.message ?? 'The file could not be read.');
 }
 
@@ -76,7 +66,9 @@ function grantedToIncoming(file: GrantedFile): IncomingFile {
     origin: { kind: 'local-file', handle: file.token },
     async read() {
       try {
-        return new Uint8Array(await invoke<ArrayBuffer>('read_granted_file', { token: file.token }));
+        return new Uint8Array(
+          await invoke<ArrayBuffer>('read_granted_file', { token: file.token }),
+        );
       } catch (error) {
         throw toPdfError(error);
       }
@@ -142,7 +134,9 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
     features: TAURI_FEATURES,
     storage: createLocalStorage('folio:'),
     async pickPdfFiles(options) {
-      const files = await invoke<GrantedFile[]>('pick_pdf_files', { multiple: options?.multiple ?? false });
+      const files = await invoke<GrantedFile[]>('pick_pdf_files', {
+        multiple: options?.multiple ?? false,
+      });
       return files.map(grantedToIncoming);
     },
     onIncomingFiles: (listener) => incoming.subscribe(listener),

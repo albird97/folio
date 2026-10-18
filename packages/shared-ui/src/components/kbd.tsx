@@ -12,7 +12,7 @@ export function Kbd({
 }) {
   const parts = formatShortcut(shortcut, platform);
   return (
-    <kbd className={cn('inline-flex items-center font-sans text-[0.9em] opacity-80', className)}>
+    <kbd className={cn('inline-flex items-center font-sans text-[0.9em]', className)}>
       {parts.map((part, index) => (
         <span key={index} className="min-w-[1ch] text-center">
           {platform === 'macos' || index === 0 ? part : `+${part}`}

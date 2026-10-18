@@ -70,7 +70,7 @@
     "macOS": {
       "minimumSystemVersion": "13.3",
       "hardenedRuntime": true,
-      "signingIdentity": null
+      "signingIdentity": "-"
     },
     "windows": {
       "digestAlgorithm": "sha256",

@@ -19,7 +19,8 @@ export interface RecoverySnapshot {
   view: DocumentViewState;
 }
 
-export type SnapshotErrorCode = 'invalid-json' | 'unsupported-format' | 'invalid-shape' | 'inconsistent';
+export type SnapshotErrorCode =
+  'invalid-json' | 'unsupported-format' | 'invalid-shape' | 'inconsistent';
 
 export class SnapshotError extends Error {
   override readonly name = 'SnapshotError';
@@ -60,7 +61,11 @@ const source = z.object({
 const page = z.object({
   id: id('page'),
   source: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('source'), sourceId: id('source'), pageIndex: z.number().int().nonnegative() }),
+    z.object({
+      kind: z.literal('source'),
+      sourceId: id('source'),
+      pageIndex: z.number().int().nonnegative(),
+    }),
     z.object({ kind: z.literal('blank') }),
   ]),
   size,

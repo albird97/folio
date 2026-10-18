@@ -40,6 +40,14 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
 
   void storage.get<unknown>(UI_STORAGE_KEY).then((stored) => {
     store.setState({ ...sanitize(stored), hydrated: true });
+    // Follow changes from other pages (e.g. the extension's options page).
+    storage.watch?.(UI_STORAGE_KEY, (value) => {
+      const next = sanitize(value);
+      const current = store.getState();
+      if ((Object.keys(next) as Array<keyof Persisted>).some((key) => next[key] !== current[key])) {
+        store.setState(next);
+      }
+    });
     store.subscribe((state, previous) => {
       if (
         state.theme !== previous.theme ||

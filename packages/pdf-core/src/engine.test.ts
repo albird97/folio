@@ -24,7 +24,9 @@ describe('PDF engine', () => {
     expect(info.encryption).toBe('none');
     expect(info.permissions).toBeNull();
     expect(info.forms).toBe('none');
-    expect(info.pages.map((page) => [Math.round(page.size.width), Math.round(page.size.height)])).toEqual([
+    expect(
+      info.pages.map((page) => [Math.round(page.size.width), Math.round(page.size.height)]),
+    ).toEqual([
       [612, 792],
       [595, 842],
       [792, 612],
@@ -77,7 +79,10 @@ describe('PDF engine', () => {
   });
 
   it('requires a password for user-password PDFs', async () => {
-    await expectPdfError(engine.open(readFixture('encrypted-user-password.pdf')), 'password-required');
+    await expectPdfError(
+      engine.open(readFixture('encrypted-user-password.pdf')),
+      'password-required',
+    );
     await expectPdfError(
       engine.open(readFixture('encrypted-user-password.pdf'), { password: 'wrong' }),
       'incorrect-password',
@@ -87,6 +92,16 @@ describe('PDF engine', () => {
     });
     expect(handle.info.pageCount).toBe(3);
     expect(handle.info.encryption).toBe('password-protected');
+    expect(handle.info.metadata.title).toBe('Folio Basic Fixture');
+    await handle.destroy();
+  });
+
+  it('decrypts legacy RC4-encrypted PDFs', async () => {
+    await expectPdfError(engine.open(readFixture('encrypted-rc4.pdf')), 'password-required');
+    const handle = await engine.open(readFixture('encrypted-rc4.pdf'), {
+      password: FIXTURE_PASSWORD,
+    });
+    expect(handle.info.pageCount).toBe(3);
     expect(handle.info.metadata.title).toBe('Folio Basic Fixture');
     await handle.destroy();
   });
@@ -105,7 +120,11 @@ describe('PDF engine', () => {
   });
 
   it('enforces the size limit before parsing', async () => {
-    const small = createPdfEngine({ workerSrc: nodeWorkerSrc(), assetBaseUrl: null, maxFileBytes: 100 });
+    const small = createPdfEngine({
+      workerSrc: nodeWorkerSrc(),
+      assetBaseUrl: null,
+      maxFileBytes: 100,
+    });
     await expectPdfError(small.open(readFixture('basic-3-pages.pdf')), 'too-large');
     small.destroy();
   });

@@ -28,7 +28,13 @@ export interface WorkspaceProviderProps {
   stores?: { workspace: WorkspaceStore; ui: StoreApi<UiState> };
 }
 
-export function WorkspaceProvider({ adapter, engine, profile, children, stores }: WorkspaceProviderProps) {
+export function WorkspaceProvider({
+  adapter,
+  engine,
+  profile,
+  children,
+  stores,
+}: WorkspaceProviderProps) {
   const [value] = useState<WorkspaceContextValue>(() => ({
     adapter,
     workspace: stores?.workspace ?? createWorkspaceStore(engine),
@@ -64,5 +70,7 @@ export function useUi<T>(selector: (state: UiState) => T): T {
 }
 
 export function useActiveDocument() {
-  return useWorkspace((state) => state.documents.find((doc) => doc.key === state.activeKey) ?? null);
+  return useWorkspace(
+    (state) => state.documents.find((doc) => doc.key === state.activeKey) ?? null,
+  );
 }

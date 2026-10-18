@@ -63,7 +63,11 @@ describe('history', () => {
     let state = createEditorState(sampleModel(1), 5);
     const pageId = state.model.pages[0]!.id;
     for (let i = 0; i < 12; i += 1) {
-      state = execute(state, { type: 'pages/rotate', pageIds: [pageId], delta: 90 }, { label: `${i}` });
+      state = execute(
+        state,
+        { type: 'pages/rotate', pageIds: [pageId], delta: 90 },
+        { label: `${i}` },
+      );
     }
     expect(state.history.past).toHaveLength(5);
     expect(undoLabel(state)).toBe('11');
@@ -105,7 +109,11 @@ describe('history', () => {
     let state = createEditorState(sampleModel(500));
     const pageIds = state.model.pages.map((page) => page.id);
     for (let i = 0; i < 50; i += 1) {
-      state = execute(state, { type: 'pages/rotate', pageIds: [pageIds[i]!], delta: 90 }, { label: 'r' });
+      state = execute(
+        state,
+        { type: 'pages/rotate', pageIds: [pageIds[i]!], delta: 90 },
+        { label: 'r' },
+      );
     }
     // Each entry is a small, ID-only operation.
     const size = JSON.stringify(state.history).length;

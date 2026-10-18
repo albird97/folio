@@ -64,7 +64,8 @@ async function test(name, fn) {
 }
 
 const run = (script, args = []) => wd('POST', `/session/${session}/execute/sync`, { script, args });
-const runAsync = (script, args = []) => wd('POST', `/session/${session}/execute/async`, { script, args });
+const runAsync = (script, args = []) =>
+  wd('POST', `/session/${session}/execute/async`, { script, args });
 
 async function waitFor(script, timeout = 15000) {
   const started = Date.now();
@@ -88,12 +89,16 @@ try {
     await waitFor(`return document.querySelector('[data-render-state="done"]') !== null`);
     const title = await run(`return document.querySelector('[role="toolbar"] h1')?.textContent`);
     assert.equal(title, 'Folio Basic Fixture');
-    const tab = await run(`return document.querySelector('nav[aria-label="Open documents"] [aria-current="page"]')?.textContent`);
+    const tab = await run(
+      `return document.querySelector('nav[aria-label="Open documents"] [aria-current="page"]')?.textContent`,
+    );
     assert.match(tab, /basic-3-pages\.pdf/);
   });
 
   await test('renders the page with PDF.js inside the system webview', async () => {
-    const size = await run(`const c = document.querySelector('[data-testid="page-canvas"]'); return [c.width, c.height]`);
+    const size = await run(
+      `const c = document.querySelector('[data-testid="page-canvas"]'); return [c.width, c.height]`,
+    );
     assert.ok(size[0] > 100 && size[1] > 100, `canvas is ${size}`);
     const inked = await run(`
       const c = document.querySelector('[data-testid="page-canvas"]');
@@ -131,7 +136,9 @@ try {
 
   await test('closing the last tab returns to the start screen', async () => {
     await run(`document.querySelector('button[aria-label="Close basic-3-pages.pdf"]').click()`);
-    await waitFor(`return document.querySelector('main')?.textContent?.includes('Open a PDF to get started')`);
+    await waitFor(
+      `return document.querySelector('main')?.textContent?.includes('Open a PDF to get started')`,
+    );
   });
 } catch (error) {
   failed = true;

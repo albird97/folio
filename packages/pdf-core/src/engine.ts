@@ -275,10 +275,8 @@ export function createPdfEngine(config: PdfEngineConfig): PdfEngine {
             typeof pdfInfo.PDFFormatVersion === 'string'
               ? pdfInfo.PDFFormatVersion
               : sniff.headerVersion,
-          metadata: normalizeMetadata(
-            pdfInfo,
-            (metadata as XmpLike | null) ?? null,
-            (value) => PDFDateString.toDateObject(value),
+          metadata: normalizeMetadata(pdfInfo, (metadata as XmpLike | null) ?? null, (value) =>
+            PDFDateString.toDateObject(value),
           ),
           pages,
           encryption,

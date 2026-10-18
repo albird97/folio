@@ -1,4 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Node types are for the store tests that read fixture files.
+    "types": ["node"]
+  },
   "include": ["src"]
 }

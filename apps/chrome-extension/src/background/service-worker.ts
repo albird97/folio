@@ -1,0 +1,94 @@
+/**
+ * Folio's service worker. Chrome stops it whenever it is idle, so it keeps no
+ * state in memory: everything lives in chrome.storage and IndexedDB, and
+ * every listener is registered synchronously at the top level.
+ */
+import { appendActivity, redactActivity, type ActivityEntry } from '../shared/activity';
+import { parseMessage, type MessageResponse } from '../shared/messages';
+import { purgeExpiredHandoffs } from '../shared/handoff';
+import { ACTIVITY_KEY, DEFAULT_SETTINGS, parseSettings, SETTINGS_KEY } from '../shared/settings';
+
+async function readActivity(): Promise<ActivityEntry[]> {
+  const stored = (await chrome.storage.local.get(ACTIVITY_KEY))[ACTIVITY_KEY];
+  return Array.isArray(stored) ? (stored as ActivityEntry[]) : [];
+}
+
+async function readSettings() {
+  return parseSettings((await chrome.storage.local.get(SETTINGS_KEY))[SETTINGS_KEY]);
+}
+
+/** Only this extension's own pages may talk to the worker. */
+function isTrustedSender(sender: chrome.runtime.MessageSender): boolean {
+  return (
+    sender.id === chrome.runtime.id && (sender.url ?? '').startsWith(chrome.runtime.getURL(''))
+  );
+}
+
+async function handle(
+  raw: unknown,
+  sender: chrome.runtime.MessageSender,
+): Promise<MessageResponse> {
+  if (!isTrustedSender(sender)) return { ok: false, error: 'forbidden-sender' };
+  const message = parseMessage(raw);
+  if (!message) return { ok: false, error: 'invalid-message' };
+
+  switch (message.type) {
+    case 'activity/record': {
+      const [log, settings] = await Promise.all([readActivity(), readSettings()]);
+      const next = appendActivity(log, message, settings, new Date(), crypto.randomUUID());
+      await chrome.storage.local.set({ [ACTIVITY_KEY]: next });
+      return { ok: true, activity: next };
+    }
+    case 'activity/clear':
+      await chrome.storage.local.set({ [ACTIVITY_KEY]: [] });
+      return { ok: true, activity: [] };
+    case 'editor/open': {
+      const url = new URL(chrome.runtime.getURL('editor.html'));
+      if (message.handoffId) url.searchParams.set('handoff', message.handoffId);
+      await chrome.tabs.create({ url: url.href });
+      return { ok: true };
+    }
+    case 'status/get':
+      return {
+        ok: true,
+        status: {
+          version: chrome.runtime.getManifest().version,
+          desktopIntegration: 'unavailable',
+        },
+      };
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  handle(message, sender).then(sendResponse, () => sendResponse({ ok: false, error: 'failed' }));
+  return true; // Keeps the channel open for the async response.
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  void (async () => {
+    const stored = (await chrome.storage.local.get(SETTINGS_KEY))[SETTINGS_KEY];
+    await chrome.storage.local.set({
+      [SETTINGS_KEY]: { ...DEFAULT_SETTINGS, ...parseSettings(stored) },
+    });
+    // The toolbar button opens the popup; the side panel is opened from there.
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+    await purgeExpiredHandoffs();
+  })();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void purgeExpiredHandoffs();
+});
+
+// Turning off "file names in activity" removes names that were already stored.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !(SETTINGS_KEY in changes)) return;
+  const settings = parseSettings(changes[SETTINGS_KEY]?.newValue);
+  void readActivity().then((log) => {
+    if (!settings.activityEnabled) return chrome.storage.local.set({ [ACTIVITY_KEY]: [] });
+    if (!settings.activityIncludesNames && log.some((entry) => entry.fileName !== null)) {
+      return chrome.storage.local.set({ [ACTIVITY_KEY]: redactActivity(log) });
+    }
+    return undefined;
+  });
+});

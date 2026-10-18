@@ -6,7 +6,10 @@ import { useActiveDocument } from '../context';
 export function StatusBar() {
   const doc = useActiveDocument();
   const source = doc?.editor ? primarySource(doc.editor.model) : null;
-  const current = doc?.editor && doc.view ? doc.editor.model.pages.findIndex((page) => page.id === doc.view?.currentPageId) : -1;
+  const current =
+    doc?.editor && doc.view
+      ? doc.editor.model.pages.findIndex((page) => page.id === doc.view?.currentPageId)
+      : -1;
   return (
     <footer className="flex h-7 shrink-0 items-center justify-between gap-4 border-t border-line bg-bg px-3 text-2xs text-ink-muted">
       <span className="truncate tabular">

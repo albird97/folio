@@ -1,12 +1,5 @@
 import type { Point, Rect, Rotation, Size } from './geometry';
-import type {
-  AnnotationId,
-  AssetId,
-  DocumentId,
-  FormFieldId,
-  PageId,
-  SourceId,
-} from './ids';
+import type { AnnotationId, AssetId, DocumentId, FormFieldId, PageId, SourceId } from './ids';
 
 export const DOCUMENT_SCHEMA_VERSION = 1;
 
@@ -36,8 +29,7 @@ export interface SourceDocument {
 }
 
 export type PageSource =
-  | { kind: 'source'; sourceId: SourceId; pageIndex: number }
-  | { kind: 'blank' };
+  { kind: 'source'; sourceId: SourceId; pageIndex: number } | { kind: 'blank' };
 
 export interface PageModel {
   id: PageId;

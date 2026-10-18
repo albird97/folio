@@ -6,7 +6,10 @@ const bytes = (text: string) => new TextEncoder().encode(text);
 
 describe('sniffPdf', () => {
   it('detects the header and version', () => {
-    expect(sniffPdf(readFixture('basic-3-pages.pdf'))).toEqual({ isPdf: true, headerVersion: '1.7' });
+    expect(sniffPdf(readFixture('basic-3-pages.pdf'))).toEqual({
+      isPdf: true,
+      headerVersion: '1.7',
+    });
   });
 
   it('accepts leading junk within the first 1024 bytes', () => {

@@ -65,8 +65,6 @@ export const newOperationId = (): OperationId => make<OperationId>('operation');
 /** Returns true when `value` is a well-formed ID of the given kind. */
 export function isId(kind: IdKind, value: unknown): boolean {
   return (
-    typeof value === 'string' &&
-    ID_PATTERN.test(value) &&
-    value.startsWith(`${ID_PREFIXES[kind]}_`)
+    typeof value === 'string' && ID_PATTERN.test(value) && value.startsWith(`${ID_PREFIXES[kind]}_`)
   );
 }

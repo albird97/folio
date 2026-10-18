@@ -15,14 +15,20 @@ export function Welcome({ onOpen, hovering }: { onOpen(): void; hovering: boolea
         )}
       >
         <FolioMark className="size-14" />
-        <h1 className="mt-6 text-2xl font-semibold tracking-[-0.02em]">Open a PDF to get started</h1>
+        <h1 className="mt-6 text-2xl font-semibold tracking-[-0.02em]">
+          Open a PDF to get started
+        </h1>
         <p className="mt-2 max-w-sm text-base text-ink-muted">
           Drop PDF files anywhere in this window, or choose them from your computer.
         </p>
         <Button variant="primary" size="lg" className="mt-7" onClick={onOpen}>
           <FolderOpen size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
           Choose PDF…
-          <Kbd shortcut={COMMAND_SHORTCUTS[profile].open[0]!} platform={shortcutPlatform} className="ml-1" />
+          <Kbd
+            shortcut={COMMAND_SHORTCUTS[profile].open[0]!}
+            platform={shortcutPlatform}
+            className="ml-1"
+          />
         </Button>
         <p className="mt-10 flex items-center gap-1.5 text-xs text-ink-muted">
           <ShieldCheck size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />

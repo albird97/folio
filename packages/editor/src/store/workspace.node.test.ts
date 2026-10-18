@@ -26,26 +26,36 @@ describe('workspace store', () => {
 
   it('asks for a password, rejects a wrong one and unlocks with the right one', async () => {
     const store = createWorkspaceStore(engine);
-    await store.getState().openFiles([memoryFile('locked.pdf', readFixture('encrypted-user-password.pdf'))]);
+    await store
+      .getState()
+      .openFiles([memoryFile('locked.pdf', readFixture('encrypted-user-password.pdf'))]);
     const key = store.getState().documents[0]!.key;
     expect(store.getState().documents[0]?.status).toBe('needs-password');
     expect(store.getState().documents[0]?.passwordRejected).toBe(false);
 
     await store.getState().submitPassword(key, 'nope');
-    expect(store.getState().documents[0]).toMatchObject({ status: 'needs-password', passwordRejected: true });
+    expect(store.getState().documents[0]).toMatchObject({
+      status: 'needs-password',
+      passwordRejected: true,
+    });
 
     await store.getState().submitPassword(key, FIXTURE_PASSWORD);
-    expect(store.getState().documents[0]).toMatchObject({ status: 'ready', passwordRejected: false });
+    expect(store.getState().documents[0]).toMatchObject({
+      status: 'ready',
+      passwordRejected: false,
+    });
     expect(store.getState().documents[0]?.info?.encryption).toBe('password-protected');
     await store.destroy();
   });
 
   it('shows a typed error for invalid files and skips other file types', async () => {
     const store = createWorkspaceStore(engine);
-    await store.getState().openFiles([
-      memoryFile('notes.pdf', readFixture('not-a-pdf.pdf')),
-      memoryFile('photo.png', new Uint8Array([1, 2, 3])),
-    ]);
+    await store
+      .getState()
+      .openFiles([
+        memoryFile('notes.pdf', readFixture('not-a-pdf.pdf')),
+        memoryFile('photo.png', new Uint8Array([1, 2, 3])),
+      ]);
     const { documents, notice } = store.getState();
     expect(documents).toHaveLength(1);
     expect(documents[0]?.status).toBe('error');

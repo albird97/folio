@@ -41,8 +41,8 @@ const all = (support: TargetSupport): Record<ProductTarget, TargetSupport> => ({
   chrome: support,
 });
 
-const DESKTOP_UNVERIFIED =
-  'Unit/e2e tests on Linux (shared code + Rust); macOS and Windows behaviour not yet exercised by an automated test.';
+const NATIVE_DESKTOP =
+  'Rust unit tests on Linux, macOS and Windows CI runners; interactive behaviour checked manually.';
 
 export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   // Opening documents
@@ -54,9 +54,12 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: {
       macos: full('Native dialog shown by the Rust layer; the webview never receives a path.'),
       windows: full('Native dialog shown by the Rust layer; the webview never receives a path.'),
-      chrome: full('Picker in the editor page and side panel. The popup hands off to the editor because Chrome closes popups when a file dialog opens.'),
+      chrome: full(
+        'Picker in the editor page and side panel. The popup hands off to the editor because Chrome closes popups when a file dialog opens.',
+      ),
     },
-    verification: 'Extension: Playwright e2e. Desktop UI: Playwright e2e (web adapter); native dialog: manual.',
+    verification:
+      'Extension and desktop UI: Playwright e2e. The native dialog itself cannot be automated and is checked manually.',
   },
   {
     id: 'open-drag-drop',
@@ -68,7 +71,8 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
       windows: full('Dropped files are granted by the native layer.'),
       chrome: full('Drop onto the editor page or the side panel.'),
     },
-    verification: 'Extension and desktop UI: Playwright e2e. Native drop path: Rust unit tests for grant filtering.',
+    verification:
+      'Extension and desktop UI: Playwright e2e. Native drops: Rust unit tests for grant filtering; checked manually.',
     runtimeFeature: ['nativeDragAndDrop', 'webDragAndDrop'],
   },
   {
@@ -77,11 +81,16 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Open from Finder / File Explorer (file association)',
     plannedPhase: 4,
     targets: {
-      macos: limited('Handles Finder “Open With” events once the app bundle is installed; Folio is registered as an alternate PDF handler.'),
-      windows: limited('Opens a PDF passed on launch. Opening another file while Folio runs starts a second window until single-instance support lands.'),
+      macos: limited(
+        'Handles Finder “Open With” events once the app bundle is installed; Folio is registered as an alternate PDF handler.',
+      ),
+      windows: limited(
+        'Opens a PDF passed on launch. Opening another file while Folio runs starts a second window until single-instance support lands.',
+      ),
       chrome: none('Extensions cannot register as the operating system’s PDF handler.'),
     },
-    verification: DESKTOP_UNVERIFIED,
+    verification:
+      'Launch-argument opening: tauri-driver e2e against the real binary on Linux. Finder events and Explorer registration: compiled in CI, checked manually.',
     runtimeFeature: 'fileAssociations',
   },
   {
@@ -89,7 +98,11 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'Opening documents',
     feature: 'Open password-protected PDFs',
     plannedPhase: null,
-    targets: all(full('AES-256 and legacy RC4 encryption via PDF.js; the password is only kept in memory.')),
+    targets: all(
+      full(
+        'Standard security handler: AES-256 and legacy 128-bit RC4, both tested. The password is only kept in memory.',
+      ),
+    ),
     verification: 'Unit tests with qpdf-encrypted fixtures; extension e2e.',
   },
   {
@@ -143,18 +156,30 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'Viewing',
     feature: 'Render pages',
     plannedPhase: 2,
-    targets: all(limited('First-page preview only. The continuous, virtualized viewer arrives in Phase 2.')),
-    verification: 'E2E renders the preview canvas in Chromium; desktop webviews not yet automated.',
+    targets: all(
+      limited('First-page preview only. The continuous, virtualized viewer arrives in Phase 2.'),
+    ),
+    verification:
+      'E2E in Chromium (extension, desktop UI) and in WebKitGTK through the real desktop binary (tauri-driver).',
   },
   {
     id: 'thumbnails',
     area: 'Viewing',
     feature: 'Page thumbnails and navigation',
     plannedPhase: 2,
-    targets: all(limited('The Pages panel lists every page with its size and rotation; no thumbnails yet.')),
+    targets: all(
+      limited('The Pages panel lists every page with its size and rotation; no thumbnails yet.'),
+    ),
     verification: 'E2E.',
   },
-  { id: 'search', area: 'Viewing', feature: 'Text search', plannedPhase: 2, targets: all(none()), verification: '—' },
+  {
+    id: 'search',
+    area: 'Viewing',
+    feature: 'Text search',
+    plannedPhase: 2,
+    targets: all(none()),
+    verification: '—',
+  },
   {
     id: 'zoom-rotate-view',
     area: 'Viewing',
@@ -193,16 +218,31 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'Editing',
     feature: 'Add text (new content on top of the page)',
     plannedPhase: 3,
-    targets: all(none('Adds new text objects; editing the PDF’s existing text is a separate, later capability.')),
+    targets: all(
+      none(
+        'Adds new text objects; editing the PDF’s existing text is a separate, later capability.',
+      ),
+    ),
     verification: '—',
   },
-  { id: 'added-images', area: 'Editing', feature: 'Add images', plannedPhase: 3, targets: all(none()), verification: '—' },
+  {
+    id: 'added-images',
+    area: 'Editing',
+    feature: 'Add images',
+    plannedPhase: 3,
+    targets: all(none()),
+    verification: '—',
+  },
   {
     id: 'undo-redo',
     area: 'Editing',
     feature: 'Undo and redo',
     plannedPhase: 3,
-    targets: all(none('Operation-based history is implemented and tested in the shared core; no editing UI uses it yet.')),
+    targets: all(
+      none(
+        'Operation-based history is implemented and tested in the shared core; no editing UI uses it yet.',
+      ),
+    ),
     verification: 'Model unit tests.',
   },
   {
@@ -213,8 +253,22 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: all(none('Model operations exist; writing the result to a PDF does not.')),
     verification: 'Model unit tests.',
   },
-  { id: 'merge-split', area: 'Editing', feature: 'Merge and split', plannedPhase: 3, targets: all(none()), verification: '—' },
-  { id: 'metadata-edit', area: 'Editing', feature: 'Edit metadata', plannedPhase: 3, targets: all(none()), verification: '—' },
+  {
+    id: 'merge-split',
+    area: 'Editing',
+    feature: 'Merge and split',
+    plannedPhase: 3,
+    targets: all(none()),
+    verification: '—',
+  },
+  {
+    id: 'metadata-edit',
+    area: 'Editing',
+    feature: 'Edit metadata',
+    plannedPhase: 3,
+    targets: all(none()),
+    verification: '—',
+  },
   {
     id: 'watermarks',
     area: 'Editing',
@@ -229,11 +283,22 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'Saving and export',
     feature: 'Save and Save As',
     plannedPhase: 4,
-    targets: { macos: none(), windows: none(), chrome: none('Will download a copy; extensions cannot write back to the original file.') },
+    targets: {
+      macos: none(),
+      windows: none(),
+      chrome: none('Will download a copy; extensions cannot write back to the original file.'),
+    },
     verification: '—',
     runtimeFeature: 'saveInPlace',
   },
-  { id: 'export-pdf', area: 'Saving and export', feature: 'Export PDF', plannedPhase: 2, targets: all(none()), verification: '—' },
+  {
+    id: 'export-pdf',
+    area: 'Saving and export',
+    feature: 'Export PDF',
+    plannedPhase: 2,
+    targets: all(none()),
+    verification: '—',
+  },
   {
     id: 'export-images',
     area: 'Saving and export',
@@ -242,7 +307,14 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: all(none()),
     verification: '—',
   },
-  { id: 'extract-text', area: 'Saving and export', feature: 'Extract text', plannedPhase: 5, targets: all(none()), verification: '—' },
+  {
+    id: 'extract-text',
+    area: 'Saving and export',
+    feature: 'Extract text',
+    plannedPhase: 5,
+    targets: all(none()),
+    verification: '—',
+  },
   {
     id: 'printing',
     area: 'Saving and export',
@@ -261,8 +333,22 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     verification: '—',
   },
   // Advanced
-  { id: 'forms', area: 'Advanced tools', feature: 'Fill forms', plannedPhase: 6, targets: all(none()), verification: '—' },
-  { id: 'signatures', area: 'Advanced tools', feature: 'Place signatures', plannedPhase: 6, targets: all(none()), verification: '—' },
+  {
+    id: 'forms',
+    area: 'Advanced tools',
+    feature: 'Fill forms',
+    plannedPhase: 6,
+    targets: all(none()),
+    verification: '—',
+  },
+  {
+    id: 'signatures',
+    area: 'Advanced tools',
+    feature: 'Place signatures',
+    plannedPhase: 6,
+    targets: all(none()),
+    verification: '—',
+  },
   {
     id: 'ocr',
     area: 'Advanced tools',
@@ -279,7 +365,14 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: all(none()),
     verification: '—',
   },
-  { id: 'compression', area: 'Advanced tools', feature: 'Compress PDFs', plannedPhase: 6, targets: all(none()), verification: '—' },
+  {
+    id: 'compression',
+    area: 'Advanced tools',
+    feature: 'Compress PDFs',
+    plannedPhase: 6,
+    targets: all(none()),
+    verification: '—',
+  },
   // App & platform
   {
     id: 'native-menus',
@@ -291,7 +384,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
       windows: full('File, Edit, View and Help menus in the window menu bar.'),
       chrome: none('Not applicable.'),
     },
-    verification: DESKTOP_UNVERIFIED,
+    verification: NATIVE_DESKTOP,
     runtimeFeature: 'nativeMenus',
   },
   {
@@ -315,7 +408,11 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'App and platform',
     feature: 'Clipboard',
     plannedPhase: 4,
-    targets: all(limited('Copying document property values. Page content copying arrives with text selection.')),
+    targets: all(
+      limited(
+        'Copying document property values. Page content copying arrives with text selection.',
+      ),
+    ),
     verification: 'E2E.',
     runtimeFeature: 'clipboardWrite',
   },
@@ -332,7 +429,11 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'App and platform',
     feature: 'Automatic updates',
     plannedPhase: 7,
-    targets: { macos: none('Requires an updater signing key and a release feed.'), windows: none('Requires an updater signing key and a release feed.'), chrome: full('Handled by the Chrome Web Store once published.') },
+    targets: {
+      macos: none('Requires an updater signing key and a release feed.'),
+      windows: none('Requires an updater signing key and a release feed.'),
+      chrome: full('Handled by the Chrome Web Store once published.'),
+    },
     verification: '—',
   },
   {
@@ -341,7 +442,9 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Installers',
     plannedPhase: 4,
     targets: {
-      macos: limited('Unsigned .app/.dmg; Developer ID signing and notarization need Apple credentials.'),
+      macos: limited(
+        'Unsigned .app/.dmg; Developer ID signing and notarization need Apple credentials.',
+      ),
       windows: limited('Unsigned NSIS .exe and .msi; Authenticode signing needs a certificate.'),
       chrome: limited('Unpacked build and a Web Store zip; not yet published.'),
     },
@@ -373,7 +476,9 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: {
       macos: none('Not applicable.'),
       windows: none('Not applicable.'),
-      chrome: limited('Inspect a local PDF and hand it to the editor. Page tools arrive with Phase 5.'),
+      chrome: limited(
+        'Inspect a local PDF and hand it to the editor. Page tools arrive with Phase 5.',
+      ),
     },
     verification: 'Extension e2e.',
   },
@@ -391,8 +496,13 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'Privacy',
     feature: 'Local-only processing (no uploads, no analytics on content)',
     plannedPhase: null,
-    targets: all(full('No network requests are made with document data; the extension has no host permissions.')),
-    verification: 'Manifest permission test; CSP restricts connections to the app itself.',
+    targets: all(
+      full(
+        'No network requests are made with document data; the extension has no host permissions.',
+      ),
+    ),
+    verification:
+      'Extension e2e asserts no network requests while opening a document and no host permissions; the desktop CSP allows only the app itself and is checked by tauri-driver e2e.',
   },
 ];
 
@@ -414,7 +524,8 @@ export function runtimeMismatches(features: RuntimeFeatures, target: ProductTarg
   const problems: string[] = [];
   for (const entry of CAPABILITY_MATRIX) {
     if (!entry.runtimeFeature) continue;
-    const keys = typeof entry.runtimeFeature === 'string' ? [entry.runtimeFeature] : entry.runtimeFeature;
+    const keys =
+      typeof entry.runtimeFeature === 'string' ? [entry.runtimeFeature] : entry.runtimeFeature;
     const supported = entry.targets[target].level !== 'none';
     const reported = keys.some((key) => features[key]);
     if (supported !== reported) {
@@ -427,7 +538,11 @@ export function runtimeMismatches(features: RuntimeFeatures, target: ProductTarg
 }
 
 const escapeCell = (text: string) => text.replace(/\|/g, '\\|');
-const TARGET_NAMES: Record<ProductTarget, string> = { macos: 'macOS', windows: 'Windows', chrome: 'Chrome' };
+const TARGET_NAMES: Record<ProductTarget, string> = {
+  macos: 'macOS',
+  windows: 'Windows',
+  chrome: 'Chrome',
+};
 const TARGETS: ProductTarget[] = ['macos', 'windows', 'chrome'];
 
 export function renderCapabilityMarkdown(): string {

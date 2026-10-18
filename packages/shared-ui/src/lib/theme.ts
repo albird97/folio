@@ -32,7 +32,10 @@ function subscribe(callback: () => void): () => void {
   return () => list.removeEventListener('change', callback);
 }
 
-export function applyTheme(theme: ResolvedTheme, root: HTMLElement = document.documentElement): void {
+export function applyTheme(
+  theme: ResolvedTheme,
+  root: HTMLElement = document.documentElement,
+): void {
   root.dataset.theme = theme;
 }
 

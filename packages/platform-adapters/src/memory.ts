@@ -1,5 +1,11 @@
 import { Channel, WEB_FEATURES } from './web';
-import type { AppCommand, IncomingFile, KeyValueStorage, PlatformAdapter, RuntimeFeatures } from './types';
+import type {
+  AppCommand,
+  IncomingFile,
+  KeyValueStorage,
+  PlatformAdapter,
+  RuntimeFeatures,
+} from './types';
 
 export function createMemoryStorage(initial: Record<string, unknown> = {}): KeyValueStorage & {
   data: Map<string, unknown>;

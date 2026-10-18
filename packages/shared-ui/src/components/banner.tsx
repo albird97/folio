@@ -26,7 +26,11 @@ export function Banner({
   return (
     <div
       role={tone === 'danger' ? 'alert' : 'status'}
-      className={cn('flex items-start gap-2.5 rounded-md px-3 py-2.5 text-sm', toneClass, className)}
+      className={cn(
+        'flex items-start gap-2.5 rounded-md px-3 py-2.5 text-sm',
+        toneClass,
+        className,
+      )}
     >
       <Icon size={ICON.md} strokeWidth={ICON.stroke} className="mt-0.5 shrink-0" aria-hidden />
       <div className="min-w-0 flex-1">

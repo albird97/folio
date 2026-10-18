@@ -9,7 +9,10 @@ export function PagesPanel({ doc }: { doc: WorkspaceDocument }) {
   const listRef = useRef<HTMLOListElement>(null);
   if (!doc.editor || !doc.view) return null;
   const pages = doc.editor.model.pages;
-  const currentIndex = Math.max(0, pages.findIndex((page) => page.id === doc.view?.currentPageId));
+  const currentIndex = Math.max(
+    0,
+    pages.findIndex((page) => page.id === doc.view?.currentPageId),
+  );
 
   const select = (index: number) => {
     const page = pages[index];
@@ -32,12 +35,15 @@ export function PagesPanel({ doc }: { doc: WorkspaceDocument }) {
   };
 
   return (
-    <aside aria-label="Pages" className="flex w-60 shrink-0 flex-col border-r border-line bg-surface">
+    <aside
+      aria-label="Pages"
+      className="flex w-60 shrink-0 flex-col border-r border-line bg-surface"
+    >
       <div className="flex h-10 shrink-0 items-center justify-between px-4">
         <h2 className="text-xs font-semibold">Pages</h2>
         <span className="text-xs text-ink-muted tabular">{pages.length}</span>
       </div>
-      <ol ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" onKeyDown={onKeyDown}>
+      <ol ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {pages.map((page, index) => {
           const current = index === currentIndex;
           const rotation = (page.sourceRotation + page.rotation) % 360;
@@ -48,6 +54,7 @@ export function PagesPanel({ doc }: { doc: WorkspaceDocument }) {
                 aria-current={current ? 'page' : undefined}
                 tabIndex={current ? 0 : -1}
                 onClick={() => select(index)}
+                onKeyDown={onKeyDown}
                 className={cn(
                   'flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left',
                   current ? 'bg-accent-soft text-accent-soft-ink' : 'hover:bg-hover',
@@ -64,7 +71,12 @@ export function PagesPanel({ doc }: { doc: WorkspaceDocument }) {
                 </span>
                 <span className="min-w-0">
                   <span className="block text-xs font-medium">Page {index + 1}</span>
-                  <span className={cn('block truncate text-2xs', current ? 'opacity-85' : 'text-ink-muted')}>
+                  <span
+                    className={cn(
+                      'block truncate text-2xs',
+                      current ? 'opacity-85' : 'text-ink-muted',
+                    )}
+                  >
                     {formatPageSize(page)}
                     {rotation !== 0 ? ` · ${rotation}°` : ''}
                   </span>

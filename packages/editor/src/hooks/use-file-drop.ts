@@ -2,7 +2,8 @@ import { incomingFromFile } from '@folio/platform-adapters';
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { useWorkspaceContext } from '../context';
 
-const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files');
+const hasFiles = (event: DragEvent) =>
+  Array.from(event.dataTransfer?.types ?? []).includes('Files');
 
 /**
  * Drag-and-drop opening. Web targets receive DOM drop events; the desktop

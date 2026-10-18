@@ -15,8 +15,13 @@ export function formatBytes(bytes: number): string {
 const POINTS_PER_INCH = 72;
 
 /** "Letter · 8.5 × 11 in" or "210 × 297 mm" depending on what fits the size best. */
-export function formatPageSize(page: Pick<PageModel, 'size' | 'sourceRotation' | 'rotation'>): string {
-  const effective = rotatedSize(page.size, ((page.sourceRotation + page.rotation) % 360) as 0 | 90 | 180 | 270);
+export function formatPageSize(
+  page: Pick<PageModel, 'size' | 'sourceRotation' | 'rotation'>,
+): string {
+  const effective = rotatedSize(
+    page.size,
+    ((page.sourceRotation + page.rotation) % 360) as 0 | 90 | 180 | 270,
+  );
   const name = describePageSize(page.size);
   const inches = `${trim(effective.width / POINTS_PER_INCH)} × ${trim(effective.height / POINTS_PER_INCH)} in`;
   const mm = `${Math.round((effective.width / POINTS_PER_INCH) * 25.4)} × ${Math.round((effective.height / POINTS_PER_INCH) * 25.4)} mm`;

@@ -18,5 +18,10 @@ export function Input({ className, ...props }: ComponentPropsWithRef<'input'>) {
 }
 
 export function Label({ className, ...props }: ComponentPropsWithRef<typeof LabelPrimitive.Root>) {
-  return <LabelPrimitive.Root className={cn('text-xs font-medium text-ink-muted', className)} {...props} />;
+  return (
+    <LabelPrimitive.Root
+      className={cn('text-xs font-medium text-ink-muted', className)}
+      {...props}
+    />
+  );
 }

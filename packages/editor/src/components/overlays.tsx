@@ -27,9 +27,16 @@ export function NoticeToast() {
     return () => clearTimeout(timer);
   }, [notice, dismiss]);
   return (
-    <div role="status" aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-10 z-(--z-toast) flex justify-center">
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed inset-x-0 bottom-10 z-(--z-toast) flex justify-center"
+    >
       {notice ? (
-        <p key={notice.id} className="rounded-full bg-ink px-4 py-2 text-xs font-medium text-bg shadow-pop animate-pop-in">
+        <p
+          key={notice.id}
+          className="rounded-full bg-ink px-4 py-2 text-xs font-medium text-bg shadow-pop animate-pop-in"
+        >
           {notice.message}
         </p>
       ) : null}

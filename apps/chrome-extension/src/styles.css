@@ -1,0 +1,21 @@
+@import 'tailwindcss';
+@import '@folio/shared-ui/theme.css';
+
+@source '../../../packages/shared-ui/src';
+@source '../../../packages/editor/src';
+@source './';
+
+#root {
+  min-height: 100%;
+}
+
+body[data-surface='editor'],
+body[data-surface='editor'] #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body[data-surface='sidepanel'] #root {
+  display: flex;
+  flex-direction: column;
+}

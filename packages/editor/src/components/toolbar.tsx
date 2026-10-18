@@ -1,5 +1,12 @@
 import { primarySource } from '@folio/document-model';
-import { Button, ICON, IconButton, Kbd, nextThemePreference, type ThemePreference } from '@folio/shared-ui';
+import {
+  Button,
+  ICON,
+  IconButton,
+  Kbd,
+  nextThemePreference,
+  type ThemePreference,
+} from '@folio/shared-ui';
 import { FolderOpen, Monitor, Moon, PanelLeft, PanelRight, Sun } from 'lucide-react';
 import { Toolbar as ToolbarPrimitive } from 'radix-ui';
 import { COMMAND_SHORTCUTS } from '../commands';
@@ -47,7 +54,11 @@ export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
         <Button variant="ghost" onClick={onOpen}>
           <FolderOpen size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
           Open
-          <Kbd shortcut={shortcuts.open[0]!} platform={shortcutPlatform} className="ml-1 text-ink-subtle" />
+          <Kbd
+            shortcut={shortcuts.open[0]!}
+            platform={shortcutPlatform}
+            className="ml-1 text-ink-subtle"
+          />
         </Button>
       </ToolbarPrimitive.Button>
 
@@ -59,7 +70,8 @@ export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
             </h1>
             {source ? (
               <span className="shrink-0 text-xs text-ink-muted tabular">
-                {source.pageCount} {source.pageCount === 1 ? 'page' : 'pages'} · {formatBytes(source.byteLength)}
+                {source.pageCount} {source.pageCount === 1 ? 'page' : 'pages'} ·{' '}
+                {formatBytes(source.byteLength)}
               </span>
             ) : null}
           </>

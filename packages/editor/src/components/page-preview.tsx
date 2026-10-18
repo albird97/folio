@@ -53,7 +53,10 @@ export function PagePreview({
   }, []);
 
   const rotation = page.rotation;
-  const effective = rotatedSize(page.size, ((page.sourceRotation + page.rotation) % 360) as PageModel['rotation']);
+  const effective = rotatedSize(
+    page.size,
+    ((page.sourceRotation + page.rotation) % 360) as PageModel['rotation'],
+  );
   const scale = box
     ? Math.min(
         MAX_SCALE,
@@ -81,7 +84,10 @@ export function PagePreview({
   }, [handle, sourceIndex, rotation, scale]);
 
   return (
-    <div ref={containerRef} className="relative flex h-full w-full flex-col items-center justify-center">
+    <div
+      ref={containerRef}
+      className="relative flex h-full w-full flex-col items-center justify-center"
+    >
       {state === 'error' ? (
         <Banner tone="danger" title="This page could not be rendered.">
           The document may be damaged or use an unsupported feature.

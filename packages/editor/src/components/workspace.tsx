@@ -36,7 +36,10 @@ function ActiveDocument() {
     case 'ready': {
       const handle = workspace.getHandle(doc.key);
       const pages = doc.editor?.model.pages ?? [];
-      const index = Math.max(0, pages.findIndex((page) => page.id === doc.view?.currentPageId));
+      const index = Math.max(
+        0,
+        pages.findIndex((page) => page.id === doc.view?.currentPageId),
+      );
       const page = pages[index];
       if (!handle || !page) return null;
       return <PagePreview handle={handle} page={page} position={index} pageCount={pages.length} />;
@@ -58,7 +61,10 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
 
   const open = useCallback(() => dispatch('open'), [dispatch]);
 
-  useEffect(() => adapter.onIncomingFiles((files) => void workspace.getState().openFiles(files)), [adapter, workspace]);
+  useEffect(
+    () => adapter.onIncomingFiles((files) => void workspace.getState().openFiles(files)),
+    [adapter, workspace],
+  );
 
   useEffect(() => {
     adapter.setWindowTitle(doc ? `${doc.fileName} — Folio` : 'Folio');

@@ -9,7 +9,9 @@ import type {
   Unsubscribe,
 } from './types';
 
-export function detectOperatingSystem(nav: Navigator | undefined = globalThis.navigator): OperatingSystem {
+export function detectOperatingSystem(
+  nav: Navigator | undefined = globalThis.navigator,
+): OperatingSystem {
   if (!nav) return 'unknown';
   const hint =
     (nav as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
@@ -36,7 +38,9 @@ export function incomingFromFile(file: File): IncomingFile {
 }
 
 /** Opens a hidden `<input type="file">`. Resolves to [] when the user cancels. */
-export function pickFilesWithInput(options: { multiple?: boolean; doc?: Document } = {}): Promise<File[]> {
+export function pickFilesWithInput(
+  options: { multiple?: boolean; doc?: Document } = {},
+): Promise<File[]> {
   const doc = options.doc ?? globalThis.document;
   return new Promise((resolve) => {
     const input = doc.createElement('input');
@@ -55,7 +59,10 @@ export function pickFilesWithInput(options: { multiple?: boolean; doc?: Document
   });
 }
 
-export function createLocalStorage(prefix: string, store: Storage | undefined = globalThis.localStorage): KeyValueStorage {
+export function createLocalStorage(
+  prefix: string,
+  store: Storage | undefined = globalThis.localStorage,
+): KeyValueStorage {
   const key = (name: string) => `${prefix}${name}`;
   return {
     async get<T>(name: string) {

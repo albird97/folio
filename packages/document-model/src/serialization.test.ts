@@ -12,7 +12,10 @@ function editedState() {
   state = execute(state, { type: 'pages/reorder', order: [c!, a!, b!] }, { label: 'Move' });
   state = execute(
     state,
-    { type: 'metadata/update', patch: { title: 'Recovered', creationDate: '2026-01-15T09:30:00.000Z' } },
+    {
+      type: 'metadata/update',
+      patch: { title: 'Recovered', creationDate: '2026-01-15T09:30:00.000Z' },
+    },
     { label: 'Title' },
   );
   return state;

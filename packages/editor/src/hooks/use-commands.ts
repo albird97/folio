@@ -48,7 +48,9 @@ export function useCommands(): (command: AppCommand) => void {
     const shortcuts = COMMAND_SHORTCUTS[profile];
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      for (const [command, keys] of Object.entries(shortcuts) as Array<[AppCommand, readonly string[]]>) {
+      for (const [command, keys] of Object.entries(shortcuts) as Array<
+        [AppCommand, readonly string[]]
+      >) {
         if (keys.some((keyCombo) => matchesShortcut(event, keyCombo, shortcutPlatform))) {
           event.preventDefault();
           dispatch(command);

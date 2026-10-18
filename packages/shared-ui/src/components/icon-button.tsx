@@ -41,7 +41,10 @@ export function IconButton({
         aria-pressed={pressed}
         variant={variant}
         size={size}
-        className={cn(pressed && 'bg-accent-soft text-accent-soft-ink hover:bg-accent-soft', className)}
+        className={cn(
+          pressed && 'bg-accent-soft text-accent-soft-ink hover:bg-accent-soft',
+          className,
+        )}
         {...props}
       >
         {icon}

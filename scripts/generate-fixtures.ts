@@ -39,7 +39,12 @@ async function basic(): Promise<Uint8Array> {
     });
     page.drawText(`Folio fixture page ${index + 1}`, { x: 54, y: height - 80, size: 24, font });
     page.drawText(label, { x: 54, y: height - 106, size: 12, font, color: rgb(0.3, 0.3, 0.4) });
-    page.drawText('The quick brown fox jumps over the lazy dog.', { x: 54, y: height - 160, size: 12, font });
+    page.drawText('The quick brown fox jumps over the lazy dog.', {
+      x: 54,
+      y: height - 160,
+      size: 12,
+      font,
+    });
   });
   pdf.setTitle('Folio Basic Fixture');
   pdf.setAuthor('Folio Test Suite');
@@ -85,6 +90,18 @@ async function main(): Promise<void> {
     '--',
     basicPath,
     join(OUT, 'encrypted-user-password.pdf'),
+  ]);
+  // Legacy 128-bit RC4, still common in older PDFs.
+  qpdf([
+    '--allow-weak-crypto',
+    '--encrypt',
+    `--user-password=${FIXTURE_PASSWORD}`,
+    `--owner-password=${FIXTURE_PASSWORD}-owner`,
+    '--bits=128',
+    '--use-aes=n',
+    '--',
+    basicPath,
+    join(OUT, 'encrypted-rc4.pdf'),
   ]);
   // Opens without a password, but printing and modification are restricted.
   qpdf([

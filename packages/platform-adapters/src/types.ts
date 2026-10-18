@@ -31,6 +31,8 @@ export interface KeyValueStorage {
   get<T>(key: string): Promise<T | undefined>;
   set<T>(key: string, value: T): Promise<void>;
   remove(key: string): Promise<void>;
+  /** Notifies about changes made elsewhere (another extension page, another window). */
+  watch?(key: string, listener: (value: unknown) => void): Unsubscribe;
 }
 
 /**

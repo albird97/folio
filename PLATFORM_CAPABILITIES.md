@@ -18,9 +18,9 @@ a note below the table.
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Open a PDF with a file picker | ✅ Full † | ✅ Full † | ✅ Full † | — | Extension: Playwright e2e. Desktop UI: Playwright e2e (web adapter); native dialog: manual. |
-| Open PDFs by drag and drop | ✅ Full † | ✅ Full † | ✅ Full † | — | Extension and desktop UI: Playwright e2e. Native drop path: Rust unit tests for grant filtering. |
-| Open from Finder / File Explorer (file association) | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | Unit/e2e tests on Linux (shared code + Rust); macOS and Windows behaviour not yet exercised by an automated test. |
+| Open a PDF with a file picker | ✅ Full † | ✅ Full † | ✅ Full † | — | Extension and desktop UI: Playwright e2e. The native dialog itself cannot be automated and is checked manually. |
+| Open PDFs by drag and drop | ✅ Full † | ✅ Full † | ✅ Full † | — | Extension and desktop UI: Playwright e2e. Native drops: Rust unit tests for grant filtering; checked manually. |
+| Open from Finder / File Explorer (file association) | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | Launch-argument opening: tauri-driver e2e against the real binary on Linux. Finder events and Explorer registration: compiled in CI, checked manually. |
 | Open password-protected PDFs | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests with qpdf-encrypted fixtures; extension e2e. |
 | Clear errors for damaged, empty or non-PDF files | ✅ Full | ✅ Full | ✅ Full | — | Unit tests with invalid fixtures; e2e for the error state. |
 | Multiple documents in tabs | ✅ Full | ✅ Full | ✅ Full † | — | Desktop UI and extension e2e. |
@@ -37,9 +37,9 @@ a note below the table.
 - **Open from Finder / File Explorer (file association) (macOS):** Handles Finder “Open With” events once the app bundle is installed; Folio is registered as an alternate PDF handler.
 - **Open from Finder / File Explorer (file association) (Windows):** Opens a PDF passed on launch. Opening another file while Folio runs starts a second window until single-instance support lands.
 - **Open from Finder / File Explorer (file association) (Chrome):** Extensions cannot register as the operating system’s PDF handler.
-- **Open password-protected PDFs (macOS):** AES-256 and legacy RC4 encryption via PDF.js; the password is only kept in memory.
-- **Open password-protected PDFs (Windows):** AES-256 and legacy RC4 encryption via PDF.js; the password is only kept in memory.
-- **Open password-protected PDFs (Chrome):** AES-256 and legacy RC4 encryption via PDF.js; the password is only kept in memory.
+- **Open password-protected PDFs (macOS):** Standard security handler: AES-256 and legacy 128-bit RC4, both tested. The password is only kept in memory.
+- **Open password-protected PDFs (Windows):** Standard security handler: AES-256 and legacy 128-bit RC4, both tested. The password is only kept in memory.
+- **Open password-protected PDFs (Chrome):** Standard security handler: AES-256 and legacy 128-bit RC4, both tested. The password is only kept in memory.
 - **Multiple documents in tabs (Chrome):** Tabs inside the editor page; each browser tab is its own workspace.
 - **Open the PDF in the current browser tab (macOS):** Not applicable.
 - **Open the PDF in the current browser tab (Windows):** Not applicable.
@@ -48,7 +48,7 @@ a note below the table.
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Render pages | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 2 | E2E renders the preview canvas in Chromium; desktop webviews not yet automated. |
+| Render pages | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 2 | E2E in Chromium (extension, desktop UI) and in WebKitGTK through the real desktop binary (tauri-driver). |
 | Page thumbnails and navigation | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 2 | E2E. |
 | Text search | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 2 | — |
 | Zoom, fit-to-page and view rotation | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 2 | — |
@@ -121,7 +121,7 @@ a note below the table.
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Native menus | ✅ Full † | ✅ Full † | ⛔ Not supported † | — | Unit/e2e tests on Linux (shared code + Rust); macOS and Windows behaviour not yet exercised by an automated test. |
+| Native menus | ✅ Full † | ✅ Full † | ⛔ Not supported † | — | Rust unit tests on Linux, macOS and Windows CI runners; interactive behaviour checked manually. |
 | Keyboard shortcuts | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | E2E. |
 | Light, dark and system themes | ✅ Full | ✅ Full | ✅ Full | — | E2E (including axe checks in both themes). |
 | Clipboard | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | E2E. |
@@ -169,7 +169,7 @@ a note below the table.
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Local-only processing (no uploads, no analytics on content) | ✅ Full † | ✅ Full † | ✅ Full † | — | Manifest permission test; CSP restricts connections to the app itself. |
+| Local-only processing (no uploads, no analytics on content) | ✅ Full † | ✅ Full † | ✅ Full † | — | Extension e2e asserts no network requests while opening a document and no host permissions; the desktop CSP allows only the app itself and is checked by tauri-driver e2e. |
 
 - **Local-only processing (no uploads, no analytics on content) (macOS):** No network requests are made with document data; the extension has no host permissions.
 - **Local-only processing (no uploads, no analytics on content) (Windows):** No network requests are made with document data; the extension has no host permissions.

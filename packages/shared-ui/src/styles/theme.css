@@ -52,7 +52,8 @@
   --folio-success-ink: oklch(0.42 0.1 155);
 
   /* Depth */
-  --folio-shadow-page: 0 0 0 1px oklch(0.2 0.02 230 / 0.06), 0 1px 2px oklch(0.2 0.02 230 / 0.1),
+  --folio-shadow-page:
+    0 0 0 1px oklch(0.2 0.02 230 / 0.06), 0 1px 2px oklch(0.2 0.02 230 / 0.1),
     0 3px 8px oklch(0.2 0.02 230 / 0.08);
   --folio-shadow-pop: 0 0 0 1px oklch(0.2 0.02 230 / 0.08), 0 4px 8px oklch(0.2 0.02 230 / 0.12);
 

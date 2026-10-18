@@ -6,14 +6,31 @@ import { COMMAND_SHORTCUTS } from '../commands';
 import { useWorkspace, useWorkspaceContext } from '../context';
 import type { WorkspaceDocument } from '../store/workspace';
 
+/** Decorative status icon; the state is spoken through `STATUS_TEXT`. */
 function StatusGlyph({ doc }: { doc: WorkspaceDocument }) {
-  if (doc.status === 'loading') return <Spinner label={`Opening ${doc.fileName}`} className="text-ink-muted" />;
+  if (doc.status === 'loading') return <Spinner className="text-ink-muted" />;
   if (doc.status === 'needs-password')
-    return <LockKeyhole size={ICON.sm} strokeWidth={ICON.stroke} className="text-ink-muted" aria-label="Password required" />;
+    return (
+      <LockKeyhole
+        size={ICON.sm}
+        strokeWidth={ICON.stroke}
+        className="text-ink-muted"
+        aria-hidden
+      />
+    );
   if (doc.status === 'error')
-    return <CircleAlert size={ICON.sm} strokeWidth={ICON.stroke} className="text-danger" aria-label="Could not open" />;
+    return (
+      <CircleAlert size={ICON.sm} strokeWidth={ICON.stroke} className="text-danger" aria-hidden />
+    );
   return null;
 }
+
+const STATUS_TEXT: Record<WorkspaceDocument['status'], string> = {
+  loading: ', opening',
+  'needs-password': ', password required',
+  error: ', could not be opened',
+  ready: '',
+};
 
 export interface TabStripProps {
   onOpen(): void;
@@ -23,7 +40,12 @@ export interface TabStripProps {
   brand?: boolean;
 }
 
-export function TabStrip({ onOpen, insetStart = 0, dragRegion = false, brand = false }: TabStripProps) {
+export function TabStrip({
+  onOpen,
+  insetStart = 0,
+  dragRegion = false,
+  brand = false,
+}: TabStripProps) {
   const { profile, shortcutPlatform } = useWorkspaceContext();
   const { documents, activeKey, activate, close } = useWorkspace(
     useShallow((state) => ({
@@ -52,7 +74,9 @@ export function TabStrip({ onOpen, insetStart = 0, dragRegion = false, brand = f
               key={doc.key}
               className={cn(
                 'group relative flex h-8 min-w-0 max-w-56 items-center rounded-t-md',
-                active ? 'bg-surface shadow-[0_0_0_1px_var(--folio-border)] [clip-path:inset(-1px_-1px_0_-1px)]' : 'hover:bg-hover',
+                active
+                  ? 'bg-surface shadow-[0_0_0_1px_var(--folio-border)] [clip-path:inset(-1px_-1px_0_-1px)]'
+                  : 'hover:bg-hover',
               )}
             >
               <button
@@ -67,7 +91,13 @@ export function TabStrip({ onOpen, insetStart = 0, dragRegion = false, brand = f
               >
                 <StatusGlyph doc={doc} />
                 <span className="truncate">{doc.fileName}</span>
-                {dirty ? <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-label="Unsaved changes" /> : null}
+                <span className="sr-only">
+                  {STATUS_TEXT[doc.status]}
+                  {dirty ? ', unsaved changes' : ''}
+                </span>
+                {dirty ? (
+                  <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+                ) : null}
               </button>
               <button
                 type="button"

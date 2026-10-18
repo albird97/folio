@@ -28,7 +28,10 @@ export function DialogContent({
   );
 }
 
-export function DialogTitle({ className, ...props }: ComponentPropsWithRef<typeof DialogPrimitive.Title>) {
+export function DialogTitle({
+  className,
+  ...props
+}: ComponentPropsWithRef<typeof DialogPrimitive.Title>) {
   return <DialogPrimitive.Title className={cn('text-lg font-semibold', className)} {...props} />;
 }
 
@@ -37,7 +40,10 @@ export function DialogDescription({
   ...props
 }: ComponentPropsWithRef<typeof DialogPrimitive.Description>) {
   return (
-    <DialogPrimitive.Description className={cn('mt-1 text-sm text-ink-muted', className)} {...props} />
+    <DialogPrimitive.Description
+      className={cn('mt-1 text-sm text-ink-muted', className)}
+      {...props}
+    />
   );
 }
 

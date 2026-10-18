@@ -10,10 +10,16 @@ describe('format', () => {
   });
 
   it('formats page sizes with familiar names and rotation', () => {
-    const page = { size: { width: 612, height: 792 }, sourceRotation: 0 as const, rotation: 0 as const };
+    const page = {
+      size: { width: 612, height: 792 },
+      sourceRotation: 0 as const,
+      rotation: 0 as const,
+    };
     expect(formatPageSize(page)).toBe('Letter · 8.5 × 11 in');
     expect(formatPageSize({ ...page, rotation: 90 })).toBe('Letter · 11 × 8.5 in');
-    expect(formatPageSize({ ...page, size: { width: 595.28, height: 841.89 } })).toBe('A4 · 210 × 297 mm');
+    expect(formatPageSize({ ...page, size: { width: 595.28, height: 841.89 } })).toBe(
+      'A4 · 210 × 297 mm',
+    );
     expect(formatPageSize({ ...page, size: { width: 300, height: 300 } })).toBe('4.17 × 4.17 in');
   });
 

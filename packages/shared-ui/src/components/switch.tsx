@@ -2,7 +2,10 @@ import { Switch as SwitchPrimitive } from 'radix-ui';
 import type { ComponentPropsWithRef } from 'react';
 import { cn } from '../lib/cn';
 
-export function Switch({ className, ...props }: ComponentPropsWithRef<typeof SwitchPrimitive.Root>) {
+export function Switch({
+  className,
+  ...props
+}: ComponentPropsWithRef<typeof SwitchPrimitive.Root>) {
   return (
     <SwitchPrimitive.Root
       className={cn(
