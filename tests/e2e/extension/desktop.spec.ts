@@ -31,6 +31,9 @@ const HOST_NAME = 'io.github.albird97.folio';
 
 /** The desktop binary built by `cargo build` (debug or release), or FOLIO_DESKTOP_BIN. */
 function hostBinary(): string | null {
+  // A binary that was asked for must exist (CI), rather than the tests quietly skipping.
+  const wanted = process.env.FOLIO_DESKTOP_BIN;
+  if (wanted && !existsSync(wanted)) throw new Error(`FOLIO_DESKTOP_BIN does not exist: ${wanted}`);
   const candidates = [
     process.env.FOLIO_DESKTOP_BIN,
     join(ROOT, 'target', 'debug', 'folio-desktop'),

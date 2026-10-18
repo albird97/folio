@@ -76,6 +76,15 @@ jobs:
       - run: cargo install tauri-driver --locked
       - name: Run the native end-to-end test
         run: xvfb-run -a node tests/desktop/tauri-driver.e2e.mjs
+      # The Chrome extension sends documents to the real desktop host binary
+      # (a debug build: only that honours FOLIO_NATIVE_HOST_NO_LAUNCH).
+      - name: Build the extension and the debug desktop binary
+        run: pnpm build:extension && cargo build -p folio-desktop --locked
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Native messaging end-to-end test (extension to desktop host)
+        run: pnpm exec playwright test tests/e2e/extension/desktop.spec.ts
+        env:
+          FOLIO_DESKTOP_BIN: ${{ github.workspace }}/target/debug/folio-desktop
       - uses: actions/upload-artifact@v4
         with:
           name: folio-linux-deb
