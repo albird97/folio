@@ -207,3 +207,50 @@ fn clears_what_ended_hosts_left_behind() {
     assert!(!dir.exists());
     assert!(host.finish().success());
 }
+
+/// The transfer folders in the spool (not its lock file).
+fn spooled(data: &std::path::Path) -> usize {
+    std::fs::read_dir(data.join("incoming"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn hosts_running_at_once_keep_the_spool_bounded() {
+    let data = tempfile::tempdir().unwrap();
+    let document = pdf();
+    let begin = json!({
+        "type": "begin",
+        "name": "a.pdf",
+        "size": document.len(),
+        "sha256": "0".repeat(64),
+    });
+    // One host per extension connection, all up before any transfer starts.
+    let mut hosts: Vec<Host> = (0..6).map(|_| Host::start(data.path(), &[])).collect();
+    for host in &mut hosts {
+        assert_eq!(host.ask(json!({ "type": "hello" }))["type"], "hello");
+    }
+    for host in &mut hosts {
+        host.send(&begin);
+    }
+    let replies: Vec<Value> = hosts.iter_mut().map(Host::receive).collect();
+    let ready = replies
+        .iter()
+        .filter(|reply| reply["type"] == "ready")
+        .count();
+    assert_eq!(ready, 3, "{replies:?}");
+    for reply in replies.iter().filter(|reply| reply["type"] != "ready") {
+        assert_eq!(reply["code"], "busy", "{reply}");
+    }
+    assert_eq!(spooled(data.path()), 3);
+    for host in hosts {
+        assert!(host.finish().success());
+    }
+    // Unfinished transfers go with their hosts.
+    assert_eq!(spooled(data.path()), 0);
+}

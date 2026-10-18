@@ -327,6 +327,11 @@ impl Host {
         let Some(base) = self.incoming.clone() else {
             return error_reply(&UNAVAILABLE, None);
         };
+        // Other hosts may be starting transfers at the same time: the limits
+        // are checked and the room is claimed under one lock.
+        let Ok(_spool) = incoming::lock(&base) else {
+            return error_reply(&STORAGE_FAILED, None);
+        };
         // The spool stays small: a few documents waiting for an answer.
         let usage = incoming::usage(&base);
         if usage.count >= incoming::MAX_PENDING
@@ -334,22 +339,26 @@ impl Host {
         {
             return error_reply(&BUSY, None);
         }
-        if paths::create_private_dir(&base).is_err() {
-            return error_reply(&STORAGE_FAILED, None);
-        }
-        if (self.free_space)(&base)
-            .is_some_and(|free| free < begin.size.saturating_add(DISK_RESERVE))
-        {
+        // Room for this document, for what other transfers have yet to
+        // write, and some to spare.
+        let needed = usage
+            .arriving
+            .saturating_add(begin.size)
+            .saturating_add(DISK_RESERVE);
+        if (self.free_space)(&base).is_some_and(|free| free < needed) {
             return error_reply(&DISK_FULL, None);
         }
         let id = incoming::new_id();
         let dir = base.join(&id);
-        let file = paths::create_private_dir(&dir).and_then(|()| {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(dir.join(incoming::PART_FILE))
-        });
+        // The announced size first, so other hosts count all of it at once.
+        let file = paths::create_private_dir(&dir)
+            .and_then(|()| incoming::write_announced(&dir, begin.size))
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(dir.join(incoming::PART_FILE))
+            });
         let file = match file {
             Ok(file) => file,
             Err(_) => {
@@ -708,12 +717,14 @@ mod tests {
             self.dir.path().join("incoming")
         }
 
+        /// The transfer folders (not the spool's lock file).
         fn spooled(&self) -> Vec<String> {
             std::fs::read_dir(self.incoming())
                 .map(|entries| {
                     entries
                         .flatten()
                         .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .filter(|name| !name.starts_with('.'))
                         .collect()
                 })
                 .unwrap_or_default()
@@ -1131,6 +1142,75 @@ mod tests {
         // When the system does not say, the host tries.
         fixture.host.free_space = |_| None;
         fixture.complete(PDF);
+    }
+
+    #[test]
+    fn announces_the_size_before_answering_ready() {
+        let mut fixture = fixture();
+        let transfer = fixture.begin(PDF);
+        let announced = fixture
+            .incoming()
+            .join(&transfer)
+            .join(incoming::ANNOUNCED_FILE);
+        assert_eq!(
+            std::fs::read_to_string(announced).unwrap(),
+            PDF.len().to_string()
+        );
+        // Counted at its full size while it arrives.
+        assert_eq!(
+            incoming::usage(&fixture.incoming()).arriving,
+            PDF.len() as u64
+        );
+    }
+
+    #[test]
+    fn the_disk_must_hold_what_other_transfers_still_write() {
+        let mut fixture = fixture();
+        const MIB: u64 = 1024 * 1024;
+        fixture.host.free_space = |_| Some(600 * MIB);
+        // Another host announced 500 MiB and has written nothing yet.
+        let other = fixture.incoming().join(incoming::new_id());
+        std::fs::create_dir_all(&other).unwrap();
+        incoming::write_announced(&other, 500 * MIB).unwrap();
+        // 500 + 100 + the reserve do not fit in 600 MiB; 500 + 10 + 64 do.
+        let reply = fixture.send(announce(100 * MIB));
+        assert_error(&reply, "busy");
+        assert!(reply["message"].as_str().unwrap().contains("disk space"));
+        assert_eq!(fixture.send(announce(10 * MIB))["type"], "ready");
+    }
+
+    #[test]
+    fn hosts_starting_at_once_stay_within_the_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("incoming");
+        let hosts = 8;
+        let start = std::sync::Arc::new(std::sync::Barrier::new(hosts));
+        let finish = std::sync::Arc::new(std::sync::Barrier::new(hosts));
+        let threads: Vec<_> = (0..hosts)
+            .map(|_| {
+                let (base, start, finish) = (base.clone(), start.clone(), finish.clone());
+                std::thread::spawn(move || {
+                    let mut host = Host::new(Some(base), None);
+                    host.free_space = |_| None;
+                    let message = serde_json::to_vec(&announce(PDF.len() as u64)).unwrap();
+                    start.wait();
+                    let reply = host.handle(&message);
+                    // Transfers stay in progress until every host answered.
+                    finish.wait();
+                    reply["type"].as_str().unwrap().to_owned()
+                })
+            })
+            .collect();
+        let replies: Vec<String> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        let ready = replies.iter().filter(|reply| *reply == "ready").count();
+        assert_eq!(ready, incoming::MAX_PENDING, "{replies:?}");
+        assert_eq!(
+            replies.iter().filter(|reply| *reply == "error").count(),
+            hosts - incoming::MAX_PENDING
+        );
     }
 
     #[test]
