@@ -14,7 +14,13 @@ export function useFileDrop() {
   const { adapter, workspace } = useWorkspaceContext();
   const [webHover, setWebHover] = useState(false);
   const [nativeHover, setNativeHover] = useState(false);
-  const depth = useRef(0);
+  // Elements the drag is over. A counter would leak when the element under
+  // the pointer is removed mid-drag (a loading tab becoming ready): its
+  // dragleave then fires on a detached node and never reaches this root.
+  const entered = useRef(new Set<Node>());
+  const forgetDetached = () => {
+    for (const node of entered.current) if (!node.isConnected) entered.current.delete(node);
+  };
 
   useEffect(() => adapter.onNativeDragHover(setNativeHover), [adapter]);
 
@@ -28,7 +34,8 @@ export function useFileDrop() {
       onDragEnter(event: DragEvent) {
         if (!hasFiles(event)) return;
         event.preventDefault();
-        depth.current += 1;
+        forgetDetached();
+        entered.current.add(event.target as Node);
         setWebHover(true);
       },
       onDragOver(event: DragEvent) {
@@ -38,13 +45,14 @@ export function useFileDrop() {
       },
       onDragLeave(event: DragEvent) {
         if (!hasFiles(event)) return;
-        depth.current = Math.max(0, depth.current - 1);
-        if (depth.current === 0) setWebHover(false);
+        entered.current.delete(event.target as Node);
+        forgetDetached();
+        if (entered.current.size === 0) setWebHover(false);
       },
       onDrop(event: DragEvent) {
         if (!hasFiles(event)) return;
         event.preventDefault();
-        depth.current = 0;
+        entered.current.clear();
         setWebHover(false);
         const files = Array.from(event.dataTransfer.files).map(incomingFromFile);
         void workspace.getState().openFiles(files);

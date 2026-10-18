@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatShortcut, matchesShortcut, shortcutLabel } from './shortcuts';
+import { formatShortcut, matchesShortcut, shortcutLabel, usesCommandModifier } from './shortcuts';
 
 const key = (
   k: string,
@@ -37,7 +37,7 @@ describe('shortcuts', () => {
     expect(matchesShortcut(key('Tab', { ctrlKey: true }), 'Ctrl+Shift+Tab', 'other')).toBe(false);
   });
 
-  it('matches letters and digits by physical key when modifiers change the character', () => {
+  it('matches by physical key when modifiers change the character', () => {
     expect(
       matchesShortcut(
         { ...key('¡', { metaKey: true, altKey: true }), code: 'Digit1' },
@@ -49,11 +49,85 @@ describe('shortcuts', () => {
       matchesShortcut({ ...key('ø', { metaKey: true }), code: 'KeyO' }, 'Mod+O', 'macos'),
     ).toBe(true);
     expect(
-      matchesShortcut({ ...key('o', { metaKey: true }), code: 'KeyP' }, 'Mod+O', 'macos'),
+      matchesShortcut({ ...key('ø', { metaKey: true }), code: 'KeyP' }, 'Mod+O', 'macos'),
     ).toBe(false);
+    // AZERTY types digits with Shift; without it the 2 key is "é".
+    expect(
+      matchesShortcut(
+        { ...key('é', { ctrlKey: true, altKey: true }), code: 'Digit2' },
+        'Mod+Alt+2',
+        'other',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches letters by the layout, not the US position of the key', () => {
+    // French AZERTY: the key labelled Z sits where QWERTY has W, and vice versa.
+    expect(
+      matchesShortcut({ ...key('z', { ctrlKey: true }), code: 'KeyW' }, 'Mod+W', 'other'),
+    ).toBe(false);
+    expect(
+      matchesShortcut({ ...key('z', { metaKey: true }), code: 'KeyW' }, 'Mod+W', 'macos'),
+    ).toBe(false);
+    expect(
+      matchesShortcut({ ...key('w', { ctrlKey: true }), code: 'KeyZ' }, 'Mod+W', 'other'),
+    ).toBe(true);
+    expect(matchesShortcut({ ...key('z', { altKey: true }), code: 'KeyW' }, 'Alt+W', 'other')).toBe(
+      false,
+    );
+    // Dvorak: O is typed on the QWERTY S key, and the QWERTY O key types R.
+    expect(
+      matchesShortcut({ ...key('o', { ctrlKey: true }), code: 'KeyS' }, 'Mod+O', 'other'),
+    ).toBe(true);
+    expect(
+      matchesShortcut({ ...key('r', { ctrlKey: true }), code: 'KeyO' }, 'Mod+O', 'other'),
+    ).toBe(false);
+    expect(
+      matchesShortcut(
+        { ...key('O', { ctrlKey: true, shiftKey: true }), code: 'KeyO' },
+        'Mod+Shift+O',
+        'other',
+      ),
+    ).toBe(true);
+  });
+
+  it('falls back to the physical key when the layout types no Latin letter', () => {
+    expect(matchesShortcut({ ...key('∑', { altKey: true }), code: 'KeyW' }, 'Alt+W', 'macos')).toBe(
+      true,
+    );
+    // Russian layout: the QWERTY O key types "щ".
+    expect(
+      matchesShortcut({ ...key('щ', { ctrlKey: true }), code: 'KeyO' }, 'Mod+O', 'other'),
+    ).toBe(true);
+    expect(matchesShortcut(key('щ', { ctrlKey: true }), 'Mod+O', 'other')).toBe(false);
+  });
+
+  it('never matches while AltGr is held', () => {
+    // Windows reports AltGr as Ctrl+Alt; AltGr+2 types "@" on Spanish keyboards.
+    const altGr = (k: string, code: string) => ({
+      ...key(k, { ctrlKey: true, altKey: true }),
+      code,
+      getModifierState: (modifier: string) => modifier === 'AltGraph',
+    });
+    expect(matchesShortcut(altGr('@', 'Digit2'), 'Mod+Alt+2', 'other')).toBe(false);
+    expect(matchesShortcut(altGr('|', 'Digit1'), 'Mod+Alt+1', 'other')).toBe(false);
+    expect(
+      matchesShortcut(
+        { ...altGr('@', 'Digit2'), getModifierState: () => false },
+        'Mod+Alt+2',
+        'other',
+      ),
+    ).toBe(true);
   });
 
   it('ignores Shift for symbol keys', () => {
     expect(matchesShortcut(key('\\', { metaKey: true }), 'Mod+\\', 'macos')).toBe(true);
+  });
+
+  it('tells shortcuts held with Ctrl or ⌘ apart from ones that could type text', () => {
+    expect(usesCommandModifier('Mod+O')).toBe(true);
+    expect(usesCommandModifier('Ctrl+Shift+Tab')).toBe(true);
+    expect(usesCommandModifier('Alt+W')).toBe(false);
+    expect(usesCommandModifier('Alt+PageDown')).toBe(false);
   });
 });

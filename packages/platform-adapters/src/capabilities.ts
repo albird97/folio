@@ -41,8 +41,22 @@ const all = (support: TargetSupport): Record<ProductTarget, TargetSupport> => ({
   chrome: support,
 });
 
-const NATIVE_DESKTOP =
-  'Rust unit tests on Linux, macOS and Windows CI runners; interactive behaviour checked manually.';
+type DesktopTarget = Exclude<ProductTarget, 'chrome'>;
+const REAL_MACHINE: Record<DesktopTarget, string> = {
+  macos: 'a real Mac',
+  windows: 'a real Windows PC',
+};
+
+/**
+ * A native integration that compiles in the macOS and Windows CI builds but
+ * that no test or person has used on that OS yet. It stays Limited until it
+ * has been tried on a real machine (Phase 4).
+ */
+const unverified = (target: DesktopTarget, note: string): TargetSupport =>
+  limited(`${note} Implemented and built in CI, but not yet verified on ${REAL_MACHINE[target]}.`);
+
+const SHORTCUTS = 'Open, close document, next/previous document, Pages panel and Properties panel';
+const NO_THEME_SHORTCUT = 'Switching the theme has no shortcut.';
 
 export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   // Opening documents
@@ -50,29 +64,35 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'open-picker',
     area: 'Opening documents',
     feature: 'Open a PDF with a file picker',
-    plannedPhase: null,
+    plannedPhase: 4,
     targets: {
-      macos: full('Native dialog shown by the Rust layer; the webview never receives a path.'),
-      windows: full('Native dialog shown by the Rust layer; the webview never receives a path.'),
+      macos: unverified(
+        'macos',
+        'Native dialog shown by the Rust layer; the webview only receives tokens and file names.',
+      ),
+      windows: unverified(
+        'windows',
+        'Native dialog shown by the Rust layer; the webview only receives tokens and file names.',
+      ),
       chrome: full(
         'Picker in the editor page and side panel. The popup hands off to the editor because Chrome closes popups when a file dialog opens.',
       ),
     },
     verification:
-      'Extension and desktop UI: Playwright e2e. The native dialog itself cannot be automated and is checked manually.',
+      'Extension and desktop UI (web adapter): Playwright e2e. Native dialog: Rust unit tests for granting the chosen files; the dialog itself cannot be automated.',
   },
   {
     id: 'open-drag-drop',
     area: 'Opening documents',
     feature: 'Open PDFs by drag and drop',
-    plannedPhase: null,
+    plannedPhase: 4,
     targets: {
-      macos: full('Dropped files are granted by the native layer.'),
-      windows: full('Dropped files are granted by the native layer.'),
+      macos: unverified('macos', 'Dropped files are granted by the native layer.'),
+      windows: unverified('windows', 'Dropped files are granted by the native layer.'),
       chrome: full('Drop onto the editor page or the side panel.'),
     },
     verification:
-      'Extension and desktop UI: Playwright e2e. Native drops: Rust unit tests for grant filtering; checked manually.',
+      'Extension and desktop UI (web adapter): Playwright e2e. Native drops: Rust unit tests for grant filtering and the drag-hover signal.',
     runtimeFeature: ['nativeDragAndDrop', 'webDragAndDrop'],
   },
   {
@@ -81,16 +101,18 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Open from Finder / File Explorer (file association)',
     plannedPhase: 4,
     targets: {
-      macos: limited(
+      macos: unverified(
+        'macos',
         'Handles Finder “Open With” events once the app bundle is installed; Folio is registered as an alternate PDF handler.',
       ),
-      windows: limited(
+      windows: unverified(
+        'windows',
         'Opens a PDF passed on launch. Opening another file while Folio runs starts a second window until single-instance support lands.',
       ),
       chrome: none('Extensions cannot register as the operating system’s PDF handler.'),
     },
     verification:
-      'Launch-argument opening: tauri-driver e2e against the real binary on Linux. Finder events and Explorer registration: compiled in CI, checked manually.',
+      'Launch-argument opening: tauri-driver e2e against the real binary on Linux. Finder events and Explorer registration: compiled in CI only.',
     runtimeFeature: 'fileAssociations',
   },
   {
@@ -157,7 +179,9 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Render pages',
     plannedPhase: 2,
     targets: all(
-      limited('First-page preview only. The continuous, virtualized viewer arrives in Phase 2.'),
+      limited(
+        'Single-page preview of the selected page. The continuous, virtualized viewer arrives in Phase 2.',
+      ),
     ),
     verification:
       'E2E in Chromium (extension, desktop UI) and in WebKitGTK through the real desktop binary (tauri-driver).',
@@ -378,13 +402,14 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'native-menus',
     area: 'App and platform',
     feature: 'Native menus',
-    plannedPhase: null,
+    plannedPhase: 4,
     targets: {
-      macos: full('App, File, Edit, View, Window and Help menus.'),
-      windows: full('File, Edit, View and Help menus in the window menu bar.'),
+      macos: unverified('macos', 'Folio (app), File, Edit, View and Window menus.'),
+      windows: unverified('windows', 'File, Edit, View and Help menus in the window menu bar.'),
       chrome: none('Not applicable.'),
     },
-    verification: NATIVE_DESKTOP,
+    verification:
+      'Rust unit tests for command forwarding on Linux, macOS and Windows CI runners. No test builds or uses the menus.',
     runtimeFeature: 'nativeMenus',
   },
   {
@@ -392,8 +417,15 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'App and platform',
     feature: 'Keyboard shortcuts',
     plannedPhase: 4,
-    targets: all(limited('Open, close tab, next/previous tab, toggle panels and theme.')),
-    verification: 'E2E.',
+    targets: {
+      macos: unverified('macos', `${SHORTCUTS}, plus Close Window. ${NO_THEME_SHORTCUT}`),
+      windows: unverified('windows', `${SHORTCUTS}. ${NO_THEME_SHORTCUT}`),
+      chrome: limited(
+        `${SHORTCUTS}. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab. ${NO_THEME_SHORTCUT}`,
+      ),
+    },
+    verification:
+      'Key matching: unit tests. Browser key set: extension and desktop UI e2e. Desktop key set and menu accelerators: no e2e yet.',
   },
   {
     id: 'themes',
@@ -432,7 +464,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: {
       macos: none('Requires an updater signing key and a release feed.'),
       windows: none('Requires an updater signing key and a release feed.'),
-      chrome: full('Handled by the Chrome Web Store once published.'),
+      chrome: none('Will be handled by the Chrome Web Store once published.'),
     },
     verification: '—',
   },
@@ -502,7 +534,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
       ),
     ),
     verification:
-      'Extension e2e asserts no network requests while opening a document and no host permissions; the desktop CSP allows only the app itself and is checked by tauri-driver e2e.',
+      'Extension: e2e asserts no host permissions, no network requests while opening a document and that the CSP blocks requests to other servers; a unit test checks the CSP. Desktop: the CSP allows only the app itself, checked by tauri-driver e2e.',
   },
 ];
 

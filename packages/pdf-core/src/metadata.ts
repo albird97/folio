@@ -50,7 +50,17 @@ export function normalizeMetadata(
   xmp: XmpLike | null,
   parseDate: DateParser,
 ): DocumentMetadata {
-  const fromXmp = (key: string) => text(xmp?.get(key));
+  const fromXmp = (key: string) => {
+    const value = xmp?.get(key);
+    // PDF.js returns dc:creator and dc:subject (rdf:Seq/Bag) as string arrays.
+    if (Array.isArray(value)) {
+      return value
+        .map(text)
+        .filter((item) => item.length > 0)
+        .join('; ');
+    }
+    return text(value);
+  };
   return {
     ...EMPTY_METADATA,
     title: text(info.Title) || fromXmp('dc:title'),

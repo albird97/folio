@@ -3,7 +3,10 @@ export type Rotation = 0 | 90 | 180 | 270;
 
 export const ROTATIONS: readonly Rotation[] = [0, 90, 180, 270];
 
-/** A point in PDF user space (points, origin at the bottom-left of the unrotated page). */
+/**
+ * A point in PDF user space of the unrotated page (origin at its bottom-left).
+ * One unit is one point unless the page sets /UserUnit (see PageModel.userUnit).
+ */
 export interface Point {
   x: number;
   y: number;
@@ -14,7 +17,7 @@ export interface Size {
   height: number;
 }
 
-/** An axis-aligned rectangle in PDF user space of the unrotated page. */
+/** An axis-aligned rectangle in PDF user space of the unrotated page (see Point). */
 export interface Rect {
   x: number;
   y: number;

@@ -13,6 +13,10 @@ export function toSourceDescriptor(
     pdfVersion: info.pdfVersion,
     encryption: info.encryption,
     metadata: info.metadata,
-    pages: info.pages.map((page) => ({ size: page.size, rotation: page.rotation })),
+    pages: info.pages.map((page) => ({
+      size: page.size,
+      rotation: page.rotation,
+      userUnit: page.userUnit,
+    })),
   };
 }

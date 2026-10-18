@@ -134,6 +134,15 @@ try {
     assert.match(error, /not allowed|denied|permission/i);
   });
 
+  await test('the title bar drag region may zoom/maximize the window on double-click', async () => {
+    const outcome = await runAsync(`
+      const done = arguments[arguments.length - 1];
+      const toggle = () => window.__TAURI_INTERNALS__.invoke('plugin:window|internal_toggle_maximize', { label: 'main' });
+      toggle().then(toggle).then(() => done('allowed'), (e) => done(String(e)));
+    `);
+    assert.equal(outcome, 'allowed');
+  });
+
   await test('closing the last tab returns to the start screen', async () => {
     await run(`document.querySelector('button[aria-label="Close basic-3-pages.pdf"]').click()`);
     await waitFor(

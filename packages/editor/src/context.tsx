@@ -2,7 +2,7 @@ import type { PdfEngine } from '@folio/pdf-core';
 import type { PlatformAdapter } from '@folio/platform-adapters';
 import type { ShortcutPlatform } from '@folio/shared-ui';
 import { TooltipProvider } from '@folio/shared-ui';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { StoreApi } from 'zustand';
 import { useStore } from 'zustand';
 import type { ShortcutProfile } from './commands';
@@ -42,10 +42,15 @@ export function WorkspaceProvider({
     profile,
     shortcutPlatform: adapter.os === 'macos' ? 'macos' : 'other',
   }));
+  // StrictMode (development) unmounts and remounts once right after mounting,
+  // keeping state. Destroying at once would close, and release the grants of,
+  // files the first mount already opened; a remount cancels the pending destroy.
+  const pendingDestroy = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     const { workspace } = value;
+    clearTimeout(pendingDestroy.current);
     return () => {
-      void workspace.destroy();
+      pendingDestroy.current = setTimeout(() => void workspace.destroy(), 0);
     };
   }, [value]);
   return (

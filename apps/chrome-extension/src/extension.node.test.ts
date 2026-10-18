@@ -34,10 +34,31 @@ describe('manifest', () => {
     expect(Object.keys(PERMISSION_EXPLANATIONS).sort()).toEqual([...manifest.permissions].sort());
   });
 
-  it('allows no remote code', () => {
+  it('allows no remote code or connections', () => {
     const csp: string = manifest.content_security_policy.extension_pages;
-    expect(csp).toMatch(/script-src 'self' 'wasm-unsafe-eval';/);
-    expect(csp).not.toMatch(/https?:|'unsafe-eval'|'unsafe-inline'/);
+    const directives = Object.fromEntries(
+      csp
+        .split(';')
+        .map((directive) => directive.trim().split(/\s+/))
+        .filter(([name]) => name)
+        .map(([name, ...sources]) => [name, sources]),
+    );
+    // default-src and connect-src matter even without host permissions: they
+    // stop pages sending data out with fetch, beacons or remote images. Other
+    // fetch directives fall back to default-src. Inline styles are allowed
+    // (React style props); inline scripts are not.
+    expect(directives).toEqual({
+      'default-src': ["'self'"],
+      'script-src': ["'self'", "'wasm-unsafe-eval'"],
+      'object-src': ["'self'"],
+      'connect-src': ["'self'"],
+      'img-src': ["'self'", 'blob:', 'data:'],
+      'font-src': ["'self'", 'data:'],
+      'style-src': ["'self'", "'unsafe-inline'"],
+      'base-uri': ["'none'"],
+      'form-action': ["'none'"],
+      'frame-ancestors': ["'none'"],
+    });
   });
 });
 

@@ -3,6 +3,7 @@ import { Button, ICON, Input, Label, Spinner } from '@folio/shared-ui';
 import { FileWarning, LockKeyhole } from 'lucide-react';
 import { useId, useState, type FormEvent } from 'react';
 import { useWorkspace } from '../context';
+import { useCloseDocument } from '../hooks/use-close-document';
 import type { WorkspaceDocument } from '../store/workspace';
 
 export function LoadingState({ doc }: { doc: WorkspaceDocument }) {
@@ -18,7 +19,7 @@ export function LoadingState({ doc }: { doc: WorkspaceDocument }) {
 
 export function PasswordState({ doc }: { doc: WorkspaceDocument }) {
   const submitPassword = useWorkspace((state) => state.submitPassword);
-  const close = useWorkspace((state) => state.close);
+  const close = useCloseDocument();
   const [password, setPassword] = useState('');
   const id = useId();
 
@@ -65,7 +66,7 @@ export function PasswordState({ doc }: { doc: WorkspaceDocument }) {
           ) : null}
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <Button onClick={() => void close(doc.key)}>Close</Button>
+          <Button onClick={() => close(doc.key)}>Close</Button>
           <Button type="submit" variant="primary" disabled={!password}>
             Unlock
           </Button>
@@ -84,7 +85,7 @@ const ERROR_TITLES: Partial<Record<PdfErrorCode, string>> = {
 };
 
 export function ErrorState({ doc }: { doc: WorkspaceDocument }) {
-  const close = useWorkspace((state) => state.close);
+  const close = useCloseDocument();
   const code = doc.error?.code ?? 'unknown';
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -98,7 +99,7 @@ export function ErrorState({ doc }: { doc: WorkspaceDocument }) {
         <p className="mt-1 text-sm text-ink-muted">
           <span className="font-medium text-ink">{doc.fileName}</span> — {doc.error?.message}
         </p>
-        <Button className="mt-5" onClick={() => void close(doc.key)}>
+        <Button className="mt-5" onClick={() => close(doc.key)}>
           Close tab
         </Button>
       </div>

@@ -1,0 +1,28 @@
+{
+  "pdf": [
+    "a.pdf",
+    "A.PDF",
+    "Report.Pdf",
+    "archive.tar.pdf",
+    ".pdf",
+    "download",
+    "Name.",
+    "Invoice No. 4711",
+    "notes.v2_final",
+    "report.20261018120000",
+    "scan.2026-10-18",
+    "rapport.été",
+    "résumé.pdf"
+  ],
+  "notPdf": [
+    "photo.png",
+    "photo.jpeg",
+    "notes.txt",
+    "résumé.docx",
+    "a.pdf.png",
+    "slides.pptx",
+    "data.7z",
+    "backup.12345678",
+    ".bashrc"
+  ]
+}

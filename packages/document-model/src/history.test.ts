@@ -73,6 +73,39 @@ describe('history', () => {
     expect(undoLabel(state)).toBe('11');
   });
 
+  it('stays dirty after undoing everything once the limit dropped an edit', () => {
+    const opened = sampleModel(1);
+    let state = createEditorState(opened, 2);
+    const pageId = state.model.pages[0]!.id;
+    const rotate = (current: typeof state) =>
+      execute(current, { type: 'pages/rotate', pageIds: [pageId], delta: 90 }, { label: 'r' });
+    for (let i = 0; i < 3; i += 1) state = rotate(state);
+    state = undo(undo(state));
+    expect(canUndo(state)).toBe(false);
+    // The first rotation was dropped from history and is still applied.
+    expect(state.model.pages[0]!.rotation).toBe(90);
+    expect(state.model).not.toEqual(opened);
+    expect(isDirty(state)).toBe(true);
+    expect(isDirty(redo(state))).toBe(true);
+  });
+
+  it('keeps a save point that the limit moved to the bottom of history', () => {
+    let state = createEditorState(sampleModel(1), 2);
+    const pageId = state.model.pages[0]!.id;
+    const rotate = (current: typeof state) =>
+      execute(current, { type: 'pages/rotate', pageIds: [pageId], delta: 90 }, { label: 'r' });
+    state = markSaved(rotate(state));
+    state = rotate(rotate(state));
+    // The saved entry was dropped; undoing everything returns to the saved state.
+    state = undo(undo(state));
+    expect(canUndo(state)).toBe(false);
+    expect(isDirty(state)).toBe(false);
+    // Once that position is trimmed as well, the save can no longer be reached.
+    state = rotate(rotate(rotate(state)));
+    state = undo(undo(state));
+    expect(isDirty(state)).toBe(true);
+  });
+
   it('coalesces consecutive metadata edits into one undo step', () => {
     let state = createEditorState(sampleModel(1));
     const original = state.model.metadata.title;

@@ -1,11 +1,17 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { cp } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, join, normalize, resolve, sep } from 'node:path';
+import { basename, dirname, join, normalize, resolve, sep } from 'node:path';
 import type { Plugin } from 'vite';
 import { PDFJS_ASSET_DIR } from './constants.ts';
 
 const ASSET_FOLDERS = ['cmaps', 'standard_fonts', 'wasm', 'iccs'] as const;
+
+/**
+ * Folio never enables PDF.js scripting, so the QuickJS engine of its sandbox
+ * (`wasm/quickjs-eval.*`) is neither served nor shipped.
+ */
+const isExcludedAsset = (path: string) => basename(path).startsWith('quickjs-eval.');
 
 const CONTENT_TYPES: Record<string, string> = {
   '.wasm': 'application/wasm',
@@ -42,6 +48,7 @@ export function pdfjsAssets(): Plugin {
         if (
           !ASSET_FOLDERS.includes(folder as (typeof ASSET_FOLDERS)[number]) ||
           !file.startsWith(root + sep) ||
+          isExcludedAsset(file) ||
           !existsSync(file) ||
           !statSync(file).isFile()
         ) {
@@ -57,7 +64,10 @@ export function pdfjsAssets(): Plugin {
       await Promise.all(
         ASSET_FOLDERS.map((folder) =>
           // License files are copied too; they must ship with the binaries.
-          cp(join(root, folder), join(outDir, PDFJS_ASSET_DIR, folder), { recursive: true }),
+          cp(join(root, folder), join(outDir, PDFJS_ASSET_DIR, folder), {
+            recursive: true,
+            filter: (source) => !isExcludedAsset(source),
+          }),
         ),
       );
     },

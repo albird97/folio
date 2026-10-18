@@ -69,6 +69,7 @@ const page = z.object({
     z.object({ kind: z.literal('blank') }),
   ]),
   size,
+  userUnit: finite.positive(),
   sourceRotation: rotation,
   rotation,
 });

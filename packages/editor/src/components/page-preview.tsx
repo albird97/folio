@@ -66,9 +66,12 @@ export function PagePreview({
     : null;
 
   useEffect(() => {
+    // The canvas stays mounted (hidden) after an error, so the next page or
+    // document always gets a fresh render here.
     const canvas = canvasRef.current;
     if (!canvas || scale === null) return;
     setState('rendering');
+    let superseded = false;
     const job = handle.renderPage(sourceIndex, canvas, {
       scale,
       rotation,
@@ -76,11 +79,16 @@ export function PagePreview({
     });
     job.promise.then(
       (completed) => {
-        if (completed) setState('done');
+        if (completed && !superseded) setState('done');
       },
-      () => setState('error'),
+      () => {
+        if (!superseded) setState('error');
+      },
     );
-    return () => job.cancel();
+    return () => {
+      superseded = true;
+      job.cancel();
+    };
   }, [handle, sourceIndex, rotation, scale]);
 
   return (
@@ -92,28 +100,27 @@ export function PagePreview({
         <Banner tone="danger" title="This page could not be rendered.">
           The document may be damaged or use an unsupported feature.
         </Banner>
-      ) : (
-        <figure className="flex flex-col items-center gap-3">
-          <div className="relative">
-            <canvas
-              ref={canvasRef}
-              role="img"
-              aria-label={`Page ${position + 1} of ${pageCount}`}
-              data-testid="page-canvas"
-              data-render-state={state}
-              className="block bg-page shadow-page"
-            />
-            {state === 'rendering' ? (
-              <div className="absolute inset-0 flex items-center justify-center text-[oklch(0.45_0.01_230)]">
-                <Spinner label={`Rendering page ${position + 1}`} />
-              </div>
-            ) : null}
-          </div>
-          <figcaption className="text-xs text-ink-muted tabular">
-            Page {position + 1} of {pageCount}
-          </figcaption>
-        </figure>
-      )}
+      ) : null}
+      <figure hidden={state === 'error'} className="flex flex-col items-center gap-3">
+        <div className="relative">
+          <canvas
+            ref={canvasRef}
+            role="img"
+            aria-label={`Page ${position + 1} of ${pageCount}`}
+            data-testid="page-canvas"
+            data-render-state={state}
+            className="block bg-page shadow-page"
+          />
+          {state === 'rendering' ? (
+            <div className="absolute inset-0 flex items-center justify-center text-[oklch(0.45_0.01_230)]">
+              <Spinner label={`Rendering page ${position + 1}`} />
+            </div>
+          ) : null}
+        </div>
+        <figcaption className="text-xs text-ink-muted tabular">
+          Page {position + 1} of {pageCount}
+        </figcaption>
+      </figure>
     </div>
   );
 }

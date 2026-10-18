@@ -1,7 +1,8 @@
 /**
  * Folio's service worker. Chrome stops it whenever it is idle, so it keeps no
- * state in memory: everything lives in chrome.storage and IndexedDB, and
- * every listener is registered synchronously at the top level.
+ * state in memory beyond a queue of pending writes: everything lives in
+ * chrome.storage and IndexedDB, and every listener is registered
+ * synchronously at the top level.
  */
 import { appendActivity, redactActivity, type ActivityEntry } from '../shared/activity';
 import { parseMessage, type MessageResponse } from '../shared/messages';
@@ -15,6 +16,22 @@ async function readActivity(): Promise<ActivityEntry[]> {
 
 async function readSettings() {
   return parseSettings((await chrome.storage.local.get(SETTINGS_KEY))[SETTINGS_KEY]);
+}
+
+/**
+ * Every read-modify-write of the activity log runs through this queue, one
+ * step at a time. Otherwise overlapping records (several PDFs opened at once)
+ * would read the same log and drop each other's entries, and a record that
+ * read the log before a Clear would write the cleared entries back. The queue
+ * only has to order writes within one run of the worker: each step takes
+ * milliseconds, far less than the idle time after which Chrome stops it.
+ */
+let activityQueue: Promise<unknown> = Promise.resolve();
+
+function serialActivity<T>(step: () => Promise<T>): Promise<T> {
+  const run = activityQueue.then(step);
+  activityQueue = run.catch(() => undefined);
+  return run;
 }
 
 /** Only this extension's own pages may talk to the worker. */
@@ -34,13 +51,18 @@ async function handle(
 
   switch (message.type) {
     case 'activity/record': {
-      const [log, settings] = await Promise.all([readActivity(), readSettings()]);
-      const next = appendActivity(log, message, settings, new Date(), crypto.randomUUID());
-      await chrome.storage.local.set({ [ACTIVITY_KEY]: next });
-      return { ok: true, activity: next };
+      // Settings are read inside the queued step, so each record honours the
+      // privacy settings as they are when it is written.
+      const activity = await serialActivity(async () => {
+        const [log, settings] = await Promise.all([readActivity(), readSettings()]);
+        const next = appendActivity(log, message, settings, new Date(), crypto.randomUUID());
+        await chrome.storage.local.set({ [ACTIVITY_KEY]: next });
+        return next;
+      });
+      return { ok: true, activity };
     }
     case 'activity/clear':
-      await chrome.storage.local.set({ [ACTIVITY_KEY]: [] });
+      await serialActivity(() => chrome.storage.local.set({ [ACTIVITY_KEY]: [] }));
       return { ok: true, activity: [] };
     case 'editor/open': {
       const url = new URL(chrome.runtime.getURL('editor.html'));
@@ -81,11 +103,14 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 // Turning off "file names in activity" removes names that were already stored.
+// Queued after any record in flight, so a name written under the old settings
+// is removed too.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !(SETTINGS_KEY in changes)) return;
   const settings = parseSettings(changes[SETTINGS_KEY]?.newValue);
-  void readActivity().then((log) => {
+  void serialActivity(async () => {
     if (!settings.activityEnabled) return chrome.storage.local.set({ [ACTIVITY_KEY]: [] });
+    const log = await readActivity();
     if (!settings.activityIncludesNames && log.some((entry) => entry.fileName !== null)) {
       return chrome.storage.local.set({ [ACTIVITY_KEY]: redactActivity(log) });
     }

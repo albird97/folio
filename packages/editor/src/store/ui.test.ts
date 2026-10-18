@@ -35,6 +35,49 @@ describe('ui store', () => {
       listener({ theme: 'dark', leftPanelOpen: true, rightPanelOpen: true }),
     );
     expect(store.getState().theme).toBe('dark');
+    await settle();
+    // The other page already stored it.
+    expect(storage.data.has(UI_STORAGE_KEY)).toBe(false);
+  });
+
+  it('does not write back late echoes of its own writes', async () => {
+    // Like chrome.storage: changes reach every watcher, the writer included,
+    // asynchronously and only when the stored value actually changed.
+    const base = createMemoryStorage();
+    const listeners: Array<(value: unknown) => void> = [];
+    let writes = 0;
+    const storage = {
+      ...base,
+      async set<T>(key: string, value: T) {
+        writes += 1;
+        const changed = JSON.stringify(base.data.get(key)) !== JSON.stringify(value);
+        await base.set(key, value);
+        if (changed) {
+          const echoed = structuredClone(value);
+          setTimeout(() => listeners.forEach((listener) => listener(echoed)), 5);
+        }
+      },
+      watch: (_key: string, listener: (value: unknown) => void) => {
+        listeners.push(listener);
+        return () => undefined;
+      },
+    };
+    const store = createUiStore(storage);
+    await settle();
+    const rightPanel: boolean[] = [];
+    store.subscribe((state) => rightPanel.push(state.rightPanelOpen));
+    // Both changes land before the first echo arrives.
+    store.getState().toggleLeftPanel();
+    store.getState().toggleRightPanel();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(writes).toBe(2);
+    // The late echo of the first write must not briefly reopen the panel.
+    expect(rightPanel).toEqual([true, false]);
+    expect(store.getState()).toMatchObject({ leftPanelOpen: false, rightPanelOpen: false });
+    expect(base.data.get(UI_STORAGE_KEY)).toMatchObject({
+      leftPanelOpen: false,
+      rightPanelOpen: false,
+    });
   });
 
   it('persists changes after hydration', async () => {

@@ -10,10 +10,15 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Installer builds are long and release-relevant: only pull request updates
-# cancel an older run; pushes queue behind it.
+# Installer builds are long and release-relevant, so only a new commit on a
+# pull request cancels the older run. Pushes, tags and manual runs are grouped
+# per commit: a concurrency group keeps only one waiting run and cancels any
+# earlier waiting one, so one group per branch would skip intermediate pushes.
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: >-
+    ${{ github.event_name == 'pull_request'
+    && format('desktop-{0}', github.ref)
+    || format('desktop-{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -58,7 +63,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:desktop:web
-      # Compiles and tests the platform-specific code paths (menus, Finder open events).
+      # Compiles the platform-specific code paths (menus, Finder open events) and
+      # runs the Rust unit tests. Nothing here opens a dialog or uses a menu.
       - run: cargo test --workspace --locked
       # Unsigned builds. See README "Code signing and notarization" to sign them.
       - run: ${{ matrix.build }}

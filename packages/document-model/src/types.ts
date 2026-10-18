@@ -34,8 +34,14 @@ export type PageSource =
 export interface PageModel {
   id: PageId;
   source: PageSource;
-  /** Unrotated size of the page's crop box, in PDF points. */
+  /** Unrotated size of the page's crop box, in PDF points, with /UserUnit applied. */
   size: Size;
+  /**
+   * Points per user-space unit (/UserUnit; 1 for almost every page). Page
+   * geometry such as annotation rects is stored in unscaled user space, so
+   * multiply by this to compare it with `size`.
+   */
+  userUnit: number;
   /** Rotation stored in the source PDF (/Rotate). */
   sourceRotation: Rotation;
   /** Rotation added by the user on top of `sourceRotation`. */

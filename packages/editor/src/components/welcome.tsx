@@ -21,7 +21,7 @@ export function Welcome({ onOpen, hovering }: { onOpen(): void; hovering: boolea
         <p className="mt-2 max-w-sm text-base text-ink-muted">
           Drop PDF files anywhere in this window, or choose them from your computer.
         </p>
-        <Button variant="primary" size="lg" className="mt-7" onClick={onOpen}>
+        <Button variant="primary" size="lg" className="mt-7" onClick={onOpen} data-start-action>
           <FolderOpen size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
           Choose PDF…
           <Kbd

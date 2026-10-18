@@ -96,7 +96,7 @@ test.describe('extension editor', () => {
 
   test('supports keyboard shortcuts that do not clash with Chrome', async ({ page }) => {
     const chooser = page.waitForEvent('filechooser');
-    await page.keyboard.press('Control+O');
+    await page.keyboard.press('ControlOrMeta+O');
     await (
       await chooser
     ).setFiles([
@@ -113,9 +113,9 @@ test.describe('extension editor', () => {
       'aria-current',
       'page',
     );
-    await page.keyboard.press('Control+Alt+1');
+    await page.keyboard.press('ControlOrMeta+Alt+1');
     await expect(page.getByRole('complementary', { name: 'Pages' })).toBeHidden();
-    await page.keyboard.press('Control+Alt+2');
+    await page.keyboard.press('ControlOrMeta+Alt+2');
     await expect(page.getByRole('complementary', { name: 'Properties' })).toBeHidden();
     await page.keyboard.press('Alt+W');
     await expect(tabs.getByRole('button', { name: /^rotated-pages\.pdf/ })).toHaveCount(0);

@@ -22,7 +22,8 @@ export interface SourceDescriptor {
   encryption: EncryptionState;
   origin: DocumentOrigin;
   metadata: Partial<DocumentMetadata>;
-  pages: ReadonlyArray<{ size: Size; rotation: number }>;
+  /** `userUnit` defaults to 1. */
+  pages: ReadonlyArray<{ size: Size; rotation: number; userUnit?: number }>;
 }
 
 export function createSourceDocument(descriptor: SourceDescriptor, id: SourceId = newSourceId()) {
@@ -40,6 +41,7 @@ export function createSourceDocument(descriptor: SourceDescriptor, id: SourceId 
     id: newPageId(),
     source: { kind: 'source', sourceId: id, pageIndex },
     size: { width: page.size.width, height: page.size.height },
+    userUnit: page.userUnit ?? 1,
     sourceRotation: normalizeRotation(page.rotation),
     rotation: 0,
   }));

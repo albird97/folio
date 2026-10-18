@@ -1,4 +1,4 @@
-use crate::files::{self, FileError, FileGrants, GrantedFile, LaunchQueue, MAX_FILE_BYTES};
+use crate::files::{self, FileError, FileGrants, LaunchQueue, OpenedFiles, MAX_FILE_BYTES};
 use serde::Serialize;
 use std::path::PathBuf;
 use tauri::ipc::Response;
@@ -22,14 +22,6 @@ impl From<FileError> for CommandError {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenedFiles {
-    pub files: Vec<GrantedFile>,
-    /// Names (never paths) of files that were not PDFs.
-    pub skipped: Vec<String>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
@@ -46,7 +38,7 @@ pub async fn pick_pdf_files(
     window: WebviewWindow,
     grants: State<'_, FileGrants>,
     multiple: bool,
-) -> Result<Vec<GrantedFile>, CommandError> {
+) -> Result<OpenedFiles, CommandError> {
     let (sender, receiver) = tokio::sync::oneshot::channel::<Vec<PathBuf>>();
     let dialog = app
         .dialog()
@@ -73,12 +65,11 @@ pub async fn pick_pdf_files(
         });
     }
     let paths = receiver.await.unwrap_or_default();
-    // A file that disappeared between picking and granting is skipped rather
-    // than failing the whole selection.
-    Ok(paths
-        .iter()
-        .filter_map(|path| grants.grant(path).ok())
-        .collect())
+    // The filter is only a hint (Windows accepts any typed file name), and a
+    // file can disappear between picking and granting. Such files are reported
+    // by name, like drops, instead of failing or silently shrinking the
+    // selection.
+    Ok(grants.grant_all(&paths))
 }
 
 /// Returns the bytes of a granted file as a binary IPC response.
@@ -103,8 +94,7 @@ pub fn release_file(grants: State<'_, FileGrants>, token: String) -> bool {
 /// Hands over files opened before the UI was listening and switches to events.
 #[tauri::command]
 pub fn take_pending_files(queue: State<'_, LaunchQueue>) -> OpenedFiles {
-    let (files, skipped) = queue.drain();
-    OpenedFiles { files, skipped }
+    queue.drain()
 }
 
 #[tauri::command]

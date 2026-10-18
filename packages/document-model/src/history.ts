@@ -27,7 +27,11 @@ export interface History {
 export interface EditorDocumentState {
   model: DocumentModel;
   history: History;
-  /** Top of `past` when the document was last saved; null means "as opened". */
+  /**
+   * Top of `past` when the document was last saved; null means "as opened"
+   * (empty `past`). An ID that is in neither stack means the saved state can no
+   * longer be reached, so every position reads as dirty.
+   */
   savedEntryId: OperationId | null;
 }
 
@@ -105,8 +109,32 @@ export function execute(
     timestamp: now,
     coalesceKey,
   });
-  if (past.length > state.history.limit) past.splice(0, past.length - state.history.limit);
-  return { ...state, model, history: { ...state.history, past, future: [] } };
+  const removed =
+    past.length > state.history.limit ? past.splice(0, past.length - state.history.limit) : [];
+  return {
+    ...state,
+    model,
+    history: { ...state.history, past, future: [] },
+    savedEntryId: savedAfterTrim(state.savedEntryId, removed),
+  };
+}
+
+/**
+ * Dropped entries stay applied to the model but can no longer be undone, so
+ * an empty `past` now means "after the last dropped entry", not "as opened".
+ */
+function savedAfterTrim(
+  savedEntryId: OperationId | null,
+  removed: readonly HistoryEntry[],
+): OperationId | null {
+  const last = removed.at(-1);
+  if (!last) return savedEntryId;
+  if (savedEntryId === last.id) return null;
+  if (savedEntryId === null || removed.some((entry) => entry.id === savedEntryId)) {
+    // A fresh ID never becomes the top of `past`, so no position matches it.
+    return newOperationId();
+  }
+  return savedEntryId;
 }
 
 export const canUndo = (state: EditorDocumentState) => state.history.past.length > 0;

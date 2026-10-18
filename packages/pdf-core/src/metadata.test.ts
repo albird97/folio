@@ -6,9 +6,12 @@ const parseDate = (value: string) =>
 
 describe('normalizeMetadata', () => {
   it('prefers the Info dictionary and falls back to XMP', () => {
-    const xmp = {
-      get: (key: string) => ({ 'dc:title': 'XMP title', 'dc:creator': 'XMP author' })[key],
+    // PDF.js parses dc:creator and dc:subject into string arrays.
+    const values: Record<string, unknown> = {
+      'dc:title': 'XMP title',
+      'dc:creator': ['XMP author'],
     };
+    const xmp = { get: (key: string) => values[key] };
     const metadata = normalizeMetadata(
       {
         Title: '  Info title\u0000 ',
@@ -24,6 +27,15 @@ describe('normalizeMetadata', () => {
     expect(metadata.keywords).toEqual(['a', 'b', 'c']);
     expect(metadata.creationDate).toBe('2026-01-15T00:00:00.000Z');
     expect(metadata.modificationDate).toBeNull();
+  });
+
+  it('joins XMP lists and skips their empty and non-string items', () => {
+    const xmp = {
+      get: (key: string) =>
+        key === 'dc:creator' ? [' Jane Author ', '', 7, 'John Editor\u0000'] : undefined,
+    };
+    expect(normalizeMetadata({}, xmp, parseDate).author).toBe('Jane Author; John Editor');
+    expect(normalizeMetadata({}, { get: () => [] }, parseDate).author).toBe('');
   });
 
   it('ignores non-string values', () => {

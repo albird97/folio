@@ -4,6 +4,7 @@ import { CircleAlert, LockKeyhole, Plus, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { COMMAND_SHORTCUTS } from '../commands';
 import { useWorkspace, useWorkspaceContext } from '../context';
+import { useCloseDocument } from '../hooks/use-close-document';
 import type { WorkspaceDocument } from '../store/workspace';
 
 /** Decorative status icon; the state is spoken through `STATUS_TEXT`. */
@@ -47,14 +48,14 @@ export function TabStrip({
   brand = false,
 }: TabStripProps) {
   const { profile, shortcutPlatform } = useWorkspaceContext();
-  const { documents, activeKey, activate, close } = useWorkspace(
+  const { documents, activeKey, activate } = useWorkspace(
     useShallow((state) => ({
       documents: state.documents,
       activeKey: state.activeKey,
       activate: state.activate,
-      close: state.close,
     })),
   );
+  const close = useCloseDocument();
   const drag = dragRegion ? { 'data-tauri-drag-region': '' } : {};
 
   return (
@@ -82,6 +83,7 @@ export function TabStrip({
               <button
                 type="button"
                 aria-current={active ? 'page' : undefined}
+                data-document-tab={doc.key}
                 onClick={() => activate(doc.key)}
                 title={doc.fileName}
                 className={cn(
@@ -102,7 +104,7 @@ export function TabStrip({
               <button
                 type="button"
                 aria-label={`Close ${doc.fileName}`}
-                onClick={() => void close(doc.key)}
+                onClick={() => close(doc.key)}
                 className={cn(
                   'absolute right-1 flex size-5 items-center justify-center rounded-xs text-ink-muted',
                   'opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-pressed hover:text-ink',

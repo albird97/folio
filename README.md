@@ -1,5 +1,8 @@
 # Folio
 
+[![CI](https://github.com/albird97/folio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/albird97/folio/actions/workflows/ci.yml)
+[![Desktop installers](https://github.com/albird97/folio/actions/workflows/desktop.yml/badge.svg?branch=main)](https://github.com/albird97/folio/actions/workflows/desktop.yml)
+
 Folio is a local-first PDF suite for **macOS**, **Windows** and **Google Chrome**. It is one
 product: the document model, PDF engine, design system and workspace UI are shared, and each
 target adds a thin platform adapter.
@@ -9,8 +12,10 @@ target adds a thin platform adapter.
 > - Ways to open: file picker, drag and drop, launch arguments and Finder events on desktop, and a
 >   side-panel hand-off in Chrome.
 > - Password-protected files can be unlocked.
-> - Viewing: multiple documents in tabs, a pages list, a page preview and full document properties,
->   in light and dark themes with keyboard shortcuts.
+> - Viewing: multiple documents in tabs, a pages list, a preview of the selected page and full
+>   document properties, in light and dark themes with keyboard shortcuts.
+> - On macOS and Windows, the native file dialog, drag and drop, menus, shortcuts and file
+>   association are built in CI but not yet verified on a real Mac or Windows PC.
 >
 > Viewing tools, editing, saving and the advanced tools follow in later phases. See
 > [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the roadmap and
@@ -77,7 +82,9 @@ Installers appear under `target/release/bundle/` (or `target/universal-apple-dar
 
 1. `pnpm dev:desktop` starts Vite on port 1420 and opens Folio in a native window.
 2. Open PDFs with **File → Open…** (⌘O / Ctrl+O), by dropping them onto the window, or by passing
-   them on the command line (`target/release/folio-desktop file.pdf`).
+   them on the command line (`target/release/folio-desktop file.pdf`). Nothing is dropped
+   silently: files that are not PDFs are reported, and a file that was moved or deleted before
+   Folio could open it gets an error tab.
 
 **Shortcuts:**
 
@@ -85,12 +92,19 @@ Installers appear under `target/release/bundle/` (or `target/universal-apple-dar
 | ------------------------ | ------------ | ------------------------- |
 | Open                     | ⌘O           | Ctrl+O                    |
 | Close document           | ⌘W           | Ctrl+W                    |
+| Close window             | ⇧⌘W          | —                         |
 | Next / previous document | ⌃Tab / ⌃⇧Tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Pages panel              | ⌘⌥1          | Ctrl+Alt+1                |
 | Properties panel         | ⌘⌥2          | Ctrl+Alt+2                |
 
-Folio never writes to the files you open in Phase 1. The webview cannot read arbitrary files:
-only files you chose are reachable, through tokens issued by the Rust layer.
+The macOS menus are Folio, File, Edit, View and Window. ⌘W closes the current document, so
+**Window → Close Window** uses ⇧⌘W. Windows and Linux have File, Edit, View and
+Help (**Help → About Folio**). Switching the theme has no shortcut: use the toolbar button or
+**View → Switch Theme**. Letter shortcuts follow your keyboard layout (AZERTY included), and
+AltGr combinations never trigger shortcuts.
+
+Folio never writes to the files you open in Phase 1. The webview can never read a file you did not
+choose: files are reachable only through tokens issued by the Rust layer.
 
 ## Installing and testing the Chrome extension
 
@@ -103,7 +117,8 @@ only files you chose are reachable, through tokens issued by the Rust layer.
    - **Settings** (the gear) holds the theme, activity privacy and permission explanations.
 
 In development, click the reload icon on `chrome://extensions` after each rebuild. Editor-page
-shortcuts avoid keys Chrome reserves:
+shortcuts avoid keys Chrome reserves. Shortcuts without Ctrl/⌘ (Alt+W, Alt+PageDown/PageUp) are
+ignored while you type in a field:
 
 | Action                   | Shortcut                  |
 | ------------------------ | ------------------------- |
@@ -132,8 +147,11 @@ The extension requests only `storage` and `sidePanel`. Features that read PDFs f
 - **Windows:** `.msi` and NSIS `.exe`.
 
 It runs on `main`, `v*` tags, pull requests and manual dispatch. On other branches, include
-`[desktop]` in the commit message. macOS runners are billed at a higher rate on private
-repositories.
+`[desktop]` in the commit message. Each push builds in its own run, so no push is skipped (a
+push of several commits builds its latest commit); on pull requests a new commit cancels the older run. Besides the installers it runs
+`cargo test`, which compiles the macOS and Windows code paths. No job opens a native dialog, drops
+a file or uses a menu, so those are not verified yet. macOS runners are billed at a higher rate on
+private repositories.
 
 ### macOS (on a Mac)
 
@@ -173,7 +191,14 @@ workflow's build step to produce signed releases. Never commit them.
 ## Privacy
 
 - Documents are read and rendered locally (PDF.js runs in a worker inside the app).
-- No analytics and no remote services. The CSPs allow no remote code or connections.
+- No analytics and no remote services. The CSPs of the desktop app and of the extension's pages
+  allow no remote code or connections: scripts, requests, images, styles and fonts can only come
+  from Folio itself.
+- A PDF handed from the side panel to the editor passes through the extension's IndexedDB as a
+  single-use record: the editor deletes it when it reads it, a record older than 10 minutes is
+  ignored, and expired records are purged on every hand-off written or read, when the browser
+  starts and when the extension is installed or updated. If the editor cannot be opened, the side
+  panel deletes the record and shows an error.
 - The extension's activity list stores counts by default; file names only if you opt in.
 - Passwords for encrypted PDFs are kept only in memory for the open document.
 
@@ -187,5 +212,6 @@ See [IMPLEMENTATION_PLAN.md §7](IMPLEMENTATION_PLAN.md#7-known-limitations) and
 Folio's own code and artwork are original. Bundled third-party components:
 
 - PDF.js (Apache-2.0), including its OpenJPEG, JBIG2 and QCMS WASM decoders. Their license files
-  ship in `pdfjs/wasm/`.
+  ship in `pdfjs/wasm/`. PDF.js scripting is not used, so its QuickJS engine (`quickjs-eval.*`)
+  is not shipped.
 - React and Zustand (MIT), Radix UI (MIT), Lucide (ISC), Inter (OFL-1.1) and Tauri (MIT/Apache-2.0).

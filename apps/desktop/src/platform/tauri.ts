@@ -9,7 +9,6 @@ import {
 } from '@folio/platform-adapters';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TAURI_FEATURES } from './features';
 
@@ -20,11 +19,13 @@ interface GrantedFile {
   size: number;
 }
 
-/** Mirrors `lib::OpenedFiles` in Rust. */
+/** Mirrors `files::OpenedFiles` in Rust. Names only, never paths. */
 interface OpenedFiles {
   files: GrantedFile[];
-  /** Names of dropped files that were not PDFs (never paths). */
+  /** Names of files that are not PDFs. */
   skipped: string[];
+  /** Names of files that could no longer be found when they were granted. */
+  unavailable: string[];
 }
 
 interface AppInfo {
@@ -48,14 +49,13 @@ const MENU_COMMANDS: ReadonlySet<string> = new Set<AppCommand>([
   'cycle-theme',
 ]);
 
+const notFound = () =>
+  new PdfError('unknown', 'The file could not be found. It may have been moved or deleted.');
+
 function toPdfError(error: unknown): Error {
   const value = error as Partial<CommandError> | undefined;
   if (value?.code === 'too-large') return new PdfError('too-large');
-  if (value?.code === 'not-found')
-    return new PdfError(
-      'unknown',
-      'The file could not be found. It may have been moved or deleted.',
-    );
+  if (value?.code === 'not-found') return notFound();
   return new PdfError('unknown', value?.message ?? 'The file could not be read.');
 }
 
@@ -79,13 +79,22 @@ function grantedToIncoming(file: GrantedFile): IncomingFile {
   };
 }
 
-function skippedToIncoming(name: string): IncomingFile {
+/** A file that was not granted, so it can still get a notice or an error tab. */
+function failedToIncoming(name: string, error: () => Error): IncomingFile {
   return {
     name,
     size: 0,
     origin: { kind: 'local-file', handle: null },
-    read: () => Promise.reject(new PdfError('not-a-pdf')),
+    read: () => Promise.reject(error()),
   };
+}
+
+function toIncoming({ files, skipped, unavailable }: OpenedFiles): IncomingFile[] {
+  return [
+    ...files.map(grantedToIncoming),
+    ...skipped.map((name) => failedToIncoming(name, () => new PdfError('not-a-pdf'))),
+    ...unavailable.map((name) => failedToIncoming(name, notFound)),
+  ];
 }
 
 function toOperatingSystem(os: string): OperatingSystem {
@@ -102,7 +111,12 @@ export function isTauri(): boolean {
 /**
  * The desktop adapter. Files are only reachable through opaque tokens the
  * Rust side issues after the user picked, dropped or launched them, so the
- * webview never handles filesystem paths.
+ * webview can never read a file it was not granted. It does not need or
+ * receive paths from Folio's own commands and events, which carry tokens and
+ * names only. Drag hover therefore comes from `folio://drag-hover`: Tauri's
+ * built-in `tauri://drag-*` events include the dragged paths and are not
+ * listened to (`core:event:allow-listen` cannot be scoped by event name, so a
+ * compromised page could still subscribe to them).
  */
 export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { info: AppInfo }> {
   const info = await invoke<AppInfo>('app_info');
@@ -110,8 +124,8 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
   const commands = new Channel<AppCommand>();
   const hover = new Channel<boolean>();
 
-  const deliver = ({ files, skipped }: OpenedFiles) => {
-    const all = [...files.map(grantedToIncoming), ...skipped.map(skippedToIncoming)];
+  const deliver = (opened: OpenedFiles) => {
+    const all = toIncoming(opened);
     if (all.length > 0) incoming.emit(all);
   };
 
@@ -119,9 +133,7 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
   await listen<string>('folio://menu', (event) => {
     if (MENU_COMMANDS.has(event.payload)) commands.emit(event.payload as AppCommand);
   });
-  await getCurrentWebview().onDragDropEvent((event) => {
-    hover.emit(event.payload.type === 'enter' || event.payload.type === 'over');
-  });
+  await listen<boolean>('folio://drag-hover', (event) => hover.emit(event.payload === true));
   // Files from launch arguments or Finder arrive before the UI exists; they
   // are queued natively until the listener above is in place.
   deliver(await invoke<OpenedFiles>('take_pending_files'));
@@ -134,10 +146,10 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
     features: TAURI_FEATURES,
     storage: createLocalStorage('folio:'),
     async pickPdfFiles(options) {
-      const files = await invoke<GrantedFile[]>('pick_pdf_files', {
+      const opened = await invoke<OpenedFiles>('pick_pdf_files', {
         multiple: options?.multiple ?? false,
       });
-      return files.map(grantedToIncoming);
+      return toIncoming(opened);
     },
     onIncomingFiles: (listener) => incoming.subscribe(listener),
     onCommand: (listener) => commands.subscribe(listener),

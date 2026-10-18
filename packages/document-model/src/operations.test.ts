@@ -97,6 +97,7 @@ describe('page operations', () => {
       id: newPageId(),
       source: { kind: 'blank' },
       size: { width: 612, height: 792 },
+      userUnit: 1,
       sourceRotation: 0,
       rotation: 0,
     });

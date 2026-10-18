@@ -53,9 +53,14 @@ export interface PdfPermissions {
 }
 
 export interface PdfPageInfo {
-  /** Unrotated crop-box size in points. */
+  /**
+   * Unrotated crop-box size in points, with /UserUnit applied: the size that
+   * `renderPage` draws at scale 1.
+   */
   size: Size;
   rotation: Rotation;
+  /** Points per user-space unit (/UserUnit, usually 1). */
+  userUnit: number;
 }
 
 export interface PdfDocumentInfo {
@@ -105,10 +110,14 @@ export interface PdfEngine {
 const DEFAULT_MAX_CANVAS_PIXELS = 4096 * 4096;
 const PAGE_INFO_BATCH = 32;
 
-function permissionsFrom(flags: Set<number> | null): PdfPermissions | null {
+/**
+ * Maps the raw /P bits that PDF.js reports. The high-quality print bit (12)
+ * only refines the print bit (3), so on its own it does not permit printing.
+ */
+export function permissionsFrom(flags: ReadonlySet<number> | null): PdfPermissions | null {
   if (!flags) return null;
   return {
-    print: flags.has(PermissionFlag.PRINT) || flags.has(PermissionFlag.PRINT_HIGH_QUALITY),
+    print: flags.has(PermissionFlag.PRINT),
     copy: flags.has(PermissionFlag.COPY),
     modify: flags.has(PermissionFlag.MODIFY_CONTENTS),
     annotate: flags.has(PermissionFlag.MODIFY_ANNOTATIONS),
@@ -126,6 +135,9 @@ async function readPageInfo(document: PDFDocumentProxy): Promise<PdfPageInfo[]> 
       batch.push(
         document.getPage(index + 1).then((page) => {
           const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = page.view;
+          // Viewports are scaled by /UserUnit (large-format pages; PDF.js
+          // defaults it to 1), so sizes must be as well.
+          const unit = page.userUnit;
           let rotation: Rotation = 0;
           try {
             rotation = normalizeRotation(page.rotate);
@@ -133,8 +145,9 @@ async function readPageInfo(document: PDFDocumentProxy): Promise<PdfPageInfo[]> 
             rotation = 0;
           }
           pages[index] = {
-            size: { width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) },
+            size: { width: Math.abs(x2 - x1) * unit, height: Math.abs(y2 - y1) * unit },
             rotation,
+            userUnit: unit,
           };
         }),
       );

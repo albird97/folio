@@ -1,0 +1,14 @@
+# Text files are stored and checked out with LF everywhere, including Windows
+# (whose Git defaults to CRLF checkouts). Prettier (.editorconfig) and the
+# PLATFORM_CAPABILITIES.md sync test compare against LF.
+* text=auto eol=lf
+
+# Byte-exact files. PDF fixtures in particular must never be converted: some
+# are plain text (header-only.pdf, not-a-pdf.pdf) and would otherwise be.
+*.pdf binary
+*.png binary
+*.ico binary
+*.icns binary
+*.wasm binary
+*.woff binary
+*.woff2 binary

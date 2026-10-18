@@ -39,9 +39,10 @@ export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
       aria-label="Workspace"
       className="flex h-11 shrink-0 items-center gap-1 border-b border-line bg-surface px-2"
     >
+      {/* Panel toggles keep a fixed name; `pressed` says whether the panel is shown. */}
       <ToolbarPrimitive.Button asChild>
         <IconButton
-          label={leftPanelOpen ? 'Hide pages panel' : 'Show pages panel'}
+          label="Pages panel"
           icon={<PanelLeft size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
           pressed={ready && leftPanelOpen}
           disabled={!ready}
@@ -87,7 +88,7 @@ export function WorkspaceToolbar({ onOpen }: { onOpen(): void }) {
       </ToolbarPrimitive.Button>
       <ToolbarPrimitive.Button asChild>
         <IconButton
-          label={rightPanelOpen ? 'Hide properties panel' : 'Show properties panel'}
+          label="Properties panel"
           icon={<PanelRight size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
           pressed={doc !== null && rightPanelOpen}
           disabled={doc === null}

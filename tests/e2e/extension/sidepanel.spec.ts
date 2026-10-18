@@ -22,6 +22,32 @@ test.describe('extension side panel', () => {
     );
     await expectAccessible(page, 'side panel with summary');
 
+    // A hand-off nobody read (e.g. its tab was closed straight away) is purged
+    // by the next one once it is older than ten minutes.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const request = indexedDB.open('folio', 1);
+          request.onupgradeneeded = () =>
+            request.result.createObjectStore('handoffs', { keyPath: 'id' });
+          request.onsuccess = () => {
+            const transaction = request.result.transaction('handoffs', 'readwrite');
+            transaction.objectStore('handoffs').put({
+              id: 'f'.repeat(32),
+              name: 'left-behind.pdf',
+              bytes: new ArrayBuffer(8),
+              createdAt: Date.now() - 11 * 60 * 1000,
+            });
+            transaction.oncomplete = () => {
+              request.result.close();
+              resolve();
+            };
+            transaction.onerror = () => reject(transaction.error);
+          };
+          request.onerror = () => reject(request.error);
+        }),
+    );
+
     const editorPromise = context.waitForEvent('page');
     await summary.getByRole('button', { name: 'Open in editor' }).click();
     const editor = await editorPromise;

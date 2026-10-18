@@ -4,7 +4,7 @@ Folio is one PDF product with three targets: a macOS app, a Windows app (both Ta
 Chrome extension (Manifest V3). Document logic is written once in shared packages; each target
 contributes only a thin platform adapter and its own shell.
 
-- **Status:** Phase 1 (Foundation) is complete. See [Phase 1 results](#phase-1-results).
+- **Status:** Phase 1 (Foundation) is complete. See [Phase 1 results](#6-phase-1-results).
 - **What works where:** [PLATFORM_CAPABILITIES.md](PLATFORM_CAPABILITIES.md) (generated, tested).
 - **How to build and run:** [README.md](README.md).
 
@@ -61,7 +61,7 @@ the platform:
 | Incoming files | Drag and drop, launch arguments, Finder events → Rust grants | Side panel → editor hand-off (IndexedDB) | `deliverFiles()`      |
 | File reads     | `read_granted_file(token)` → binary IPC                      | `File.arrayBuffer()`                     | `File.arrayBuffer()`  |
 | Storage        | `localStorage`                                               | `chrome.storage.local` (+ change events) | `localStorage`        |
-| Commands       | Native menu events                                           | Keyboard only                            | Keyboard only         |
+| Commands       | Native menu events and keyboard                              | Keyboard only                            | Keyboard only         |
 | Clipboard      | `navigator.clipboard`                                        | `navigator.clipboard`                    | `navigator.clipboard` |
 
 Each adapter declares `RuntimeFeatures`. Tests assert those flags agree with the capability matrix
@@ -73,6 +73,8 @@ code.
 - **IDs:** `doc_`, `src_`, `page_`, `annot_`, `field_`, `asset_` and `op_` prefixes, plus 96 random bits, branded per type.
 - **`DocumentModel`:** sources, page order, page sizes and rotation, metadata, annotations
   (markup, notes, ink, shapes, added text, added images, signatures), form fields, assets and export settings.
+  Page sizes are in points with /UserUnit applied; each page keeps its `userUnit`, because
+  annotation geometry is stored in unscaled PDF user space.
 - **`DocumentViewState`:** current page and zoom. This is UI state, deliberately kept outside the
   model and outside undo history.
 - **Operations:** `pages/rotate|reorder|insert|remove`, `metadata/update`,
@@ -97,8 +99,21 @@ existing text objects (see [§4](#4-pdf-engines-and-licensing)).
   drops it or launches Folio with it. Rust then registers it under a random 128-bit token, and
   commands accept tokens, never paths. A compromised webview (for example, a malicious PDF
   exploiting the renderer) can read only files the user already opened.
+- Folio's own events and commands carry tokens and file names, never paths. Drag hover is a plain
+  `true`/`false` (`folio://drag-hover`), which Rust emits from the window's drag events, so the
+  UI does not listen to Tauri's `tauri://drag-*` events, which carry the paths of everything
+  dragged over the window. `core:event:allow-listen` cannot be scoped by event name, so a
+  compromised page could still subscribe to those built-in events and learn such paths; it still
+  cannot read a file it was not granted.
+- Nothing is dropped silently. Rust applies the same name rule as the workspace
+  (`isLikelyPdfName`): only a name ending in `.` plus 1–8 ASCII letters or digits other than `pdf`
+  counts as “not a PDF”; any other name (no extension, or one like `.v2_final`) is granted and
+  checked by content. Files that are not PDFs and files that vanished before they could be granted
+  come back by name and appear as a notice or an error tab.
 - App commands have generated `allow-*` permissions. The `main` capability grants only those five
-  commands plus `event:listen/unlisten`, `window:set-title` and `window:start-dragging`.
+  commands plus `event:listen/unlisten`, `window:set-title`, `window:start-dragging` and
+  `window:internal-toggle-maximize`. The tab strip is a window drag region, which the macOS
+  overlay title bar relies on: drag it to move the window, double-click it to zoom or maximize.
 - The CSP permits `'self'`, `ipc:`, `blob:`/`data:` images and `'wasm-unsafe-eval'` (needed for
   PDF.js image decoders), and nothing remote. The tauri-driver test asserts zero CSP violations.
 - IPC errors are `{code, message}` with no paths.
@@ -108,13 +123,23 @@ existing text objects (see [§4](#4-pdf-engines-and-licensing)).
 - Permissions are `storage` and `sidePanel` only. There are no host permissions and no content
   scripts, and `externally_connectable` is not set. Tests check both the manifest and
   `chrome.permissions.getAll()`.
+- The extension pages' CSP is `default-src 'self'` with `script-src 'self' 'wasm-unsafe-eval'`,
+  `connect-src 'self'`, images from `'self'`, `blob:` and `data:`, fonts from `'self'` and
+  `data:`, and inline styles (React style props) but no inline scripts. Pages cannot load
+  remote code, and requests, beacons, images, styles and fonts to other servers are blocked
+  (no CSP directive limits top-level navigation). A unit test pins the policy, and an e2e test checks
+  that `fetch` and image beacons to other origins are blocked.
 - The service worker validates every message with zod, caps message size and accepts only this
-  extension's pages as senders. It holds no state in memory.
+  extension's pages as senders. It holds no state in memory beyond a queue that orders
+  activity-log writes.
 - Documents never leave the device. An e2e test asserts no network requests while opening a
   document. Activity stores counts by default; file names only on opt-in, and turning that off
   erases stored names.
-- Side panel → editor hand-offs are single-use IndexedDB records, deleted on read and purged after
-  10 minutes.
+- Side panel → editor hand-offs are single-use IndexedDB records. Reading one deletes it, a record
+  older than 10 minutes is ignored, and expired records are purged on every hand-off written or
+  read, when the browser starts and when the extension is installed or updated. Folio sets no
+  timer, because that would need the `alarms` permission. If the editor cannot be opened after
+  the record is written, the side panel deletes the record and shows an error.
 
 ## 3. Technology decisions
 
@@ -142,7 +167,7 @@ full workspace.
 
 | Engine                                    | License                | Role in Folio                                                                                                 | Notes                                                                                                                                                                                                |
 | ----------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PDF.js                                    | Apache-2.0             | Rendering, metadata, encryption, text (Phase 2), forms reading (Phase 6)                                      | Used in Phase 1.                                                                                                                                                                                     |
+| PDF.js                                    | Apache-2.0             | Rendering, metadata, encryption, text (Phase 2), forms reading (Phase 6)                                      | Used in Phase 1. Scripting is never enabled, so its QuickJS engine is not shipped.                                                                                                                   |
 | @cantoo/pdf-lib                           | MIT                    | Planned for page operations, merge/split, metadata writing, watermarks, flattening (Phases 2–6)               | A maintained fork of pdf-lib (unmaintained since 2021) that adds encryption. Its encryption output must be validated against qpdf before Folio relies on it. Already used to generate test fixtures. |
 | qpdf                                      | Apache-2.0             | Fixture generation today; candidate desktop sidecar for robust encryption, linearization and repair (Phase 6) | Not shippable inside the extension.                                                                                                                                                                  |
 | PDFium                                    | BSD-3 / Apache-2.0     | Option for faster, higher-fidelity desktop rendering                                                          | Evaluate in Phase 7 if PDF.js performance is insufficient for very large files.                                                                                                                      |
@@ -167,7 +192,8 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
 - [x] Extension shell: popup, side panel, editor page, options, service worker, validated
       messaging, IndexedDB hand-off, activity log with privacy controls.
 - [x] Shared workspace vertical slice on both targets: open (picker, drop, launch, hand-off), unlock
-      password-protected files, tabs, pages list, first-page preview, properties, errors, themes and shortcuts.
+      password-protected files, tabs, pages list, single-page preview of the selected page,
+      properties, errors, themes and shortcuts.
 - [x] Real fixtures and unit, Rust, Playwright (extension and desktop UI, with axe) and native
       tauri-driver tests.
 - [x] CI: checks, Linux build and native e2e on every push. macOS and Windows installers run on
@@ -213,6 +239,9 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
 - Single-instance handling (`tauri-plugin-single-instance`), so files opened while Folio runs
   arrive in the running window on Windows and Linux.
 - The full keyboard-shortcut set, native clipboard, recent files and window state.
+- Verify the native file dialog, drag and drop, menus and shortcuts, and Finder / Explorer file
+  association on a real Mac and a real Windows PC. The capability matrix rates them Limited on
+  macOS and Windows until then.
 - Signed and notarized installers, once credentials exist (see README).
 
 ### Phase 5: Chrome integration ⏳
@@ -245,25 +274,29 @@ performance profiling, a security review (IPC fuzzing, CSP, permissions), auto-u
 
 ### Verified in this environment
 
-| Area                   | What was run                                                                      | Result                                                                                                                                     |
-| ---------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Shared packages        | `pnpm test` (Vitest)                                                              | 89 tests passed                                                                                                                            |
-| Types, lint, format    | `pnpm typecheck`, `pnpm lint`, `pnpm format:check`                                | Clean                                                                                                                                      |
-| Rust                   | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`                     | Clean, 11 tests passed                                                                                                                     |
-| Extension              | `pnpm build:extension` + Playwright (unpacked in Chromium 141)                    | 16 tests passed, including axe in light and dark                                                                                           |
-| Desktop UI             | `pnpm build:desktop:web` + Playwright                                             | 6 tests passed                                                                                                                             |
-| Desktop binary (Linux) | `pnpm build:desktop:linux` → `Folio_0.1.0_amd64.deb`; tauri-driver e2e under Xvfb | 6 tests passed: launch-argument open, WebKitGTK rendering, zero CSP violations, token-only file access, ungranted plugin denied, close tab |
+| Area                   | What was run                                                                      | Result                                                                                                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared packages        | `pnpm test` (Vitest)                                                              | 159 tests passed (27 files, including the desktop and extension unit tests)                                                                                           |
+| Types, lint, format    | `pnpm typecheck`, `pnpm lint`, `pnpm format:check`                                | Clean                                                                                                                                                                 |
+| Rust                   | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`                     | Clean, 18 tests passed                                                                                                                                                |
+| Extension              | `pnpm build:extension` + Playwright (unpacked in Chromium 141)                    | 17 tests passed, including axe in light and dark and CSP blocking of remote requests                                                                                  |
+| Desktop UI             | `pnpm build:desktop:web` + Playwright                                             | 6 tests passed                                                                                                                                                        |
+| Desktop binary (Linux) | `pnpm build:desktop:linux` → `Folio_0.1.0_amd64.deb`; tauri-driver e2e under Xvfb | 7 tests passed: launch-argument open, WebKitGTK rendering, zero CSP violations, token-only file access, ungranted plugin denied, double-click zoom allowed, close tab |
 
 ### Verified only in CI
 
 macOS (universal `.dmg`) and Windows (`.msi`, NSIS `.exe`) builds, plus `cargo test` on those
-platforms, run in `.github/workflows/desktop.yml`. Their latest status is reported in the README
-and the pull request. They are not claimed here.
+platforms, run in `.github/workflows/desktop.yml`. The first run (commit `16d3f6a`) succeeded on
+both: an 8.8 MB macOS artifact and an 8.3 MB Windows artifact. Their latest status on `main` is shown by the
+badge at the top of the README, and on each pull request. These runs compile the platform-specific
+code and run the Rust unit tests; nothing in them opens a dialog, drops a file or uses a menu, and
+nothing beyond that is claimed here.
 
 ### Not yet verified anywhere
 
-- Native file dialogs, native drag and drop, menu interaction and Finder “Open With” behaviour
-  (manual checks on real machines).
+- On a real Mac or Windows PC: native file dialogs, native drag and drop, menus and their
+  shortcuts, and Finder “Open With” / Explorer file association. No manual checks have been done
+  yet; the capability matrix rates these Limited on macOS and Windows until they are.
 - Signed or notarized installers (they need credentials).
 
 ## 7. Known limitations
@@ -271,6 +304,8 @@ and the pull request. They are not claimed here.
 - **Viewing:** a single-page preview only; no text selection, search or zoom until Phase 2.
 - **Opening:** page dictionaries are read up front. A 400-page file opens in well under a second in
   tests; files with tens of thousands of pages will be slow until Phase 2's lazy loading.
+- **macOS and Windows:** the native dialog, drag and drop, menus, shortcuts and file association
+  are built in CI but have not been tried on a real machine yet (Phase 4).
 - **Windows:** a second file opened from Explorer while Folio runs starts a second instance (Phase 4).
 - **Extension:** it cannot be the system PDF handler and cannot script Chrome's built-in PDF viewer.
   Opening PDFs from tabs or URLs arrives in Phase 5, with on-demand permissions.

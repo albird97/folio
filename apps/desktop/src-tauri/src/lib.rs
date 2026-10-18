@@ -2,41 +2,36 @@ mod commands;
 pub mod files;
 pub mod menu;
 
-use commands::OpenedFiles;
 use files::{FileGrants, LaunchQueue};
 use std::path::PathBuf;
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, WindowEvent};
 
 pub const FILES_OPENED_EVENT: &str = "folio://files-opened";
 pub const MENU_EVENT: &str = "folio://menu";
+/// `true` while files are dragged over the window. Carries no paths.
+pub const DRAG_HOVER_EVENT: &str = "folio://drag-hover";
 
 /// Grants user-provided paths and delivers them to the UI (now or once it is ready).
 fn open_paths(app: &AppHandle, paths: &[PathBuf]) {
-    let grants = app.state::<FileGrants>();
-    let mut opened = Vec::new();
-    let mut skipped = Vec::new();
-    for path in paths {
-        match grants.grant(path) {
-            Ok(file) => opened.push(file),
-            Err(files::FileError::NotPdf) => {
-                if let Some(name) = path.file_name() {
-                    skipped.push(name.to_string_lossy().into_owned());
-                }
-            }
-            // Folders and vanished files are ignored silently.
-            Err(_) => {}
-        }
-    }
-    if opened.is_empty() && skipped.is_empty() {
+    let opened = app.state::<FileGrants>().grant_all(paths);
+    if opened.is_empty() {
         return;
     }
-    if let Some((files, skipped)) = app.state::<LaunchQueue>().offer(opened, skipped) {
-        let _ = app.emit(FILES_OPENED_EVENT, OpenedFiles { files, skipped });
+    if let Some(opened) = app.state::<LaunchQueue>().offer(opened) {
+        let _ = app.emit(FILES_OPENED_EVENT, opened);
     }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+/// Whether files are being dragged over the window once `event` happened.
+fn is_drag_hovering(event: &DragDropEvent) -> bool {
+    matches!(
+        event,
+        DragDropEvent::Enter { .. } | DragDropEvent::Over { .. }
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -49,7 +44,12 @@ pub fn run() {
             let handle = app.handle();
             app.set_menu(menu::build(handle)?)?;
             app.on_menu_event(|app, event| {
-                if let Some(command) = menu::command_for(event.id().as_ref()) {
+                let id = event.id().as_ref();
+                if id == menu::CLOSE_WINDOW.0 {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.close();
+                    }
+                } else if let Some(command) = menu::command_for(id) {
                     let _ = app.emit(MENU_EVENT, command);
                 }
             });
@@ -60,8 +60,14 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
-                open_paths(window.app_handle(), paths);
+            if let WindowEvent::DragDrop(event) = event {
+                // Tauri's own drag events carry the paths of everything dragged
+                // across the window, so the UI does not listen to them and only
+                // learns whether a drag is in progress.
+                let _ = window.emit(DRAG_HOVER_EVENT, is_drag_hovering(event));
+                if let DragDropEvent::Drop { paths, .. } = event {
+                    open_paths(window.app_handle(), paths);
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -85,4 +91,23 @@ pub fn run() {
             }
             let _ = (app, event);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::PhysicalPosition;
+
+    #[test]
+    fn drag_hover_is_only_set_while_a_drag_is_over_the_window() {
+        let position = PhysicalPosition::new(10.0, 20.0);
+        let paths = vec![PathBuf::from("/Users/alice/a.pdf")];
+        assert!(is_drag_hovering(&DragDropEvent::Enter {
+            paths: paths.clone(),
+            position,
+        }));
+        assert!(is_drag_hovering(&DragDropEvent::Over { position }));
+        assert!(!is_drag_hovering(&DragDropEvent::Leave));
+        assert!(!is_drag_hovering(&DragDropEvent::Drop { paths, position }));
+    }
 }

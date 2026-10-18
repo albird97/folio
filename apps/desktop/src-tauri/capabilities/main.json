@@ -1,13 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Least-privilege permissions for Folio's main window. There is no filesystem plugin: files are only reachable through tokens issued by Folio's own commands after the user chooses them.",
+  "description": "Least-privilege permissions for Folio's main window. There is no filesystem plugin: files are only reachable through tokens issued by Folio's own commands after the user chooses them. The window permissions cover the title and the tab strip's drag region (drag to move, double-click to zoom or maximize).",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-set-title",
     "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "allow-pick-pdf-files",
     "allow-read-granted-file",
     "allow-release-file",

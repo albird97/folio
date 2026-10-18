@@ -36,6 +36,13 @@ export interface KeyLike {
   ctrlKey: boolean;
   shiftKey: boolean;
   altKey: boolean;
+  getModifierState?(key: string): boolean;
+}
+
+/** Whether a shortcut is held with Ctrl or ⌘, so it never types text. */
+export function usesCommandModifier(shortcut: string): boolean {
+  const modifiers = shortcut.split('+').slice(0, -1);
+  return modifiers.includes('Mod') || modifiers.includes('Ctrl');
 }
 
 /** Matches a keyboard event against shortcut notation. */
@@ -44,6 +51,9 @@ export function matchesShortcut(
   shortcut: string,
   platform: ShortcutPlatform,
 ): boolean {
+  // AltGr types characters ("@" is AltGr+2 on Spanish keyboards). Windows
+  // reports it as Ctrl+Alt, which would otherwise look like Mod+Alt.
+  if (event.getModifierState?.('AltGraph')) return false;
   const parts = shortcut.split('+');
   const key = parts.at(-1)!;
   const wants = new Set(parts.slice(0, -1));
@@ -58,9 +68,14 @@ export function matchesShortcut(
   if (/^[a-z0-9]$/i.test(key) || key.length > 1) {
     if (event.shiftKey !== wants.has('Shift')) return false;
   }
-  // Letters and digits match on the physical key: Option/Alt and Shift change
-  // `key` (⌥1 is "¡" on a Mac keyboard) but not `code`.
-  if (event.code && /^[a-z]$/i.test(key)) return event.code === `Key${key.toUpperCase()}`;
+  // Letters follow the keyboard layout (⌘Z on AZERTY is the key labelled Z,
+  // whose `code` is KeyW). Only when a modifier or a non-Latin layout turns the
+  // key into another character (⌥W is "∑" on a Mac) does the physical key decide.
+  if (/^[a-z]$/i.test(key) && !/^[a-z]$/i.test(event.key) && event.code) {
+    return event.code === `Key${key.toUpperCase()}`;
+  }
+  // Digits match on the physical key: Option/Alt and Shift change `key` (⌥1 is
+  // "¡" on a Mac keyboard, and AZERTY types digits with Shift) but not `code`.
   if (event.code && /^[0-9]$/.test(key)) return event.code === `Digit${key}`;
   return event.key.toLowerCase() === key.toLowerCase();
 }

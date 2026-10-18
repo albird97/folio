@@ -1,10 +1,14 @@
 //! User-granted file access.
 //!
-//! The webview never receives or sends filesystem paths. A path becomes
-//! readable only after the user chose it (dialog, drag and drop, launch
-//! arguments, Finder/Explorer), at which point it is registered here under an
-//! unguessable token. Commands accept tokens, never paths, so script running
-//! in the webview cannot read arbitrary files.
+//! A path becomes readable only after the user chose it (dialog, drag and
+//! drop, launch arguments, Finder/Explorer), at which point it is registered
+//! here under an unguessable token. Commands accept tokens, never paths, so
+//! script running in the webview can never read a file it was not granted.
+//! Folio's own commands and events only hand the webview tokens and file
+//! names; it does not need or receive paths. (`core:event:allow-listen`
+//! cannot be scoped by event name, so a compromised page could still
+//! subscribe to Tauri's built-in `tauri://drag-*` events, which do carry
+//! paths. It still could not read those files.)
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -22,6 +26,30 @@ pub struct GrantedFile {
     /// File name only, for display. Never the full path.
     pub name: String,
     pub size: u64,
+}
+
+/// What the UI receives for a batch of user-chosen paths: tokens for the files
+/// that were granted, and only the names of those that were not.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenedFiles {
+    pub files: Vec<GrantedFile>,
+    /// Names of files that are not PDFs.
+    pub skipped: Vec<String>,
+    /// Names of files that could no longer be found when they were granted.
+    pub unavailable: Vec<String>,
+}
+
+impl OpenedFiles {
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty() && self.skipped.is_empty() && self.unavailable.is_empty()
+    }
+
+    fn append(&mut self, other: OpenedFiles) {
+        self.files.extend(other.files);
+        self.skipped.extend(other.skipped);
+        self.unavailable.extend(other.unavailable);
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -50,13 +78,29 @@ impl FileError {
     }
 }
 
-/// Mirrors the frontend rule (`isLikelyPdfName`): `.pdf` files, plus
-/// extensionless files that content sniffing will accept or reject.
-pub fn is_likely_pdf(path: &Path) -> bool {
-    match path.extension() {
+/// Mirrors the frontend rule (`isLikelyPdfName` in `packages/editor`): a name
+/// only counts as another file type when it ends in `.` plus 1 to 8 ASCII
+/// letters or digits other than `pdf`. Everything else (no extension, or an
+/// unusual one such as in `Invoice No. 4711` or `notes.v2_final`) is left to
+/// content sniffing. Both rules are tested against the same table,
+/// `apps/desktop/src/platform/pdf-name-cases.json`.
+pub fn is_likely_pdf_name(name: &str) -> bool {
+    match name.rsplit_once('.') {
         None => true,
-        Some(extension) => extension.eq_ignore_ascii_case("pdf"),
+        Some((_, extension)) => {
+            let typed = (1..=8).contains(&extension.len())
+                && extension.bytes().all(|byte| byte.is_ascii_alphanumeric());
+            !typed || extension.eq_ignore_ascii_case("pdf")
+        }
     }
+}
+
+/// Applies [`is_likely_pdf_name`] to the chosen path's file name, which is also
+/// the name the UI is given. Names that are not valid UTF-8 are compared in
+/// their lossy form, as the UI gets them.
+pub fn is_likely_pdf(path: &Path) -> bool {
+    path.file_name()
+        .is_none_or(|name| is_likely_pdf_name(&name.to_string_lossy()))
 }
 
 /// Picks file arguments out of a command line (file associations on Windows
@@ -97,8 +141,11 @@ impl FileGrants {
         if !metadata.is_file() {
             return Err(FileError::NotFound);
         }
-        let name = canonical
+        // The name the user chose (not the symlink target's), so the name the
+        // UI shows is the one `is_likely_pdf` checked.
+        let name = path
             .file_name()
+            .or_else(|| canonical.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled.pdf".to_owned());
         let token = uuid::Uuid::new_v4().simple().to_string();
@@ -108,6 +155,33 @@ impl FileGrants {
             name,
             size: metadata.len(),
         })
+    }
+
+    /// Grants a batch of user-chosen paths. Everything that cannot be granted
+    /// is reported by name so the UI can say why it did not open. Only folders
+    /// with PDF-like names are left out; folders and packages with other
+    /// typed names (`Photos.2024`, `Notes.rtfd`) are reported as skipped.
+    pub fn grant_all(&self, paths: &[PathBuf]) -> OpenedFiles {
+        let mut opened = OpenedFiles::default();
+        for path in paths {
+            let error = match self.grant(path) {
+                Ok(file) => {
+                    opened.files.push(file);
+                    continue;
+                }
+                Err(error) => error,
+            };
+            let Some(name) = path.file_name() else {
+                continue;
+            };
+            let name = name.to_string_lossy().into_owned();
+            match error {
+                FileError::NotPdf => opened.skipped.push(name),
+                _ if path.is_dir() => {}
+                _ => opened.unavailable.push(name),
+            }
+        }
+        opened
     }
 
     pub fn path(&self, token: &str) -> Result<PathBuf, FileError> {
@@ -153,8 +227,7 @@ pub fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, FileError> {
 #[derive(Debug, Default)]
 struct LaunchState {
     frontend_ready: bool,
-    files: Vec<GrantedFile>,
-    skipped: Vec<String>,
+    pending: OpenedFiles,
 }
 
 /// Holds files opened before the UI is listening (launch arguments, Finder
@@ -167,28 +240,20 @@ pub struct LaunchQueue {
 
 impl LaunchQueue {
     /// Returns the batch to emit now, or `None` if it was queued for later.
-    pub fn offer(
-        &self,
-        files: Vec<GrantedFile>,
-        skipped: Vec<String>,
-    ) -> Option<(Vec<GrantedFile>, Vec<String>)> {
+    pub fn offer(&self, opened: OpenedFiles) -> Option<OpenedFiles> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.frontend_ready {
-            return Some((files, skipped));
+            return Some(opened);
         }
-        state.files.extend(files);
-        state.skipped.extend(skipped);
+        state.pending.append(opened);
         None
     }
 
     /// Drains queued files and switches to event delivery.
-    pub fn drain(&self) -> (Vec<GrantedFile>, Vec<String>) {
+    pub fn drain(&self) -> OpenedFiles {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state.frontend_ready = true;
-        (
-            std::mem::take(&mut state.files),
-            std::mem::take(&mut state.skipped),
-        )
+        std::mem::take(&mut state.pending)
     }
 }
 
@@ -251,6 +316,73 @@ mod tests {
     }
 
     #[test]
+    fn leaves_unusual_extensions_to_content_sniffing() {
+        let dir = tempfile::tempdir().unwrap();
+        let grants = FileGrants::default();
+        for name in [
+            "Invoice No. 4711",
+            "notes.v2_final",
+            "report.20261018120000",
+        ] {
+            let granted = grants.grant(&temp_pdf(dir.path(), name));
+            assert_eq!(granted.map(|file| file.name), Ok(name.to_owned()));
+        }
+    }
+
+    /// The same table runs against `isLikelyPdfName` in the desktop unit tests.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct NameCases {
+        pdf: Vec<String>,
+        not_pdf: Vec<String>,
+    }
+
+    #[test]
+    fn pdf_name_rule_matches_the_frontend() {
+        let cases: NameCases =
+            serde_json::from_str(include_str!("../../src/platform/pdf-name-cases.json")).unwrap();
+        for name in &cases.pdf {
+            assert!(is_likely_pdf_name(name), "{name:?} should be tried");
+            assert!(is_likely_pdf(Path::new(name)), "{name:?} should be tried");
+        }
+        for name in &cases.not_pdf {
+            assert!(!is_likely_pdf_name(name), "{name:?} should be skipped");
+            assert!(
+                !is_likely_pdf(Path::new(name)),
+                "{name:?} should be skipped"
+            );
+        }
+    }
+
+    #[test]
+    fn reports_every_file_that_could_not_be_granted_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let grants = FileGrants::default();
+        let image = dir.path().join("scan.tiff");
+        fs::write(&image, b"tiff").unwrap();
+        let folder = dir.path().join("Clients");
+        fs::create_dir(&folder).unwrap();
+        let typed_folder = dir.path().join("Photos.2024");
+        fs::create_dir(&typed_folder).unwrap();
+        let paths = [
+            temp_pdf(dir.path(), "a.pdf"),
+            image,
+            dir.path().join("moved.pdf"),
+            folder,
+            typed_folder,
+        ];
+        let opened = grants.grant_all(&paths);
+        let names: Vec<_> = opened.files.iter().map(|file| file.name.as_str()).collect();
+        assert_eq!(names, ["a.pdf"]);
+        assert_eq!(opened.skipped, ["scan.tiff", "Photos.2024"]);
+        assert_eq!(opened.unavailable, ["moved.pdf"]);
+        assert_eq!(grants.len(), 1);
+        let json = serde_json::to_string(&opened).unwrap();
+        assert!(!json.contains(&dir.path().to_string_lossy().to_string()));
+        assert!(grants.grant_all(&[]).is_empty());
+    }
+
+    #[test]
     fn unknown_and_released_tokens_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let grants = FileGrants::default();
@@ -301,14 +433,26 @@ mod tests {
             name: "a.pdf".into(),
             size: 1,
         };
-        assert_eq!(queue.offer(vec![file.clone()], vec!["b.png".into()]), None);
-        let (files, skipped) = queue.drain();
-        assert_eq!(files, vec![file.clone()]);
-        assert_eq!(skipped, vec!["b.png".to_string()]);
-        assert_eq!(
-            queue.offer(vec![file.clone()], vec![]),
-            Some((vec![file], vec![]))
-        );
-        assert_eq!(queue.drain(), (vec![], vec![]));
+        let first = OpenedFiles {
+            files: vec![file.clone()],
+            skipped: vec!["b.png".into()],
+            unavailable: vec![],
+        };
+        let second = OpenedFiles {
+            unavailable: vec!["c.pdf".into()],
+            ..OpenedFiles::default()
+        };
+        assert_eq!(queue.offer(first), None);
+        assert_eq!(queue.offer(second), None);
+        let drained = queue.drain();
+        assert_eq!(drained.files, vec![file.clone()]);
+        assert_eq!(drained.skipped, ["b.png"]);
+        assert_eq!(drained.unavailable, ["c.pdf"]);
+        let later = OpenedFiles {
+            files: vec![file],
+            ..OpenedFiles::default()
+        };
+        assert_eq!(queue.offer(later.clone()), Some(later));
+        assert!(queue.drain().is_empty());
     }
 }

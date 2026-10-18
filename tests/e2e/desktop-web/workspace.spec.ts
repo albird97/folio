@@ -53,12 +53,18 @@ test.describe('desktop workspace (web adapter)', () => {
       'basic-3-pages.pdf',
     ]);
     await pageRendered(page);
-    await page.getByRole('button', { name: 'Hide pages panel' }).click();
+    const pagesToggle = page.getByRole('button', { name: 'Pages panel', exact: true });
+    const propertiesToggle = page.getByRole('button', { name: 'Properties panel', exact: true });
+    await expect(pagesToggle).toHaveAttribute('aria-pressed', 'true');
+    await pagesToggle.click();
     await expect(page.getByRole('complementary', { name: 'Pages' })).toBeHidden();
+    await expect(pagesToggle).toHaveAttribute('aria-pressed', 'false');
     await page.keyboard.press('Control+Alt+1');
     await expect(page.getByRole('complementary', { name: 'Pages' })).toBeVisible();
+    await expect(pagesToggle).toHaveAttribute('aria-pressed', 'true');
     await page.keyboard.press('Control+Alt+2');
     await expect(page.getByRole('complementary', { name: 'Properties' })).toBeHidden();
+    await expect(propertiesToggle).toHaveAttribute('aria-pressed', 'false');
 
     const themeButton = page.getByRole('button', { name: /^Theme:/ });
     await themeButton.click(); // system → light
