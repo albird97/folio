@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { printDpi } from '../hooks/use-print';
-import { parsePageRange } from './dialogs';
+import { parsePageRange } from '../format';
 
 describe('printing', () => {
   it('reads page ranges as sorted, distinct positions', () => {

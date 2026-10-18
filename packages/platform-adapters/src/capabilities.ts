@@ -163,18 +163,37 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'open-current-tab',
     area: 'Opening documents',
     feature: 'Open the PDF in the current browser tab',
-    plannedPhase: 5,
-    targets: { macos: none('Not applicable.'), windows: none('Not applicable.'), chrome: none() },
-    verification: '—',
+    plannedPhase: null,
+    targets: {
+      macos: none('Not applicable.'),
+      windows: none('Not applicable.'),
+      chrome: full(
+        'Click Folio’s toolbar button on a tab showing a PDF, then Open: a new editor tab asks Chrome for access to the site the first time and downloads the file. Chrome does not let extensions read PDFs opened from your computer (file://); choose those with Open a PDF.',
+      ),
+    },
+    verification:
+      'E2E (Chromium): the popup, service worker download and editor hand-off run for real against a local server; the toolbar click (activeTab) and Chrome’s permission prompt are stubbed because they cannot be automated. Unit tests for the download rules.',
     runtimeFeature: 'browserTabIntegration',
   },
   {
     id: 'open-url',
     area: 'Opening documents',
-    feature: 'Open a PDF from a URL',
-    plannedPhase: 5,
-    targets: all(none()),
-    verification: '—',
+    feature: 'Open a PDF from a web address',
+    plannedPhase: null,
+    targets: {
+      macos: none(
+        'Not applicable: the desktop app makes no network requests. Download the PDF in a browser, or send it from the Chrome extension.',
+      ),
+      windows: none(
+        'Not applicable: the desktop app makes no network requests. Download the PDF in a browser, or send it from the Chrome extension.',
+      ),
+      chrome: full(
+        'Chrome asks for access to each site on first use. No cookies are sent unless the site asks for a sign-in and you agree, for that one request; no referrer is sent. Up to 256 MB; web pages, missing files and other errors are explained.',
+      ),
+    },
+    verification:
+      'Unit tests for URLs, file names, sign-in detection, size limits and errors; e2e (Chromium) downloads from a local server through the service worker, with Chrome’s permission prompt stubbed.',
+    runtimeFeature: 'openFromUrl',
   },
   // Viewing
   {
@@ -432,17 +451,32 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'export-images',
     area: 'Saving and export',
     feature: 'Export pages as images',
-    plannedPhase: 5,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: 6,
+    targets: {
+      macos: none('Planned for the editor (Phase 6).'),
+      windows: none('Planned for the editor (Phase 6).'),
+      chrome: full(
+        'Side panel: chosen pages as PNG or JPEG at 72, 150 or 300 dpi; several pages download as one ZIP file.',
+      ),
+    },
+    verification:
+      'E2E (Chromium) reads the downloaded ZIP and images back; the ZIP writer is unit-tested against Python’s zipfile.',
   },
   {
     id: 'extract-text',
     area: 'Saving and export',
     feature: 'Extract text',
-    plannedPhase: 5,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: 6,
+    targets: {
+      macos: none('Planned for the editor (Phase 6); page text can be selected and copied today.'),
+      windows: none(
+        'Planned for the editor (Phase 6); page text can be selected and copied today.',
+      ),
+      chrome: full(
+        'Side panel: text of chosen pages, line by line, to copy or download as .txt. Scanned pages need OCR, which Folio does not have yet.',
+      ),
+    },
+    verification: 'Unit tests on the text fixture; e2e (Chromium) copies and downloads it.',
   },
   {
     id: 'printing',
@@ -464,9 +498,16 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'webpage-to-pdf',
     area: 'Saving and export',
     feature: 'Save the current webpage as PDF',
-    plannedPhase: 5,
-    targets: { macos: none('Not applicable.'), windows: none('Not applicable.'), chrome: none() },
-    verification: '—',
+    plannedPhase: null,
+    targets: {
+      macos: none('Not applicable.'),
+      windows: none('Not applicable.'),
+      chrome: limited(
+        'Opens Chrome’s print dialog for the tab, where “Save as PDF” is a destination; Chrome writes the file, and Folio does not open it afterwards. Chrome’s own pages and the Web Store cannot be printed this way: extensions cannot run scripts there.',
+      ),
+    },
+    verification:
+      'E2E (Chromium) checks that the popup asks Chrome to print the tab (activeTab stubbed); the print dialog cannot be automated.',
   },
   // Advanced
   {
@@ -633,15 +674,15 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'extension-side-panel',
     area: 'Chrome extension',
     feature: 'Side panel',
-    plannedPhase: 5,
+    plannedPhase: null,
     targets: {
       macos: none('Not applicable.'),
       windows: none('Not applicable.'),
-      chrome: limited(
-        'Inspect a local PDF and hand it to the editor. Page tools arrive with Phase 5.',
+      chrome: full(
+        'Inspect a PDF, rotate or extract pages, turn pages into images and extract text; list the PDFs linked from the current tab to open or download.',
       ),
     },
-    verification: 'Extension e2e.',
+    verification: 'Extension e2e, including axe checks.',
   },
   {
     id: 'extension-options',
@@ -651,6 +692,21 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: { macos: none('Not applicable.'), windows: none('Not applicable.'), chrome: full() },
     verification: 'Extension e2e.',
   },
+  {
+    id: 'download-linked-pdfs',
+    area: 'Chrome extension',
+    feature: 'Download PDFs linked from a page',
+    plannedPhase: null,
+    targets: {
+      macos: none('Not applicable.'),
+      windows: none('Not applicable.'),
+      chrome: full(
+        'The side panel lists the PDFs a tab links to (after a click on Folio’s toolbar button there). Downloads go through Chrome’s downloads, with the browser’s own sign-in for the site; Chrome asks for the downloads permission on first use.',
+      ),
+    },
+    verification:
+      'E2E (Chromium) with the page scan and the downloads API stubbed (they need the toolbar click and a permission prompt).',
+  },
   // Privacy
   {
     id: 'local-first',
@@ -659,11 +715,11 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     plannedPhase: null,
     targets: all(
       full(
-        'No network requests are made with document data; the extension has no host permissions.',
+        'No document data is ever sent anywhere. The extension downloads PDFs only from sites you allow, in its service worker; its pages cannot connect to other servers at all.',
       ),
     ),
     verification:
-      'Extension: e2e asserts no host permissions, no network requests while opening a document and that the CSP blocks requests to other servers; a unit test checks the CSP. Desktop: the CSP allows only the app itself, checked by tauri-driver e2e.',
+      'Extension: e2e asserts no site access at install, no network requests while opening a document and that pages’ CSP blocks requests to other servers; unit tests check the CSPs and that downloads carry no cookies or referrer unless allowed. Desktop: the CSP allows only the app itself, checked by tauri-driver e2e.',
   },
 ];
 

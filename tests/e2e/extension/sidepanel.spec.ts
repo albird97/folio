@@ -1,5 +1,39 @@
+import { PDFDocument } from '@cantoo/pdf-lib';
+import type { Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { chooseFiles, expectAccessible, pageRendered } from '../helpers';
 import { expect, test } from './fixtures';
+
+/** Runs `action` and returns the name and bytes of the file it downloads. */
+async function download(page: Page, action: () => Promise<unknown>) {
+  const pending = page.waitForEvent('download');
+  await action();
+  const file = await pending;
+  return { name: file.suggestedFilename(), bytes: readFileSync((await file.path())!) };
+}
+
+/** Entries of a stored (uncompressed) ZIP archive, read from its central directory. */
+function unzip(zip: Buffer): Array<{ name: string; bytes: Buffer }> {
+  const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = zip.readUInt16LE(end + 10);
+  let offset = zip.readUInt32LE(end + 16);
+  const entries: Array<{ name: string; bytes: Buffer }> = [];
+  for (let index = 0; index < count; index += 1) {
+    const size = zip.readUInt32LE(offset + 24);
+    const nameLength = zip.readUInt16LE(offset + 28);
+    const extraLength = zip.readUInt16LE(offset + 30);
+    const commentLength = zip.readUInt16LE(offset + 32);
+    const local = zip.readUInt32LE(offset + 42);
+    const name = zip.toString('utf8', offset + 46, offset + 46 + nameLength);
+    const data = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+    entries.push({ name, bytes: zip.subarray(data, data + size) });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+/** Width and height from a PNG's header. */
+const pngSize = (png: Buffer) => [png.readUInt32BE(16), png.readUInt32BE(20)];
 
 test.describe('extension side panel', () => {
   test('inspects a PDF and hands it to the editor through single-use storage', async ({
@@ -99,5 +133,104 @@ test.describe('extension side panel', () => {
       'header-only.pdf',
     ]);
     await expect(page.getByRole('alert')).toContainText('damaged');
+  });
+
+  test('rotates and extracts pages, makes images and extracts text', async ({
+    page,
+    context,
+    extensionUrl,
+  }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.goto(extensionUrl('sidepanel.html'));
+    await chooseFiles(page, () => page.getByRole('button', { name: 'Choose PDF…' }).click(), [
+      'outline-and-text.pdf',
+    ]);
+    const tools = page.getByRole('region', { name: 'Tools' });
+    const panel = (name: string) => tools.getByRole('group', { name });
+
+    // Rotate pages 1 and 2 to the left; page 3 keeps its orientation.
+    await tools.getByRole('button', { name: 'Rotate pages' }).click();
+    await panel('Rotate pages').getByRole('textbox', { name: 'Pages' }).fill('1-2');
+    await panel('Rotate pages').getByRole('radio', { name: 'Left' }).click();
+    const rotated = await download(page, () =>
+      panel('Rotate pages').getByRole('button', { name: 'Download' }).click(),
+    );
+    expect(rotated.name).toBe('outline-and-text (rotated).pdf');
+    const turned = await PDFDocument.load(rotated.bytes);
+    expect(turned.getPages().map((pdfPage) => pdfPage.getRotation().angle)).toEqual([
+      270, 270, 0, 0, 0, 0,
+    ]);
+
+    await tools.getByRole('button', { name: 'Extract pages' }).click();
+    const extractPanel = panel('Extract pages');
+    await extractPanel.getByRole('textbox', { name: 'Pages' }).fill('9');
+    await expect(extractPanel.getByText('Enter pages like 1-3, 5 (from 1 to 6).')).toBeVisible();
+    await expect(extractPanel.getByRole('button', { name: 'Download' })).toBeDisabled();
+    await extractPanel.getByRole('textbox', { name: 'Pages' }).fill('2, 4');
+    const extracted = await download(page, () =>
+      extractPanel.getByRole('button', { name: 'Download' }).click(),
+    );
+    expect(extracted.name).toBe('outline-and-text (pages 2,4).pdf');
+    expect((await PDFDocument.load(extracted.bytes)).getPageCount()).toBe(2);
+
+    // Several pages download as a ZIP of PNGs; one page as the image itself.
+    await tools.getByRole('button', { name: 'Pages to images' }).click();
+    const imagesPanel = panel('Pages to images');
+    await imagesPanel.getByRole('textbox', { name: 'Pages' }).fill('1-3');
+    await imagesPanel.getByRole('radio', { name: '72 dpi' }).click();
+    const zip = await download(page, () =>
+      imagesPanel.getByRole('button', { name: 'Download' }).click(),
+    );
+    expect(zip.name).toBe('outline-and-text (images).zip');
+    const entries = unzip(zip.bytes);
+    expect(entries.map((entry) => entry.name)).toEqual([
+      'outline-and-text-page-1.png',
+      'outline-and-text-page-2.png',
+      'outline-and-text-page-3.png',
+    ]);
+    // Letter at 72 dpi.
+    expect(pngSize(entries[0]!.bytes)).toEqual([612, 792]);
+    await imagesPanel.getByRole('textbox', { name: 'Pages' }).fill('6');
+    await imagesPanel.getByRole('radio', { name: 'JPEG' }).click();
+    const jpeg = await download(page, () =>
+      imagesPanel.getByRole('button', { name: 'Download' }).click(),
+    );
+    expect(jpeg.name).toBe('outline-and-text-page-6.jpg');
+    expect([...jpeg.bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+
+    await tools.getByRole('button', { name: 'Extract text' }).click();
+    const textPanel = panel('Extract text');
+    // The page range carries over between tools; empty means every page.
+    await expect(textPanel.getByRole('textbox', { name: 'Pages' })).toHaveValue('6');
+    await textPanel.getByRole('textbox', { name: 'Pages' }).fill('');
+    await textPanel.getByRole('button', { name: 'Extract' }).click();
+    const text = textPanel.getByRole('textbox', { name: 'Extracted text' });
+    await expect(text).toHaveValue(/^Introduction\nThe Quick brown fox opens this guide\./);
+    await expect(text).toHaveValue(/Appendix\nA cat and another cat are not a category\.$/);
+    await textPanel.getByRole('button', { name: 'Copy' }).click();
+    await expect(textPanel.getByRole('button', { name: 'Copied' })).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('photosynthesis');
+    const txt = await download(page, () =>
+      textPanel.getByRole('button', { name: 'Download .txt' }).click(),
+    );
+    expect(txt.name).toBe('outline-and-text (text).txt');
+    expect(txt.bytes.toString('utf8')).toContain('Foxes visit the Café at dawn.');
+    await expectAccessible(page, 'side panel tools');
+  });
+
+  test('leaves protected PDFs to the editor and honours copy restrictions', async ({
+    page,
+    extensionUrl,
+  }) => {
+    await page.goto(extensionUrl('sidepanel.html'));
+    await chooseFiles(page, () => page.getByRole('button', { name: 'Choose PDF…' }).click(), [
+      'encrypted-owner-restricted.pdf',
+    ]);
+    const tools = page.getByRole('region', { name: 'Tools' });
+    await tools.getByRole('button', { name: 'Rotate pages' }).click();
+    await expect(tools.getByRole('group', { name: 'Rotate pages' })).toHaveText(
+      'Protected PDFs can be changed in the editor, which keeps their protection.',
+    );
+    await expect(tools.getByRole('button', { name: 'Download' })).toHaveCount(0);
   });
 });

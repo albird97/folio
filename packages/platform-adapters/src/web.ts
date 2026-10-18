@@ -58,14 +58,8 @@ export function pdfFileName(name: string): string {
  * download link. Needs no extension permission; Chrome's own settings decide
  * whether a "Save as" dialog appears.
  */
-export function downloadBytes(
-  name: string,
-  bytes: Uint8Array,
-  doc: Document = globalThis.document,
-): void {
-  const url = URL.createObjectURL(
-    new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }),
-  );
+export function downloadFile(name: string, data: Blob, doc: Document = globalThis.document): void {
+  const url = URL.createObjectURL(data);
   const link = doc.createElement('a');
   link.href = url;
   link.download = name;
@@ -76,6 +70,33 @@ export function downloadBytes(
   link.remove();
   // Revoking at once can cancel the download in some browsers.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+export function downloadBytes(
+  name: string,
+  bytes: Uint8Array,
+  doc: Document = globalThis.document,
+): void {
+  downloadFile(
+    name,
+    new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }),
+    doc,
+  );
+}
+
+/** A safe download name for any file: no path separators or control characters. */
+export function safeFileName(name: string, extension: string): string {
+  const cleaned = Array.from(name, (char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code < 0x20 || code === 0x7f || '\\/:*?"<>|'.includes(char) ? ' ' : char;
+  })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .slice(0, 200);
+  const base = cleaned.length > 0 ? cleaned : 'Document';
+  return base.toLowerCase().endsWith(`.${extension}`) ? base : `${base}.${extension}`;
 }
 
 /** Opens a hidden `<input type="file">`. Resolves to [] when the user cancels. */

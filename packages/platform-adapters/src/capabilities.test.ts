@@ -95,7 +95,10 @@ describe('capability matrix', () => {
   });
 
   it('flags adapters that claim unsupported features', () => {
-    expect(runtimeMismatches({ ...WEB_FEATURES, nativeMessaging: true }, 'chrome')).toEqual([
+    // What the extension reports, plus a feature it does not have.
+    const chrome = { ...WEB_FEATURES, openFromUrl: true, browserTabIntegration: true };
+    expect(runtimeMismatches(chrome, 'chrome')).toEqual([]);
+    expect(runtimeMismatches({ ...chrome, nativeMessaging: true }, 'chrome')).toEqual([
       expect.stringContaining('native-messaging'),
     ]);
   });

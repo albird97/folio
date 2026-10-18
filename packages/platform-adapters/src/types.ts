@@ -197,6 +197,13 @@ export type OpenUrlErrorCode =
   | 'network'
   | 'blocked';
 
+export interface OpenUrlOptions {
+  /** Send the browser's cookies for the site: only after the user agreed. */
+  withCredentials?: boolean;
+  onProgress?(received: number, total: number | null): void;
+  signal?: AbortSignal;
+}
+
 export class OpenUrlError extends Error {
   override readonly name = 'OpenUrlError';
   constructor(
@@ -277,8 +284,12 @@ export interface PlatformAdapter {
   onTransferRequest?(listener: (request: TransferRequest) => void): Unsubscribe;
   /** Accepts (and opens) or declines a transfer; declined ones are deleted. */
   answerTransfer?(id: string, accept: boolean): Promise<IncomingFile[]>;
-  /** Browsers: fetches a PDF from a web address, asking for access to the site first. */
-  openUrl?(url: string, options?: { withCredentials?: boolean }): Promise<IncomingFile>;
+  /**
+   * Browsers: fetches a PDF from a web address, asking for access to the site
+   * first. Call it straight from a click: the access prompt needs the gesture.
+   * Fails with {@link OpenUrlError}.
+   */
+  openUrl?(url: string, options?: OpenUrlOptions): Promise<IncomingFile>;
   /** Extension: hands a document to the Folio desktop app through native messaging. */
   sendToDesktop?(request: { name: string; bytes: Uint8Array }): Promise<SendToDesktopResult>;
 }

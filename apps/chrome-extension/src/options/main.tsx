@@ -9,10 +9,14 @@ import {
   type ThemePreference,
 } from '@folio/shared-ui';
 import { Monitor, Moon, Sun } from 'lucide-react';
-import { useId, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { useStore, type StoreApi } from 'zustand';
 import { sendMessage } from '../shared/messages';
-import { PERMISSION_EXPLANATIONS } from '../shared/permissions';
+import {
+  HOST_ACCESS_EXPLANATION,
+  OPTIONAL_PERMISSION_EXPLANATIONS,
+  PERMISSION_EXPLANATIONS,
+} from '../shared/permissions';
 import { SETTINGS_KEY, type ExtensionSettings } from '../shared/settings';
 import { mountSurface } from '../shared/surface';
 import { useActivity } from '../shared/use-activity';
@@ -93,6 +97,105 @@ const THEME_OPTIONS = [
   },
 ] as const;
 
+/** Permissions Folio holds beyond those it was installed with, read from Chrome. */
+function useGrantedAccess() {
+  const [granted, setGranted] = useState<{ origins: string[]; permissions: string[] } | null>(null);
+  useEffect(() => {
+    const load = () =>
+      void chrome.permissions.getAll().then((all) =>
+        setGranted({
+          origins: [...(all.origins ?? [])].sort(),
+          permissions: (all.permissions ?? []).filter(
+            (permission) => permission in OPTIONAL_PERMISSION_EXPLANATIONS,
+          ),
+        }),
+      );
+    load();
+    chrome.permissions.onAdded.addListener(load);
+    chrome.permissions.onRemoved.addListener(load);
+    return () => {
+      chrome.permissions.onAdded.removeListener(load);
+      chrome.permissions.onRemoved.removeListener(load);
+    };
+  }, []);
+  return granted;
+}
+
+/** "https://example.com/*" → "example.com (https)". */
+const describeOrigin = (pattern: string) => {
+  const match = /^(https?):\/\/([^/]+)\//.exec(pattern);
+  return match ? `${match[2]}${match[1] === 'http' ? ' (http)' : ''}` : pattern;
+};
+
+function SiteAccess() {
+  const granted = useGrantedAccess();
+  if (!granted) return null;
+  const remove = (request: chrome.permissions.Permissions) =>
+    void chrome.permissions.remove(request).catch(() => undefined);
+  return (
+    <>
+      <h3 className="text-sm font-medium">Sites Folio may read</h3>
+      <p className="mt-0.5 max-w-prose text-xs text-ink-muted">{HOST_ACCESS_EXPLANATION}</p>
+      {granted.origins.length === 0 ? (
+        <p className="mt-2 text-xs text-ink-muted" role="status">
+          None. Folio cannot read any website.
+        </p>
+      ) : (
+        <ul
+          aria-label="Sites Folio may read"
+          className="mt-2 divide-y divide-line rounded-md bg-bg"
+        >
+          {granted.origins.map((origin) => (
+            <li key={origin} className="flex items-center justify-between gap-4 px-4 py-2 text-xs">
+              <span className="font-mono">{describeOrigin(origin)}</span>
+              <Button
+                size="sm"
+                onClick={() => remove({ origins: [origin] })}
+                aria-label={`Remove access to ${describeOrigin(origin)}`}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h3 className="mt-5 text-sm font-medium">Asked for when first needed</h3>
+      <dl className="mt-2 divide-y divide-line rounded-md bg-bg">
+        {Object.entries(OPTIONAL_PERMISSION_EXPLANATIONS).map(([permission, explanation]) => {
+          const allowed = granted.permissions.includes(permission);
+          return (
+            <div
+              key={permission}
+              className="grid grid-cols-[8rem_1fr_auto] items-center gap-4 px-4 py-3"
+            >
+              <dt className="font-mono text-xs">{permission}</dt>
+              <dd className="text-xs text-ink-muted">
+                {explanation}{' '}
+                <span className="font-medium text-ink">
+                  {allowed ? 'Allowed.' : 'Not allowed.'}
+                </span>
+              </dd>
+              <dd>
+                {allowed ? (
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      remove({ permissions: [permission as chrome.runtime.ManifestPermission] })
+                    }
+                    aria-label={`Remove the ${permission} permission`}
+                  >
+                    Remove
+                  </Button>
+                ) : null}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </>
+  );
+}
+
 function Options({ ui }: { ui: StoreApi<UiState> }) {
   const theme = useStore(ui, (state) => state.theme);
   const setTheme = useStore(ui, (state) => state.setTheme);
@@ -161,8 +264,9 @@ function Options({ ui }: { ui: StoreApi<UiState> }) {
 
           <Section
             title="Permissions"
-            description="Folio asks for as little access as possible. It cannot read the websites you visit. Features that open PDFs from web pages will ask for permission when you first use them."
+            description="Folio asks for as little access as possible. It cannot read the websites you visit unless you allow a site, and it asks for other permissions only when you first use a feature that needs them."
           >
+            <h3 className="mb-2 text-sm font-medium">Granted at install</h3>
             <dl className="divide-y divide-line rounded-md bg-bg">
               {permissions.map((permission) => (
                 <div key={permission} className="grid grid-cols-[8rem_1fr] gap-4 px-4 py-3">
@@ -173,6 +277,9 @@ function Options({ ui }: { ui: StoreApi<UiState> }) {
                 </div>
               ))}
             </dl>
+            <div className="mt-5">
+              <SiteAccess />
+            </div>
           </Section>
 
           <Section

@@ -13,11 +13,12 @@ import {
 } from '@folio/shared-ui';
 import { useId, useState, type FormEvent } from 'react';
 import { useUi, useWorkspaceContext } from '../context';
-import { formatBytes, formatDate } from '../format';
+import { formatBytes, formatDate, parsePageRange } from '../format';
 import { insertFiles } from '../hooks/use-page-commands';
 import { usePrint } from '../hooks/use-print';
 import { useSave } from '../hooks/use-save';
 import type { DialogRequest } from '../store/ui';
+import { OpenUrlDialog } from './open-url-dialog';
 import { claimRecord, releaseRecord } from '../store/recovery-locks';
 
 type Of<K extends DialogRequest['kind']> = Extract<DialogRequest, { kind: K }>;
@@ -472,22 +473,6 @@ function TransferDialog({ request }: { request: TransferRequest }) {
   );
 }
 
-/** Pages to print: "1-3, 5" in document positions. */
-export function parsePageRange(text: string, pageCount: number): number[] | null {
-  const positions = new Set<number>();
-  for (const part of text.split(',')) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    const match = /^(\d+)\s*(?:[-–]\s*(\d+))?$/.exec(trimmed);
-    if (!match) return null;
-    const from = Number(match[1]);
-    const to = match[2] === undefined ? from : Number(match[2]);
-    if (from < 1 || to < from || to > pageCount) return null;
-    for (let page = from; page <= to; page += 1) positions.add(page - 1);
-  }
-  return positions.size > 0 ? [...positions].sort((a, b) => a - b) : null;
-}
-
 function PrintDialog({ request }: { request: Of<'print'> }) {
   const { workspace, ui } = useWorkspaceContext();
   const print = usePrint();
@@ -616,6 +601,8 @@ export function Dialogs() {
         <RecoverDialog request={dialog} />
       ) : dialog?.kind === 'print' ? (
         <PrintDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'open-url' ? (
+        <OpenUrlDialog request={dialog} />
       ) : null}
     </Dialog>
   );

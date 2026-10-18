@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runtimeMismatches } from '@folio/platform-adapters';
@@ -10,7 +11,7 @@ import {
   type ActivityEntry,
 } from './shared/activity';
 import { parseMessage } from './shared/messages';
-import { PERMISSION_EXPLANATIONS } from './shared/permissions';
+import { OPTIONAL_PERMISSION_EXPLANATIONS, PERMISSION_EXPLANATIONS } from './shared/permissions';
 import { DEFAULT_SETTINGS, parseSettings } from './shared/settings';
 
 const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'manifest.json'), 'utf8'));
@@ -21,10 +22,13 @@ describe('manifest', () => {
     expect(manifest.background).toEqual({ service_worker: 'background.js', type: 'module' });
   });
 
-  it('requests only the permissions it uses, with no host access', () => {
-    expect(manifest.permissions).toEqual(['storage', 'sidePanel']);
+  it('requests only the permissions it uses, and site access only when needed', () => {
+    // None of these shows a warning at install time.
+    expect(manifest.permissions).toEqual(['storage', 'sidePanel', 'activeTab', 'scripting']);
+    expect(manifest.optional_permissions).toEqual(['downloads', 'nativeMessaging']);
+    // No site is readable until the user allows it, one site at a time.
     expect(manifest.host_permissions).toBeUndefined();
-    expect(manifest.optional_host_permissions).toBeUndefined();
+    expect(manifest.optional_host_permissions).toEqual(['https://*/*', 'http://*/*']);
     expect(manifest.content_scripts).toBeUndefined();
     expect(manifest.externally_connectable).toBeUndefined();
     expect(manifest.web_accessible_resources).toBeUndefined();
@@ -32,6 +36,27 @@ describe('manifest', () => {
 
   it('explains every permission it requests', () => {
     expect(Object.keys(PERMISSION_EXPLANATIONS).sort()).toEqual([...manifest.permissions].sort());
+    expect(Object.keys(OPTIONAL_PERMISSION_EXPLANATIONS).sort()).toEqual(
+      [...manifest.optional_permissions].sort(),
+    );
+  });
+
+  it('has the fixed development ID the desktop app trusts', () => {
+    // Chrome derives an unpacked extension's ID from this public key.
+    const digest = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex');
+    const id = Array.from(digest.slice(0, 32), (char) =>
+      String.fromCharCode(97 + Number.parseInt(char, 16)),
+    ).join('');
+    expect(id).toBe('ghfckfnleaidabfhaplbnfknipajedan');
+  });
+
+  it('keeps every page off the network; only the service worker downloads', () => {
+    for (const page of ['editor', 'popup', 'sidepanel', 'options']) {
+      const html = readFileSync(join(import.meta.dirname, '..', `${page}.html`), 'utf8');
+      expect(html, page).toContain(
+        `<meta http-equiv="Content-Security-Policy" content="connect-src 'self'" />`,
+      );
+    }
   });
 
   it('allows no remote code or connections', () => {
@@ -43,15 +68,16 @@ describe('manifest', () => {
         .filter(([name]) => name)
         .map(([name, ...sources]) => [name, sources]),
     );
-    // default-src and connect-src matter even without host permissions: they
-    // stop pages sending data out with fetch, beacons or remote images. Other
-    // fetch directives fall back to default-src. Inline styles are allowed
-    // (React style props); inline scripts are not.
+    // default-src and connect-src stop data going out with fetch, beacons or
+    // remote images. connect-src allows web servers only because the service
+    // worker downloads PDFs the user asks to open; every page narrows it back
+    // to 'self' (see above). Other fetch directives fall back to default-src.
+    // Inline styles are allowed (React style props); inline scripts are not.
     expect(directives).toEqual({
       'default-src': ["'self'"],
       'script-src': ["'self'", "'wasm-unsafe-eval'"],
       'object-src': ["'self'"],
-      'connect-src': ["'self'"],
+      'connect-src': ["'self'", 'https:', 'http:'],
       'img-src': ["'self'", 'blob:', 'data:'],
       'font-src': ["'self'", 'data:'],
       'style-src': ["'self'", "'unsafe-inline'"],

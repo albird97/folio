@@ -15,4 +15,4 @@ export {
 } from './store/workspace';
 export { createUiStore, UI_STORAGE_KEY, type UiState } from './store/ui';
 export { COMMAND_LABELS, COMMAND_SHORTCUTS, type ShortcutProfile } from './commands';
-export { formatBytes, formatDate, formatPageSize } from './format';
+export { formatBytes, formatDate, formatPageSize, parsePageRange } from './format';

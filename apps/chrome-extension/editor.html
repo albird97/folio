@@ -2,6 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Extension pages never reach other servers; only the service worker downloads, on request. -->
+    <meta http-equiv="Content-Security-Policy" content="connect-src 'self'" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Folio editor</title>
   </head>

@@ -18,6 +18,8 @@ vi.mock('../shared/handoff', () => ({
 }));
 vi.mock('../shared/surface', () => ({ openEditor: mocks.openEditor }));
 vi.mock('../shared/messages', () => ({ sendMessage: mocks.sendMessage }));
+// The current tab's tools talk to Chrome; extension e2e covers them.
+vi.mock('./this-tab', () => ({ ThisTab: () => null }));
 
 function fakeHandle(title: string): PdfDocumentHandle {
   return fakeDocumentHandle({

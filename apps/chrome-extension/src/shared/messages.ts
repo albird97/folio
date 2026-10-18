@@ -23,6 +23,10 @@ export const messageSchema = z.discriminatedUnion('type', [
       .regex(/^[0-9a-f]{32}$/)
       .optional(),
   }),
+  z.object({
+    type: z.literal('editor/open-url'),
+    url: z.string().min(1).max(4096),
+  }),
   z.object({ type: z.literal('status/get') }),
 ]);
 

@@ -70,8 +70,20 @@ test.describe('popup, options and activity', () => {
   }) => {
     await page.goto(extensionUrl('options.html'));
     const permissions = page.getByRole('region', { name: 'Permissions' });
-    await expect(permissions.locator('dt')).toHaveText(['storage', 'sidePanel']);
+    await expect(permissions.locator('dt')).toHaveText([
+      'storage',
+      'sidePanel',
+      'activeTab',
+      'scripting',
+      // Asked for when first needed.
+      'downloads',
+      'nativeMessaging',
+    ]);
     await expect(permissions).not.toContainText('Required by Folio.');
+    await expect(permissions.getByRole('status')).toHaveText(
+      'None. Folio cannot read any website.',
+    );
+    await expect(permissions.getByText('Not allowed.')).toHaveCount(2);
     await expectAccessible(page, 'options');
 
     const editor = await context.newPage();

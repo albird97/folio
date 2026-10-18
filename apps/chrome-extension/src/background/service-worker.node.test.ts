@@ -61,6 +61,7 @@ function createFakeChrome(initial: Record<string, unknown>) {
       getURL: (path: string) => `chrome-extension://folio/${path}`,
       getManifest: () => ({ version: '0.1.0' }),
       onMessage: { addListener: (listener: typeof onMessage) => (onMessage = listener) },
+      onConnect: { addListener: () => undefined },
       onInstalled: { addListener: () => undefined },
       onStartup: { addListener: () => undefined },
     },

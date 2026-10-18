@@ -112,6 +112,13 @@ export function useCommands(): (command: AppCommand) => void {
             () => state.showNotice('The file picker could not be opened.'),
           );
           break;
+        case 'open-url':
+          if (adapter.features.openFromUrl && adapter.openUrl) {
+            ui.getState().openDialog({ kind: 'open-url' });
+          } else {
+            state.showNotice('Opening from a web address is not available here.');
+          }
+          break;
         case 'close-tab':
           if (state.activeKey) closeDocument(state.activeKey);
           break;

@@ -3,6 +3,7 @@ import type { FontFamily, HexColor } from '@folio/document-model';
 import type {
   IncomingFile,
   KeyValueStorage,
+  OpenUrlErrorCode,
   RecoveryRecord,
   TransferRequest,
 } from '@folio/platform-adapters';
@@ -112,7 +113,13 @@ export type DialogRequest =
   | { kind: 'quit'; resolve(close: boolean): void }
   /** Unsaved work kept from an earlier session. */
   | { kind: 'recover'; records: RecoveryRecord[] }
-  | { kind: 'print'; docKey: string };
+  | { kind: 'print'; docKey: string }
+  /** `url` and `error` show an address that failed to open (e.g. from the toolbar popup). */
+  | {
+      kind: 'open-url';
+      url?: string;
+      error?: { code: OpenUrlErrorCode; message: string };
+    };
 
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {

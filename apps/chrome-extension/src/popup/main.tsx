@@ -1,10 +1,27 @@
 import '../styles.css';
 import { FolioMark, ICON, IconButton } from '@folio/shared-ui';
-import { ChevronRight, FileText, PanelRightOpen, Settings, ShieldCheck } from 'lucide-react';
+import {
+  ChevronRight,
+  FileDown,
+  FileText,
+  PanelRightOpen,
+  Printer,
+  Search,
+  Settings,
+  ShieldCheck,
+} from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { describeActivity } from '../shared/activity';
 import { sendMessage } from '../shared/messages';
 import { mountSurface, openEditor } from '../shared/surface';
+import {
+  activeTab,
+  isWebUrl,
+  looksLikePdfUrl,
+  openInEditor,
+  printTab,
+  scanTab,
+} from '../shared/tab-tools';
 import { relativeTime, useActivity } from '../shared/use-activity';
 
 function Action({
@@ -87,6 +104,109 @@ function RecentActivity() {
   );
 }
 
+type TabState =
+  | { kind: 'loading' }
+  | { kind: 'web'; tab: { id: number; url: URL }; pdf: boolean }
+  | { kind: 'local-file' }
+  | { kind: 'other' };
+
+/**
+ * The tab the toolbar button was clicked on (Chrome's activeTab permission):
+ * open its PDF, or print it to PDF. Nothing here asks for a permission:
+ * Chrome closes the popup when a prompt opens, so the editor tab and the
+ * side panel ask instead.
+ */
+function ThisTab({ onSidePanel }: { onSidePanel(): void }) {
+  const [state, setState] = useState<TabState>({ kind: 'loading' });
+  const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const tab = await activeTab().catch(() => null);
+      if (!active) return;
+      if (tab?.url?.protocol === 'file:') return setState({ kind: 'local-file' });
+      if (!tab?.url || !isWebUrl(tab.url)) return setState({ kind: 'other' });
+      const web = { id: tab.id, url: tab.url };
+      setState({ kind: 'web', tab: web, pdf: looksLikePdfUrl(tab.url) });
+      // Chrome's PDF viewer reports the PDF type; other pages may not be readable.
+      const scan = await scanTab(tab.id);
+      if (active && scan?.contentType === 'application/pdf') {
+        setState({ kind: 'web', tab: web, pdf: true });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (state.kind === 'loading') return null;
+  if (state.kind !== 'web') {
+    return (
+      <section aria-labelledby="tab-title" className="border-t border-line px-4 py-3">
+        <h2 id="tab-title" className="text-xs font-semibold">
+          This tab
+        </h2>
+        <p className="mt-1 text-xs text-ink-muted">
+          {state.kind === 'local-file'
+            ? 'Chrome doesn’t let extensions read files from your computer. To open this one, use Open a PDF and choose it.'
+            : 'Folio can open PDFs from web pages (addresses starting with https:// or http://).'}
+        </p>
+      </section>
+    );
+  }
+
+  const { tab, pdf } = state;
+  const openPdf = () =>
+    void openInEditor(tab.url.href).then((response) => {
+      if (response.ok) globalThis.close();
+      else setProblem('The editor could not be opened. Try again.');
+    });
+  const savePage = () =>
+    void printTab(tab.id).then((printed) => {
+      if (printed) globalThis.close();
+      else
+        setProblem(
+          'Chrome doesn’t let extensions print this page. Press Ctrl+P (⌘P on a Mac) to print it yourself.',
+        );
+    });
+
+  return (
+    <section aria-labelledby="tab-title" className="border-t border-line px-1.5 py-2">
+      <h2 id="tab-title" className="px-2.5 pb-1 text-xs font-semibold">
+        This tab <span className="font-normal text-ink-muted">· {tab.url.hostname}</span>
+      </h2>
+      <div className="flex flex-col gap-0.5">
+        {pdf ? (
+          <Action
+            icon={<FileDown size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+            title="Open this PDF in Folio"
+            description="Downloads it to this device and opens it in the editor"
+            onClick={openPdf}
+          />
+        ) : null}
+        <Action
+          icon={<Search size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+          title="PDFs on this page"
+          description="List linked PDFs in the side panel to open or download"
+          onClick={onSidePanel}
+        />
+        <Action
+          icon={<Printer size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+          title="Save page as PDF"
+          description="Opens Chrome’s print dialog; choose “Save as PDF”"
+          onClick={savePage}
+        />
+      </div>
+      {problem ? (
+        <p role="alert" className="px-2.5 pt-1 text-xs text-danger-ink">
+          {problem}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function Popup() {
   // Resolved up front: chrome.sidePanel.open() must be called directly in the
   // click handler, because awaiting another API first can lose the user gesture.
@@ -128,6 +248,7 @@ function Popup() {
           onClick={openSidePanel}
         />
       </nav>
+      <ThisTab onSidePanel={openSidePanel} />
       <RecentActivity />
       <footer className="flex items-center justify-between border-t border-line bg-bg px-4 py-2 text-2xs text-ink-muted">
         <span className="flex items-center gap-1">

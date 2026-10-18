@@ -5,7 +5,13 @@ test.describe('extension security', () => {
   test('holds only the declared permissions and no host access', async ({ page, extensionUrl }) => {
     await page.goto(extensionUrl('popup.html'));
     const granted = await page.evaluate(() => chrome.permissions.getAll());
-    expect([...(granted.permissions ?? [])].sort()).toEqual(['sidePanel', 'storage']);
+    expect([...(granted.permissions ?? [])].sort()).toEqual([
+      'activeTab',
+      'scripting',
+      'sidePanel',
+      'storage',
+    ]);
+    // Optional permissions and sites stay ungranted until the user allows them.
     expect(granted.origins ?? []).toEqual([]);
   });
 
@@ -22,9 +28,13 @@ test.describe('extension security', () => {
           fileName: 'x'.repeat(20_000),
         }),
         badHandoff: await send({ type: 'editor/open', handoffId: '../../secrets' }),
+        localFile: await send({ type: 'editor/open-url', url: 'file:///etc/passwd' }),
+        script: await send({ type: 'editor/open-url', url: 'javascript:alert(1)' }),
         status: await send({ type: 'status/get' }),
       };
     });
+    expect(responses.localFile).toEqual({ ok: false, error: 'invalid-message' });
+    expect(responses.script).toEqual({ ok: false, error: 'invalid-message' });
     expect(responses.unknown).toEqual({ ok: false, error: 'invalid-message' });
     expect(responses.malformed).toEqual({ ok: false, error: 'invalid-message' });
     expect(responses.oversized).toEqual({ ok: false, error: 'invalid-message' });

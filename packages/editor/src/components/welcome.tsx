@@ -1,6 +1,6 @@
 import type { RecentFile } from '@folio/platform-adapters';
 import { Button, cn, FolioMark, ICON, IconButton, Kbd } from '@folio/shared-ui';
-import { FileText, FolderOpen, ShieldCheck, X } from 'lucide-react';
+import { FileText, FolderOpen, Globe, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { COMMAND_SHORTCUTS } from '../commands';
 import { useWorkspaceContext } from '../context';
@@ -90,7 +90,8 @@ function RecentFiles() {
 }
 
 export function Welcome({ onOpen, hovering }: { onOpen(): void; hovering: boolean }) {
-  const { profile, shortcutPlatform } = useWorkspaceContext();
+  const { adapter, profile, shortcutPlatform, ui } = useWorkspaceContext();
+  const fromWeb = adapter.features.openFromUrl && adapter.openUrl !== undefined;
   return (
     <div className="flex h-full flex-col items-center justify-center overflow-y-auto p-8">
       <div
@@ -116,6 +117,17 @@ export function Welcome({ onOpen, hovering }: { onOpen(): void; hovering: boolea
             className="ml-1"
           />
         </Button>
+        {fromWeb ? (
+          <Button
+            variant="link"
+            size="sm"
+            className="mt-3"
+            onClick={() => ui.getState().openDialog({ kind: 'open-url' })}
+          >
+            <Globe size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
+            Open from a web address…
+          </Button>
+        ) : null}
         <p className="mt-10 flex items-center gap-1.5 text-xs text-ink-muted">
           <ShieldCheck size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
           Documents are processed on this device and never uploaded.

@@ -6,8 +6,10 @@
  */
 import { appendActivity, redactActivity, type ActivityEntry } from '../shared/activity';
 import { parseMessage, type MessageResponse } from '../shared/messages';
-import { purgeExpiredHandoffs } from '../shared/handoff';
+import { newHandoffId, purgeExpiredHandoffs } from '../shared/handoff';
 import { ACTIVITY_KEY, DEFAULT_SETTINGS, parseSettings, SETTINGS_KEY } from '../shared/settings';
+import { FETCH_PORT, OPEN_URL_JOB_PREFIX, parseWebUrl } from '../shared/web-pdf';
+import { serveFetchPort } from './fetch-port';
 
 async function readActivity(): Promise<ActivityEntry[]> {
   const stored = (await chrome.storage.local.get(ACTIVITY_KEY))[ACTIVITY_KEY];
@@ -35,9 +37,9 @@ function serialActivity<T>(step: () => Promise<T>): Promise<T> {
 }
 
 /** Only this extension's own pages may talk to the worker. */
-function isTrustedSender(sender: chrome.runtime.MessageSender): boolean {
+function isTrustedSender(sender: chrome.runtime.MessageSender | undefined): boolean {
   return (
-    sender.id === chrome.runtime.id && (sender.url ?? '').startsWith(chrome.runtime.getURL(''))
+    sender?.id === chrome.runtime.id && (sender.url ?? '').startsWith(chrome.runtime.getURL(''))
   );
 }
 
@@ -70,6 +72,21 @@ async function handle(
       await chrome.tabs.create({ url: url.href });
       return { ok: true };
     }
+    case 'editor/open-url': {
+      // The address goes to the editor through session storage, not the tab's URL.
+      let target: URL;
+      try {
+        target = parseWebUrl(message.url);
+      } catch {
+        return { ok: false, error: 'invalid-message' };
+      }
+      const job = newHandoffId();
+      await chrome.storage.session.set({ [`${OPEN_URL_JOB_PREFIX}${job}`]: target.href });
+      const url = new URL(chrome.runtime.getURL('editor.html'));
+      url.searchParams.set('open', job);
+      await chrome.tabs.create({ url: url.href });
+      return { ok: true };
+    }
     case 'status/get':
       return {
         ok: true,
@@ -80,6 +97,15 @@ async function handle(
       };
   }
 }
+
+// Downloads for "Open from a web address", one port per download.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== FETCH_PORT || !isTrustedSender(port.sender)) {
+    port.disconnect();
+    return;
+  }
+  serveFetchPort(port);
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handle(message, sender).then(sendResponse, () => sendResponse({ ok: false, error: 'failed' }));

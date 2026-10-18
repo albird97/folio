@@ -95,6 +95,26 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
           />
         </Button>
       </ToolbarPrimitive.Button>
+      {adapter.features.openFromUrl && adapter.openUrl ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <ToolbarPrimitive.Button asChild>
+              <IconButton
+                label="More ways to open"
+                size="icon-sm"
+                className="-ml-1 w-5"
+                icon={<ChevronDown size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />}
+              />
+            </ToolbarPrimitive.Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onSelect={() => onCommand('open')}>Open a PDF…</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onCommand('open-url')}>
+              Open from a web address…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
       {adapter.features.saveCopy ? (
         <>
           <ToolbarPrimitive.Button asChild>

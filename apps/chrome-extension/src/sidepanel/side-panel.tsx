@@ -7,6 +7,8 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { sendMessage } from '../shared/messages';
 import { deleteHandoff, putHandoff } from '../shared/handoff';
 import { openEditor } from '../shared/surface';
+import { PdfTools } from './pdf-tools';
+import { ThisTab } from './this-tab';
 
 type PanelState =
   | { kind: 'idle' }
@@ -178,6 +180,7 @@ export function SidePanel({ engine }: { engine: PdfEngine }) {
 
       <main className="flex flex-1 flex-col gap-4 p-4">
         <h1 className="sr-only">Folio side panel</h1>
+        <ThisTab />
         <div
           className={cn(
             'flex flex-col items-center rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors duration-200',
@@ -287,6 +290,12 @@ export function SidePanel({ engine }: { engine: PdfEngine }) {
               <ExternalLink size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
               Open in editor
             </Button>
+            <PdfTools
+              key={`${state.name}:${state.bytes.byteLength}`}
+              name={state.name}
+              bytes={state.bytes}
+              handle={state.handle}
+            />
           </section>
         ) : null}
 

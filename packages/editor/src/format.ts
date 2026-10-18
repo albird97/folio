@@ -40,3 +40,19 @@ export function formatDate(iso: string | null, locale?: string): string {
   if (Number.isNaN(date.getTime())) return '—';
   return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
 }
+
+/** Pages typed like "1-3, 5" (1-based), as sorted 0-based positions; null when invalid. */
+export function parsePageRange(text: string, pageCount: number): number[] | null {
+  const positions = new Set<number>();
+  for (const part of text.split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const match = /^(\d+)\s*(?:[-–]\s*(\d+))?$/.exec(trimmed);
+    if (!match) return null;
+    const from = Number(match[1]);
+    const to = match[2] === undefined ? from : Number(match[2]);
+    if (from < 1 || to < from || to > pageCount) return null;
+    for (let page = from; page <= to; page += 1) positions.add(page - 1);
+  }
+  return positions.size > 0 ? [...positions].sort((a, b) => a - b) : null;
+}
