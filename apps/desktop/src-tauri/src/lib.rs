@@ -51,13 +51,17 @@ pub fn run() {
         .manage(LaunchQueue::default())
         .setup(|app| {
             let handle = app.handle();
-            app.set_menu(menu::build(handle)?)?;
+            // File ▸ Open Recent stays empty until recent files are recorded.
+            let (menu, _recent) = menu::build(handle, &[])?;
+            app.set_menu(menu)?;
             app.on_menu_event(|app, event| {
                 let id = event.id().as_ref();
                 if id == menu::CLOSE_WINDOW.0 {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.close();
                     }
+                } else if id == menu::QUIT.0 {
+                    app.exit(0);
                 } else if let Some(command) = menu::command_for(id) {
                     let _ = app.emit(MENU_EVENT, command);
                 }
