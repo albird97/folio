@@ -114,6 +114,8 @@ pub enum RegistrationError {
     Unavailable,
     #[error("Move Folio to the Applications folder, open it from there and try again.")]
     Translocated,
+    #[error("Folio is in a place other users or apps could change. Install it, open it from there and try again.")]
+    UnsafeLocation,
     #[error("Chrome or Chromium was not found for this user. Open it once, then try again.")]
     BrowserNotFound,
     #[error("Folio could not change its registration with Chrome.")]
@@ -125,6 +127,7 @@ impl RegistrationError {
         match self {
             RegistrationError::Unavailable => "unavailable",
             RegistrationError::Translocated => "app-translocated",
+            RegistrationError::UnsafeLocation => "unsafe-location",
             RegistrationError::BrowserNotFound => "browser-not-found",
             RegistrationError::Failed => "registration-failed",
         }
@@ -239,10 +242,22 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Refuses registrations that could not work, before the user is asked.
+/// Refuses registrations that could not work or would not be safe (see
+/// [`paths::is_unsafe_location`]), before the user is asked.
 pub fn check_can_register(locations: &Locations, exe: &Path) -> Result<(), RegistrationError> {
+    check(locations, exe, paths::is_unsafe_location)
+}
+
+fn check(
+    locations: &Locations,
+    exe: &Path,
+    is_unsafe_location: fn(&Path) -> bool,
+) -> Result<(), RegistrationError> {
     if paths::is_translocated(exe) {
         return Err(RegistrationError::Translocated);
+    }
+    if is_unsafe_location(exe) {
+        return Err(RegistrationError::UnsafeLocation);
     }
     if installed(locations).is_empty() {
         return Err(RegistrationError::BrowserNotFound);
@@ -284,7 +299,15 @@ pub fn status(locations: &Locations, exe: &Path) -> Status {
 /// value, so Chrome starts `exe` for the official extension. Returns the
 /// browsers it was registered with. Call only after the user agreed.
 pub fn register(locations: &Locations, exe: &Path) -> Result<Vec<&'static str>, RegistrationError> {
-    check_can_register(locations, exe)?;
+    register_checked(locations, exe, paths::is_unsafe_location)
+}
+
+fn register_checked(
+    locations: &Locations,
+    exe: &Path,
+    is_unsafe_location: fn(&Path) -> bool,
+) -> Result<Vec<&'static str>, RegistrationError> {
+    check(locations, exe, is_unsafe_location)?;
     let manifest = serde_json::to_vec_pretty(&Manifest::new(exe, OFFICIAL_EXTENSION_IDS))
         .map_err(|_| RegistrationError::Failed)?;
     let mut browsers = Vec::new();
@@ -423,6 +446,12 @@ mod tests {
         }
     }
 
+    /// The test executables live in a temporary folder, which is not a safe
+    /// location; these tests are about the manifests.
+    fn register(locations: &Locations, exe: &Path) -> Result<Vec<&'static str>, RegistrationError> {
+        register_checked(locations, exe, |_| false)
+    }
+
     #[test]
     fn validates_extension_ids_and_origins() {
         assert!(is_valid_extension_id(EXTENSION));
@@ -558,9 +587,24 @@ mod tests {
             register(locations, translocated),
             Err(RegistrationError::Translocated)
         );
-        std::fs::remove_dir(setup.dir.path().join("google-chrome")).unwrap();
+        // A copy in the temporary folder (where `exe` is) is refused before
+        // anything is written, also when registering directly.
         assert_eq!(
             check_can_register(locations, exe),
+            Err(RegistrationError::UnsafeLocation)
+        );
+        assert_eq!(
+            super::register(locations, exe),
+            Err(RegistrationError::UnsafeLocation)
+        );
+        assert_eq!(
+            check(locations, exe, |_| true),
+            Err(RegistrationError::UnsafeLocation)
+        );
+        assert!(!setup.manifest(0).exists());
+        std::fs::remove_dir(setup.dir.path().join("google-chrome")).unwrap();
+        assert_eq!(
+            check(locations, exe, |_| false),
             Err(RegistrationError::BrowserNotFound)
         );
         assert_eq!(

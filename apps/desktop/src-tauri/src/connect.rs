@@ -134,6 +134,14 @@ pub fn error_notice(error: &RegistrationError, action: Action) -> Notice {
             "macOS runs Folio from a temporary copy, which Chrome could not start later. \
              Move Folio to the Applications folder, open it from there and try again.",
         ),
+        RegistrationError::UnsafeLocation => (
+            Level::Warning,
+            "Install Folio before connecting it to Chrome",
+            "Folio is running from a place that other users or apps could change, or \
+             that may go away: a shared or temporary folder, a disk image or a removable \
+             drive. Chrome would start whatever is there. Install Folio (for example in \
+             Applications or Program Files), open it from there and try again.",
+        ),
         RegistrationError::Unavailable => (
             Level::Error,
             "Chrome integration is not available",
@@ -367,6 +375,10 @@ mod tests {
         for (error, phrase) in [
             (RegistrationError::BrowserNotFound, "Open Chrome once"),
             (RegistrationError::Translocated, "Applications folder"),
+            (
+                RegistrationError::UnsafeLocation,
+                "other users or apps could change",
+            ),
             (RegistrationError::Unavailable, "cannot connect"),
         ] {
             let Step::Tell(notice) = first_step(&Status::default(), Err(error)) else {
