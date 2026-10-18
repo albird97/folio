@@ -3,7 +3,6 @@
 //! file name and gets the chosen file's name back.
 
 use crate::files::MAX_FILE_BYTES;
-use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 
@@ -22,6 +21,8 @@ pub enum SaveError {
     InvalidRequest,
     #[error("The file could not be saved there.")]
     WriteFailed,
+    #[error("This file is read-only.")]
+    ReadOnly,
 }
 
 impl SaveError {
@@ -31,6 +32,7 @@ impl SaveError {
             SaveError::TooLarge => "too-large",
             SaveError::InvalidRequest => "invalid-request",
             SaveError::WriteFailed => "write-failed",
+            SaveError::ReadOnly => "read-only",
         }
     }
 }
@@ -84,14 +86,22 @@ pub fn suggested_file_name(header: Option<&str>) -> String {
 
 /// Writes `bytes` to `target` through a temporary file in the same folder
 /// and a rename, so an interrupted or failed save never leaves a truncated
-/// file. The temporary file is removed when anything fails.
+/// file. A file that is replaced keeps its permissions; read-only files are
+/// refused. The temporary file is removed when anything fails.
 pub fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), SaveError> {
     let directory = target.parent().ok_or(SaveError::WriteFailed)?;
-    let file_name = target.file_name().ok_or(SaveError::WriteFailed)?;
-    let mut temporary_name = OsString::from(".");
-    temporary_name.push(file_name);
-    temporary_name.push(format!(".folio-{}.tmp", uuid::Uuid::new_v4().simple()));
-    let temporary = directory.join(temporary_name);
+    let existing = std::fs::metadata(target).ok();
+    if let Some(metadata) = &existing {
+        if metadata.is_dir() {
+            return Err(SaveError::WriteFailed);
+        }
+        if metadata.permissions().readonly() {
+            return Err(SaveError::ReadOnly);
+        }
+    }
+    // Short and fixed-length, so any name the file system accepts for the
+    // target also works here.
+    let temporary = directory.join(format!(".folio-{}.tmp", uuid::Uuid::new_v4().simple()));
     let written = (|| -> std::io::Result<()> {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -100,7 +110,16 @@ pub fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), SaveError> {
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&temporary, target)
+        if let Some(metadata) = &existing {
+            std::fs::set_permissions(&temporary, metadata.permissions())?;
+        }
+        std::fs::rename(&temporary, target)?;
+        // Make the rename itself durable.
+        #[cfg(unix)]
+        if let Ok(folder) = std::fs::File::open(directory) {
+            let _ = folder.sync_all();
+        }
+        Ok(())
     })();
     if written.is_err() {
         let _ = std::fs::remove_file(&temporary);
@@ -112,6 +131,7 @@ pub fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), SaveError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
 
     const PDF: &[u8] = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n%%EOF\n";
 
@@ -180,5 +200,38 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(names, vec![OsString::from("blocked.pdf")]);
+    }
+
+    #[test]
+    fn keeps_permissions_and_refuses_read_only_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("private.pdf");
+        std::fs::write(&target, b"old").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+            write_atomically(&target, PDF).unwrap();
+            let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let mut permissions = std::fs::metadata(&target).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&target, permissions).unwrap();
+        let before = std::fs::read(&target).unwrap();
+        assert_eq!(
+            write_atomically(&target, b"%PDF-2.0 new"),
+            Err(SaveError::ReadOnly)
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), before);
+    }
+
+    #[test]
+    fn saves_under_the_longest_names_the_file_system_allows() {
+        let dir = tempfile::tempdir().unwrap();
+        // 251 bytes plus ".pdf" is the usual 255-byte limit for a file name.
+        let target = dir.path().join(format!("{}.pdf", "a".repeat(251)));
+        write_atomically(&target, PDF).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), PDF);
     }
 }

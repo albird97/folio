@@ -312,7 +312,7 @@ test.describe('document viewer', () => {
     // accelerator and the page can both see one key press).
     await page.waitForTimeout(150);
     const viaShortcut = page.waitForEvent('download');
-    await page.keyboard.press('Control+Shift+S');
+    await page.keyboard.press('Control+Alt+S');
     expect((await viaShortcut).suggestedFilename()).toBe('outline-and-text.pdf');
   });
 

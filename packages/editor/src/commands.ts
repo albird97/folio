@@ -12,7 +12,13 @@ const SHARED: Omit<
   'close-tab' | 'next-tab' | 'previous-tab'
 > = {
   open: ['Mod+O'],
-  'save-copy': ['Mod+Shift+S'],
+  'open-url': [],
+  save: ['Mod+S'],
+  'save-as': ['Mod+Shift+S'],
+  'save-copy': ['Mod+Alt+S'],
+  print: ['Mod+P'],
+  undo: ['Mod+Z'],
+  redo: ['Mod+Shift+Z', 'Mod+Y'],
   'toggle-left-panel': ['Mod+Alt+1'],
   'toggle-right-panel': ['Mod+Alt+2'],
   'cycle-theme': [],
@@ -27,6 +33,12 @@ const SHARED: Omit<
   find: ['Mod+F'],
   'find-next': ['Mod+G', 'F3'],
   'find-previous': ['Mod+Shift+G', 'Shift+F3'],
+  'insert-pages': [],
+  'insert-blank-page': [],
+  'rotate-pages-clockwise': [],
+  'rotate-pages-counterclockwise': [],
+  'delete-pages': [],
+  'extract-pages': [],
 };
 
 export const COMMAND_SHORTCUTS: Record<ShortcutProfile, Record<AppCommand, readonly string[]>> = {
@@ -49,7 +61,13 @@ export const COMMAND_SHORTCUTS: Record<ShortcutProfile, Record<AppCommand, reado
 
 export const COMMAND_LABELS: Record<AppCommand, string> = {
   open: 'Open PDF…',
-  'save-copy': 'Save a copy…',
+  'open-url': 'Open from a web address…',
+  save: 'Save',
+  'save-as': 'Save as…',
+  'save-copy': 'Save a copy of the original…',
+  print: 'Print…',
+  undo: 'Undo',
+  redo: 'Redo',
   'close-tab': 'Close document',
   'next-tab': 'Next document',
   'previous-tab': 'Previous document',
@@ -67,6 +85,12 @@ export const COMMAND_LABELS: Record<AppCommand, string> = {
   find: 'Find…',
   'find-next': 'Find next',
   'find-previous': 'Find previous',
+  'insert-pages': 'Insert pages from a file…',
+  'insert-blank-page': 'Insert a blank page',
+  'rotate-pages-clockwise': 'Rotate pages clockwise',
+  'rotate-pages-counterclockwise': 'Rotate pages counterclockwise',
+  'delete-pages': 'Delete pages',
+  'extract-pages': 'Extract pages…',
 };
 
 /**

@@ -278,8 +278,14 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
     const page = pages[target.pageIndex];
     if (!element || !initial || !page || !initial.boxes[target.pageIndex]) return;
     const { match, point } = target;
+    // Anchors follow every programmatic scroll at once: a layout change before
+    // the next scroll event must keep this position, not the previous one.
+    const scrollTo = (position: ScrollToOptions) => {
+      element.scrollTo(position);
+      track();
+    };
     if (!match && (!point || (point.x === null && point.y === null))) {
-      element.scrollTo({ top: pageTop(initial, target.pageIndex) });
+      scrollTo({ top: pageTop(initial, target.pageIndex) });
       return;
     }
 
@@ -320,14 +326,14 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
     const box = current.boxes[target.pageIndex];
     if (!box) return;
     if (y === null) {
-      element.scrollTo({ top: pageTop(current, target.pageIndex) });
+      scrollTo({ top: pageTop(current, target.pageIndex) });
       return;
     }
     const factor = current.scale / initial.scale;
     const contentX = x === null ? null : box.left + x * factor;
     const contentY = box.top + y * factor;
     if (target.align === 'top') {
-      element.scrollTo({ left: contentX ?? element.scrollLeft, top: contentY });
+      scrollTo({ left: contentX ?? element.scrollLeft, top: contentY });
       return;
     }
     // Search results: leave the view alone when the match is comfortably visible.
@@ -338,7 +344,7 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
       contentX === null ||
       (contentX >= scrollLeft + 16 && contentX <= scrollLeft + clientWidth - 48);
     if (inY && inX) return;
-    element.scrollTo({
+    scrollTo({
       top: inY ? scrollTop : contentY - clientHeight / 2,
       left: inX || contentX === null ? scrollLeft : contentX - clientWidth / 3,
     });

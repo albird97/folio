@@ -27,17 +27,27 @@ export const MAX_MATCHES = 10_000;
 const EXCERPT_CONTEXT = 36;
 const WORD = /[\p{L}\p{N}_]/u;
 
+/** The code point ending just before `index` (surrogate pairs count as one). */
+function charBefore(text: string, index: number): string {
+  const low = text.charCodeAt(index - 1);
+  if (low >= 0xdc00 && low <= 0xdfff && index >= 2) {
+    const high = text.charCodeAt(index - 2);
+    if (high >= 0xd800 && high <= 0xdbff) return text.slice(index - 2, index);
+  }
+  return text.slice(index - 1, index);
+}
+
 function isBoundary(text: string, index: number): boolean {
   if (index <= 0 || index >= text.length) return true;
-  return !(WORD.test(text[index - 1]!) && WORD.test(text[index]!));
+  const after = String.fromCodePoint(text.codePointAt(index)!);
+  return !(WORD.test(charBefore(text, index)) && WORD.test(after));
 }
 
 function excerpt(
-  items: readonly Pick<PageTextItem, 'str' | 'hasEOL'>[],
+  { text, runStart }: ReturnType<typeof displayText>,
   start: TextPosition,
   end: TextPosition,
 ): TextMatch['excerpt'] {
-  const { text, runStart } = displayText(items);
   const from = (runStart[start.item] ?? 0) + start.offset;
   const to = (runStart[end.item] ?? 0) + end.offset;
   const tidy = (value: string) => value.replace(/\s+/g, ' ');
@@ -61,6 +71,7 @@ export function findInPage(
   const needle = foldQuery(query, options.matchCase);
   if (needle.length === 0 || limit <= 0) return [];
   const folded = foldPageText(items, options.matchCase);
+  const display = displayText(items);
   const matches: TextMatch[] = [];
   let from = 0;
   while (matches.length < limit) {
@@ -73,7 +84,7 @@ export function findInPage(
     }
     const start = { item: folded.item[at]!, offset: folded.start[at]! };
     const end = { item: folded.item[last]!, offset: folded.end[last]! };
-    matches.push({ pageIndex, start, end, excerpt: excerpt(items, start, end) });
+    matches.push({ pageIndex, start, end, excerpt: excerpt(display, start, end) });
     from = at + needle.length;
   }
   return matches;

@@ -1,3 +1,4 @@
+import { createMemoryRecoveryStore } from './recovery';
 import { Channel, WEB_FEATURES } from './web';
 import type {
   AppCommand,
@@ -42,7 +43,11 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
   const picks: IncomingFile[][] = [];
   const clipboard: string[] = [];
   const saved: Array<{ name: string; bytes: Uint8Array }> = [];
+  const written: Array<{ handle: string; bytes: Uint8Array }> = [];
   const titles: string[] = [];
+  const unsaved: boolean[] = [];
+  let printed = 0;
+  const recovery = createMemoryRecoveryStore();
   const adapter: PlatformAdapter = {
     platform: 'web',
     os: 'unknown',
@@ -58,9 +63,26 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
     setWindowTitle: (title) => {
       titles.push(title);
     },
-    saveFileAs: async ({ suggestedName, bytes }) => {
+    saveFileAs: async ({ suggestedName, bytes, keepAccess }) => {
       saved.push({ name: suggestedName, bytes: bytes.slice() });
-      return { status: 'saved', name: suggestedName };
+      return {
+        status: 'saved',
+        name: suggestedName,
+        handle: keepAccess ? `memory-${saved.length}` : null,
+      };
+    },
+    writeFile: async ({ handle, bytes }) => {
+      written.push({ handle, bytes: bytes.slice() });
+      return { status: 'saved' };
+    },
+    releaseHandle: () => undefined,
+    print: async () => {
+      printed += 1;
+    },
+    recovery,
+    recentFiles: null,
+    setUnsavedChanges: (value) => {
+      unsaved.push(value);
     },
   };
   return {
@@ -68,6 +90,12 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
     clipboard,
     titles,
     saved,
+    written,
+    unsaved,
+    recovery,
+    get printed() {
+      return printed;
+    },
     queuePick: (files: IncomingFile[]) => picks.push(files),
     deliver: (files: IncomingFile[]) => incoming.emit(files),
     command: (command: AppCommand) => commands.emit(command),

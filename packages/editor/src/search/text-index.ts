@@ -9,9 +9,9 @@ import type { PageTextItem } from '@folio/pdf-core';
  */
 export interface FoldedText {
   text: string;
-  /** Per folded character: index of the text run it came from. */
+  /** Per UTF-16 unit of `text`: index of the text run it came from. */
   item: Int32Array;
-  /** Per folded character: UTF-16 range [start, end) within that run's string. */
+  /** Per UTF-16 unit of `text`: UTF-16 range [start, end) within that run's string. */
   start: Int32Array;
   end: Int32Array;
 }
@@ -33,14 +33,44 @@ const SIMPLIFY: Record<string, string> = {
   ' ': ' ',
 };
 
-const COMBINING = /\p{M}/gu;
+/**
+ * Marks that are accents rather than letters: Latin/Greek/Cyrillic combining
+ * diacritics, Hebrew points and Arabic harakat. Other combining marks (such as
+ * Indic vowel signs) are part of the word and kept.
+ */
+const DIACRITICS: ReadonlyArray<readonly [number, number]> = [
+  [0x0300, 0x036f],
+  [0x0591, 0x05bd],
+  [0x05bf, 0x05bf],
+  [0x05c1, 0x05c2],
+  [0x05c4, 0x05c5],
+  [0x05c7, 0x05c7],
+  [0x064b, 0x065f],
+  [0x0670, 0x0670],
+  [0x1ab0, 0x1aff],
+  [0x1dc0, 0x1dff],
+  [0x20d0, 0x20ff],
+  [0xfe20, 0xfe2f],
+];
+
+function withoutDiacritics(text: string): string {
+  let out = '';
+  for (const char of text) {
+    const code = char.codePointAt(0)!;
+    if (!DIACRITICS.some(([from, to]) => code >= from && code <= to)) out += char;
+  }
+  return out;
+}
+
 const WHITESPACE = /\s/u;
 
-/** Folds one character (code point); may return several characters or none. */
+/**
+ * Folds one character (code point); may return several characters (a
+ * ligature) or none (an accent written as a separate character).
+ */
 export function foldChar(char: string, matchCase: boolean): string {
   const simple = SIMPLIFY[char] ?? char;
-  const decomposed = simple.normalize('NFKD').replace(COMBINING, '');
-  const folded = decomposed.length > 0 ? decomposed : simple;
+  const folded = withoutDiacritics(simple.normalize('NFKD'));
   return matchCase ? folded : folded.toLowerCase();
 }
 
@@ -64,14 +94,18 @@ export function foldPageText(
   const end: number[] = [];
   let lastWasSpace = true;
   const push = (text: string, itemIndex: number, from: number, to: number) => {
-    for (const unit of text) {
-      const space = WHITESPACE.test(unit);
+    for (const char of text) {
+      const space = WHITESPACE.test(char);
       if (space && lastWasSpace) continue;
       lastWasSpace = space;
-      chars.push(space ? ' ' : unit);
-      item.push(itemIndex);
-      start.push(from);
-      end.push(to);
+      const out = space ? ' ' : char;
+      chars.push(out);
+      // One entry per UTF-16 unit: matches are found with string offsets.
+      for (let unit = 0; unit < out.length; unit += 1) {
+        item.push(itemIndex);
+        start.push(from);
+        end.push(to);
+      }
     }
   };
   items.forEach((run, itemIndex) => {

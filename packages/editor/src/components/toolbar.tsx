@@ -35,7 +35,7 @@ const THEME_META: Record<ThemePreference, { label: string; Icon: typeof Sun }> =
 const Separator = () => <ToolbarPrimitive.Separator className="mx-1 h-5 w-px bg-line" />;
 
 export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand): void }) {
-  const { adapter, profile, shortcutPlatform } = useWorkspaceContext();
+  const { adapter, workspace, profile, shortcutPlatform } = useWorkspaceContext();
   const doc = useActiveDocument();
   const leftPanelOpen = useUi((state) => state.leftPanelOpen);
   const rightPanelOpen = useUi((state) => state.rightPanelOpen);
@@ -140,7 +140,11 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
               label="Find"
               icon={<Search size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
               pressed={doc.search.open}
-              onClick={() => onCommand('find')}
+              onClick={() => {
+                // A toggle: the shortcut (⌘F) only ever opens or focuses it.
+                if (doc.search.open) workspace.getState().closeSearch(doc.key);
+                else onCommand('find');
+              }}
               shortcut={shortcut('find')}
             />
           </ToolbarPrimitive.Button>

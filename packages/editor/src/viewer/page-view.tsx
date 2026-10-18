@@ -52,6 +52,8 @@ interface Shown {
 interface QueuedJob {
   id: string;
   start: () => SchedulableJob;
+  /** In the render queue (a re-render waits for the zoom to settle first). */
+  queued: boolean;
 }
 
 /** A canvas re-rendered for a new zoom waits this long, so pinching does not re-render every step. */
@@ -209,8 +211,14 @@ export const PageView = memo(function PageView({
       );
       return { promise, cancel: job.cancel };
     };
-    canvasJob.current = { id, start };
-    const enqueue = () => scheduler.schedule(id, currentPriority(), start);
+    const job: QueuedJob = { id, start, queued: false };
+    canvasJob.current = job;
+    const enqueue = () => {
+      // Never twice, and not after the page finished or was superseded.
+      if (canvasJob.current !== job || job.queued) return;
+      job.queued = true;
+      scheduler.schedule(id, currentPriority(), start);
+    };
     const timer = shown.current ? setTimeout(enqueue, RERENDER_DELAY_MS) : null;
     if (!timer) enqueue();
     return () => {
@@ -245,7 +253,7 @@ export const PageView = memo(function PageView({
       );
       return job;
     };
-    textJob.current = { id, start };
+    textJob.current = { id, start, queued: true };
     scheduler.schedule(id, currentPriority() + TEXT_PRIORITY_OFFSET, start);
     return () => {
       cancelled = true;
@@ -261,7 +269,7 @@ export const PageView = memo(function PageView({
       [canvasJob.current, 0],
       [textJob.current, TEXT_PRIORITY_OFFSET],
     ] as const) {
-      if (job) scheduler.schedule(job.id, priority + offset, job.start);
+      if (job?.queued) scheduler.schedule(job.id, priority + offset, job.start);
     }
   }, [priority]);
 

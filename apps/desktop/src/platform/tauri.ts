@@ -3,6 +3,7 @@ import {
   APP_COMMANDS,
   Channel,
   createLocalStorage,
+  createMemoryRecoveryStore,
   type AppCommand,
   type IncomingFile,
   type OperatingSystem,
@@ -173,11 +174,27 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
         const saved = await invoke<SavedFile | null>('save_pdf_as', bytes, {
           headers: { [NAME_HEADER]: encodeURIComponent(suggestedName) },
         });
-        return saved ? { status: 'saved', name: saved.name } : { status: 'cancelled' };
+        return saved
+          ? { status: 'saved', name: saved.name, handle: null }
+          : { status: 'cancelled' };
       } catch (error) {
         const message = (error as Partial<CommandError> | undefined)?.message;
         throw new Error(message ?? 'The file could not be saved.');
       }
     },
+    // Phase 4 replaces these with native implementations.
+    async writeFile() {
+      return {
+        status: 'unavailable',
+        message: 'Saving to the original file is not available yet.',
+      };
+    },
+    releaseHandle() {},
+    async print() {
+      globalThis.window.print();
+    },
+    recovery: createMemoryRecoveryStore(),
+    recentFiles: null,
+    setUnsavedChanges() {},
   };
 }

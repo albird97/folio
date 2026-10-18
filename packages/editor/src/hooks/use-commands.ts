@@ -1,6 +1,7 @@
 import type { AppCommand } from '@folio/platform-adapters';
 import { matchesShortcut, nextThemePreference, worksInTextFields } from '@folio/shared-ui';
 import { useCallback, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { COMMAND_DEDUPE_MS, COMMAND_SHORTCUTS } from '../commands';
 import { FIND_INPUT_ID } from '../components/find-bar';
 import { PAGE_INPUT_ID } from '../components/viewer-controls';
@@ -92,9 +93,9 @@ export function useCommands(): (command: AppCommand) => void {
           break;
         case 'find':
           if (!key) break;
-          // An open find bar takes focus again; a new one focuses itself.
-          if (active?.search.open) focusField(FIND_INPUT_ID);
-          else state.openSearch(key);
+          // Render the find bar now so its field exists to take focus.
+          if (!active?.search.open) flushSync(() => state.openSearch(key));
+          focusField(FIND_INPUT_ID);
           break;
         case 'find-next':
         case 'find-previous':
@@ -102,7 +103,8 @@ export function useCommands(): (command: AppCommand) => void {
           if (active?.search.open && active.search.matches.length > 0) {
             state.stepSearch(key, command === 'find-next' ? 1 : -1);
           } else if (!active?.search.open) {
-            state.openSearch(key);
+            flushSync(() => state.openSearch(key));
+            focusField(FIND_INPUT_ID);
           }
           break;
       }

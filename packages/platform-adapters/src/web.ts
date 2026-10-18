@@ -1,9 +1,11 @@
+import { createIndexedDbRecoveryStore } from './recovery';
 import type {
   AppCommand,
   IncomingFile,
   KeyValueStorage,
   OperatingSystem,
   PlatformAdapter,
+  RecoveryStore,
   RuntimeFeatures,
   RuntimePlatform,
   Unsubscribe,
@@ -165,15 +167,37 @@ export const WEB_FEATURES: RuntimeFeatures = {
   saveInPlace: false,
   saveCopy: true,
   printing: false,
+  crashRecovery: false,
+  recentFiles: false,
+  openFromUrl: false,
   clipboardWrite: true,
   browserTabIntegration: false,
   nativeMessaging: false,
 };
 
+/**
+ * Asks the browser to confirm leaving the page while there is unsaved work.
+ * Browsers show their own wording; pages cannot customize it.
+ */
+export function createLeaveGuard(target: Window | undefined = globalThis.window) {
+  let unsaved = false;
+  const onBeforeUnload = (event: BeforeUnloadEvent) => {
+    if (!unsaved) return;
+    event.preventDefault();
+    // Older Chromium versions still need returnValue to be set.
+    event.returnValue = '';
+  };
+  target?.addEventListener('beforeunload', onBeforeUnload);
+  return (value: boolean) => {
+    unsaved = value;
+  };
+}
+
 export interface WebAdapterOptions {
   platform?: RuntimePlatform;
   features?: Partial<RuntimeFeatures>;
   storage?: KeyValueStorage;
+  recovery?: RecoveryStore;
 }
 
 /**
@@ -186,6 +210,7 @@ export function createWebPlatformAdapter(options: WebAdapterOptions = {}): Platf
 } {
   const incoming = new Channel<IncomingFile[]>(true);
   const commands = new Channel<AppCommand>();
+  const setUnsavedChanges = createLeaveGuard();
   return {
     platform: options.platform ?? 'web',
     os: detectOperatingSystem(),
@@ -209,6 +234,19 @@ export function createWebPlatformAdapter(options: WebAdapterOptions = {}): Platf
       downloadBytes(name, bytes);
       return { status: 'downloaded', name };
     },
+    async writeFile() {
+      return {
+        status: 'unavailable',
+        message: 'This browser cannot write to the original file. Download a copy instead.',
+      };
+    },
+    releaseHandle() {},
+    async print() {
+      globalThis.window.print();
+    },
+    recovery: options.recovery ?? createIndexedDbRecoveryStore(),
+    recentFiles: null,
+    setUnsavedChanges,
     deliverFiles(files) {
       incoming.emit(files);
     },

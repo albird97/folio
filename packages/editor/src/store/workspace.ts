@@ -543,11 +543,17 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       },
 
       setSearch(key, changes) {
-        updateSearch(key, (search) => ({
-          open: true,
-          query: changes.query ?? search.query,
-          options: { ...search.options, ...changes.options },
-        }));
+        const current = get().documents.find((doc) => doc.key === key)?.search;
+        if (!current) return;
+        const query = changes.query ?? current.query;
+        const options = { ...current.options, ...changes.options };
+        const unchanged =
+          query === current.query &&
+          options.matchCase === current.options.matchCase &&
+          options.wholeWords === current.options.wholeWords;
+        // Running the same search again would lose the user's place in the results.
+        if (unchanged && current.open && current.status !== 'idle') return;
+        updateSearch(key, () => ({ open: true, query, options }));
         runSearch(key);
       },
 

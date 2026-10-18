@@ -26,6 +26,17 @@ describe('text folding', () => {
   it('collapses whitespace and separates lines', () => {
     expect(foldPageText([run('  a  '), run('b', true), run('c', true)], false).text).toBe('a b c');
   });
+
+  it('treats accents written as separate characters like precomposed ones', () => {
+    // "café" with the accent as its own character (NFD), and the reverse.
+    expect(foldQuery('cafe\u0301 au lait', false)).toBe('cafe au lait');
+    expect(findInPage(0, [run('cafe\u0301 au lait')], 'café au', insensitive)).toHaveLength(1);
+    expect(findInPage(0, [run('café au lait')], 'cafe\u0301 au', insensitive)).toHaveLength(1);
+    // Hebrew points and Arabic harakat are optional too; Indic vowel signs are letters.
+    expect(foldQuery('שָׁלוֹם', false)).toBe('שלום');
+    expect(foldQuery('كَتَبَ', false)).toBe('كتب');
+    expect(foldQuery('हिंदी', false)).toBe('हिंदी'.normalize('NFKD'));
+  });
 });
 
 describe('page search', () => {
@@ -65,6 +76,22 @@ describe('page search', () => {
     expect(match?.excerpt.before.startsWith('…')).toBe(true);
     expect(match?.excerpt.after.endsWith('…')).toBe(true);
     expect(match?.excerpt.match).toBe('needle');
+  });
+
+  it('maps matches after characters outside the Basic Multilingual Plane', () => {
+    const items = [run('😀 hello '), run('𠜎 world')];
+    const [match] = findInPage(0, items, 'world', insensitive);
+    expect(match).toMatchObject({
+      start: { item: 1, offset: 3 },
+      end: { item: 1, offset: 8 },
+      excerpt: { match: 'world' },
+    });
+    const [hello] = findInPage(0, items, 'hello', insensitive);
+    expect(hello?.start).toEqual({ item: 0, offset: 3 });
+    // Whole-word boundaries treat a surrogate pair as one letter.
+    expect(
+      findInPage(0, [run('𠜎ab ab')], 'ab', { matchCase: false, wholeWords: true }),
+    ).toHaveLength(1);
   });
 
   it('splits a match into per-run highlight ranges', () => {

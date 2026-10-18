@@ -144,8 +144,10 @@ describe('find bar', () => {
     const onClose = vi.fn();
     const view = render(wrap(<FindBar doc={doc()} onClose={onClose} />));
     const rerender = () => view.rerender(wrap(<FindBar doc={doc()} onClose={onClose} />));
-    const input = screen.getByRole('searchbox');
-    expect(document.activeElement).toBe(input);
+    const input = screen.getByRole('searchbox', { name: 'Find in document' });
+    // Mounting (e.g. switching back to this tab) must not take focus; ⌘F focuses explicitly.
+    expect(document.activeElement).not.toBe(input);
+    input.focus();
 
     fireEvent.change(input, { target: { value: 'fox' } });
     // Typing waits for a pause before searching.
@@ -155,6 +157,8 @@ describe('find bar', () => {
     expect(doc().search.matches).toHaveLength(3);
     expect(screen.getByRole('status').textContent).toBe('3 results');
     expect(screen.getByText('1 of 3')).toBeTruthy();
+    // The count describes the field instead of being part of its name.
+    expect(input.getAttribute('aria-describedby')).toBe('folio-find-summary');
 
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(doc().search.active).toBe(1);

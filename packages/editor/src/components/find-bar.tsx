@@ -7,6 +7,7 @@ import type { WorkspaceDocument } from '../store/workspace';
 import { searchSummary } from './results-panel';
 
 export const FIND_INPUT_ID = 'folio-find-input';
+const SUMMARY_ID = 'folio-find-summary';
 /** Typing pauses this long before the document is searched again. */
 const SEARCH_DELAY_MS = 160;
 
@@ -83,18 +84,18 @@ export function FindBar({ doc, onClose }: { doc: WorkspaceDocument; onClose(): v
       className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-line bg-surface px-2 py-1.5"
     >
       {/* In a narrow window the buttons wrap below the field instead of squeezing it. */}
-      <label className="flex h-7 min-w-44 flex-1 items-center gap-2 rounded-md bg-raised px-2 shadow-[inset_0_0_0_1px_var(--folio-border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--folio-focus)] sm:max-w-80">
+      <div className="flex h-7 min-w-44 flex-1 items-center gap-2 rounded-md bg-raised px-2 shadow-[inset_0_0_0_1px_var(--folio-border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--folio-focus)] sm:max-w-80">
         <Search
           size={ICON.sm}
           strokeWidth={ICON.stroke}
           aria-hidden
           className="shrink-0 text-ink-muted"
         />
-        <span className="sr-only">Find in document</span>
         <input
           id={FIND_INPUT_ID}
           type="search"
-          autoFocus
+          aria-label="Find in document"
+          aria-describedby={SUMMARY_ID}
           spellCheck={false}
           autoComplete="off"
           value={text}
@@ -104,6 +105,7 @@ export function FindBar({ doc, onClose }: { doc: WorkspaceDocument; onClose(): v
           className="h-full min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-subtle [&::-webkit-search-cancel-button]:hidden"
         />
         <span
+          id={SUMMARY_ID}
           className={cn(
             'shrink-0 text-2xs tabular',
             hasQuery && search.status === 'done' && count === 0
@@ -113,7 +115,7 @@ export function FindBar({ doc, onClose }: { doc: WorkspaceDocument; onClose(): v
         >
           {summary}
         </span>
-      </label>
+      </div>
       <span role="status" className="sr-only">
         {announcement}
       </span>
@@ -138,18 +140,23 @@ export function FindBar({ doc, onClose }: { doc: WorkspaceDocument; onClose(): v
         <Toggle
           label="Match case"
           pressed={search.options.matchCase}
-          onToggle={() =>
-            setSearch(doc.key, { query: text, options: { matchCase: !search.options.matchCase } })
-          }
+          onToggle={() => {
+            clearTimeout(timer.current);
+            setSearch(doc.key, { query: text, options: { matchCase: !search.options.matchCase } });
+          }}
         >
           <CaseSensitive size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
         </Toggle>
         <Toggle
           label="Whole words"
           pressed={search.options.wholeWords}
-          onToggle={() =>
-            setSearch(doc.key, { query: text, options: { wholeWords: !search.options.wholeWords } })
-          }
+          onToggle={() => {
+            clearTimeout(timer.current);
+            setSearch(doc.key, {
+              query: text,
+              options: { wholeWords: !search.options.wholeWords },
+            });
+          }}
         >
           <WholeWord size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
         </Toggle>
