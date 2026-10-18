@@ -166,6 +166,8 @@ pub struct RecoveryStore {
     limits: Limits,
     /// Writes are serialized so the size limit holds.
     writes: Mutex<()>,
+    /// Whether [`RecoveryStore::list`] deletes abandoned record folders.
+    sweep: bool,
 }
 
 impl RecoveryStore {
@@ -178,7 +180,15 @@ impl RecoveryStore {
             base,
             limits,
             writes: Mutex::new(()),
+            sweep: true,
         }
+    }
+
+    /// Leaves abandoned record folders alone: another copy of Folio, which
+    /// may still be writing them, uses the same folder.
+    pub fn without_orphan_sweep(mut self) -> Self {
+        self.sweep = false;
+        self
     }
 
     fn lock(&self) -> MutexGuard<'_, ()> {
@@ -256,7 +266,7 @@ impl RecoveryStore {
             let dir = entry.path();
             match Self::record(id, &dir) {
                 Some(record) => records.push(record),
-                None if Self::is_abandoned(&dir, now) => abandoned.push(dir),
+                None if self.sweep && Self::is_abandoned(&dir, now) => abandoned.push(dir),
                 None => {}
             }
         }
@@ -484,6 +494,16 @@ mod tests {
         std::fs::create_dir_all(&foreign).unwrap();
         store.list_at(later).unwrap();
         assert!(foreign.exists());
+    }
+
+    #[test]
+    fn another_copy_of_folio_leaves_abandoned_records_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RecoveryStore::new(dir.path().join("recovery")).without_orphan_sweep();
+        store.save_file("abandoned", "key", b"data").unwrap();
+        let later = SystemTime::now() + ORPHAN_AGE + Duration::from_secs(60);
+        assert!(store.list_at(later).unwrap().is_empty());
+        assert!(store.has_file("abandoned", "key").unwrap());
     }
 
     #[test]

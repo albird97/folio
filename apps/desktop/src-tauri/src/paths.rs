@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 pub const IDENTIFIER: &str = "io.github.albird97.folio";
 /// Replaces the data directory, for tests. Only absolute paths are used.
 pub const DATA_DIR_ENV: &str = "FOLIO_DATA_DIR";
+/// Held by the running app, see [`lock_instance`].
+pub const INSTANCE_LOCK_FILE: &str = "instance.lock";
 
 /// `<local data dir>/io.github.albird97.folio`: `~/Library/Application
 /// Support` on macOS, `%LOCALAPPDATA%` on Windows (recovery data and
@@ -56,6 +58,23 @@ pub fn prepare_data_dir(dir: &Path) -> std::io::Result<()> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
+}
+
+/// An advisory lock on `instance.lock` in the data folder, held for as long
+/// as the returned file is: the app takes it at startup, so a second copy
+/// started next to it (macOS has no single-instance plugin) knows it is not
+/// alone. `None` when another process holds it or it cannot be taken.
+pub fn lock_instance(data_dir: &Path) -> Option<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(data_dir.join(INSTANCE_LOCK_FILE)).ok()?;
+    file.try_lock().ok()?;
+    Some(file)
 }
 
 /// Space available to the user on the volume holding `path`, if the system
@@ -366,6 +385,17 @@ mod tests {
         prepare_data_dir(&data).unwrap();
         let mode = std::fs::metadata(&data).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn only_one_process_holds_the_instance_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = lock_instance(dir.path()).expect("the first copy gets the lock");
+        // Any other open of the file (another process, or another copy).
+        assert!(lock_instance(dir.path()).is_none());
+        drop(first);
+        assert!(lock_instance(dir.path()).is_some());
+        assert!(lock_instance(&dir.path().join("missing")).is_none());
     }
 
     #[test]

@@ -51,11 +51,19 @@ pub struct Storage {
 }
 
 impl Storage {
-    pub fn new(data_dir: Option<PathBuf>) -> Self {
+    /// `alone`: no other copy of Folio uses the data directory (see
+    /// [`paths::lock_instance`]). Otherwise nothing that copy could still
+    /// be using is deleted.
+    pub fn new(data_dir: Option<PathBuf>, alone: bool) -> Self {
         Storage {
-            recovery: data_dir
-                .as_ref()
-                .map(|dir| RecoveryStore::new(dir.join("recovery"))),
+            recovery: data_dir.as_ref().map(|dir| {
+                let store = RecoveryStore::new(dir.join("recovery"));
+                if alone {
+                    store
+                } else {
+                    store.without_orphan_sweep()
+                }
+            }),
             recent: RecentFiles::load(data_dir.as_ref().map(|dir| dir.join("recent.json"))),
             incoming: data_dir.map(|dir| dir.join(incoming::INCOMING_DIR)),
         }
@@ -64,6 +72,11 @@ impl Storage {
 
 /// The File ▸ Open Recent submenu, refilled when the recent files change.
 struct RecentMenu(Mutex<Option<Submenu<Wry>>>);
+
+/// Keeps the instance lock (see [`paths::lock_instance`]) until Folio quits.
+struct InstanceLock {
+    _file: Option<std::fs::File>,
+}
 
 pub(crate) fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(MAIN_WINDOW)
@@ -288,6 +301,12 @@ pub fn run() {
         // Only the user may enter Folio's data folder, also an older one.
         let _ = paths::prepare_data_dir(dir);
     }
+    // Another copy may run next to this one, notably on macOS, which has no
+    // single-instance plugin. Only a copy that runs alone deletes what the
+    // other could still be using (accepted transfers, abandoned recovery
+    // records) and offers waiting transfers at startup.
+    let instance = data_dir.as_deref().and_then(paths::lock_instance);
+    let alone = data_dir.is_none() || instance.is_some();
     let builder = tauri::Builder::default();
     // First: a second launch hands over its arguments and exits before
     // anything else starts. macOS needs no plugin: LaunchServices routes
@@ -302,8 +321,9 @@ pub fn run() {
         .manage(TransferQueue::default())
         .manage(CloseGuard::default())
         .manage(RecentMenu(Mutex::new(None)))
-        .manage(Storage::new(data_dir))
-        .setup(|app| {
+        .manage(InstanceLock { _file: instance })
+        .manage(Storage::new(data_dir, alone))
+        .setup(move |app| {
             let handle = app.handle();
             let entries = handle.state::<Storage>().recent.menu_entries();
             let (menu, recent) = menu::build(handle, &entries)?;
@@ -318,9 +338,12 @@ pub fn run() {
             // released (Folio quit), ones nobody answered for a day and
             // leftovers of interrupted transfers are deleted. The others
             // still need the user's answer, so they are offered again.
-            if let Some(base) = handle.state::<Storage>().incoming.clone() {
-                incoming::purge(&base, SystemTime::now(), true);
-                offer_requests(handle, incoming::pending_requests(&base));
+            match handle.state::<Storage>().incoming.clone() {
+                Some(base) if alone => {
+                    incoming::purge(&base, SystemTime::now(), true);
+                    offer_requests(handle, incoming::pending_requests(&base));
+                }
+                _ => {}
             }
             // Windows and Linux pass files opened from the file manager as
             // arguments; the native messaging host passes `--incoming <id>`.
@@ -421,7 +444,7 @@ mod tests {
     #[test]
     fn storage_lives_in_the_data_directory() {
         let dir = tempfile::tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_path_buf()));
+        let storage = Storage::new(Some(dir.path().to_path_buf()), true);
         assert_eq!(storage.incoming, Some(dir.path().join("incoming")));
         storage
             .recovery
@@ -430,7 +453,7 @@ mod tests {
             .save_snapshot("doc", "t", b"{}")
             .unwrap();
         assert!(dir.path().join("recovery").join("doc").is_dir());
-        let without = Storage::new(None);
+        let without = Storage::new(None, true);
         assert!(without.recovery.is_none() && without.incoming.is_none());
     }
 }
