@@ -11,7 +11,7 @@
 //! match `^[A-Za-z0-9_-]{1,128}$`, and Windows device names such as `CON`,
 //! is refused before a path is built from it.
 
-use crate::paths;
+use crate::{paths, save};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -22,7 +22,6 @@ pub const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Record folders without a snapshot are deleted after this long.
 pub const ORPHAN_AGE: Duration = Duration::from_secs(60 * 60);
-const MAX_TITLE_CHARS: usize = 500;
 const MAX_META_BYTES: u64 = 64 * 1024;
 const META: &str = "meta.json";
 const SNAPSHOT: &str = "snapshot.json";
@@ -125,10 +124,10 @@ pub fn is_reserved_device_name(name: &str) -> bool {
     }
 }
 
+/// Titles are cleaned like suggested file names: no control or invisible
+/// characters (such as bidirectional overrides), at most 200 bytes.
 fn clean_title(title: &str) -> String {
-    let printable: String = title.chars().filter(|c| !c.is_control()).collect();
-    let short: String = printable.trim().chars().take(MAX_TITLE_CHARS).collect();
-    short.trim_end().to_owned()
+    save::clean_display_text(title, save::MAX_NAME_BYTES)
 }
 
 fn io_error(error: std::io::Error) -> RecoveryError {
@@ -610,13 +609,21 @@ mod tests {
     }
 
     #[test]
-    fn keeps_titles_printable_and_short() {
+    fn keeps_titles_visible_and_short() {
         let (_dir, store) = store();
         let title = format!(" Report\u{0}\n{}", "x".repeat(600));
         store.save_snapshot("doc", &title, b"{}").unwrap();
         let stored = &store.list().unwrap()[0].title;
         assert!(stored.starts_with("Reportxxx"));
-        assert_eq!(stored.chars().count(), MAX_TITLE_CHARS);
+        assert_eq!(stored.len(), save::MAX_NAME_BYTES);
+        // Cleaned like file names: no direction overrides, separators or
+        // fillers, cut between characters.
+        let title = format!("Invoice\u{202E}fdp.exe\u{2028}\u{3164} {}", "é".repeat(150));
+        store.save_snapshot("doc", &title, b"{}").unwrap();
+        let stored = &store.list().unwrap()[0].title;
+        assert!(stored.starts_with("Invoicefdp.exe é"));
+        assert!(stored.len() <= save::MAX_NAME_BYTES);
+        assert!(stored.ends_with('é'));
     }
 
     #[test]

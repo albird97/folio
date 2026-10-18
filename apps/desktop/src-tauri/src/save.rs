@@ -22,8 +22,9 @@ pub const EXPECTED_SHA256_HEADER: &str = "x-folio-expected-sha256";
 /// `1` writes even though the file changed on disk (the user confirmed).
 pub const OVERWRITE_HEADER: &str = "x-folio-overwrite";
 const FALLBACK_NAME: &str = "Document";
-/// File systems count names in bytes (usually 255); this leaves room.
-const MAX_NAME_BYTES: usize = 200;
+/// File systems count names in bytes (usually 255); this leaves room. Also
+/// the limit for other names Folio shows, such as recovery titles.
+pub const MAX_NAME_BYTES: usize = 200;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SaveError {
@@ -93,10 +94,12 @@ pub fn decode_header(value: &str) -> String {
         .into_owned()
 }
 
-/// Invisible formatting characters (Unicode category Cf) that can disguise a
-/// name, such as the right-to-left override (U+202E) that makes
-/// `report<U+202E>fdp.exe` read as `reportexe.pdf`. The joiners U+200C and
-/// U+200D stay: scripts and emoji need them.
+/// Characters that can disguise a name without being seen: formatting
+/// characters (Unicode category Cf) such as the right-to-left override
+/// (U+202E) that makes `report<U+202E>fdp.exe` read as `reportexe.pdf`, the
+/// line and paragraph separators, and fillers that show as blank space
+/// (Hangul fillers, the braille blank). The joiners U+200C and U+200D stay:
+/// scripts and emoji need them.
 fn is_hidden_format_character(c: char) -> bool {
     matches!(c,
         '\u{00AD}'
@@ -121,7 +124,32 @@ fn is_hidden_format_character(c: char) -> bool {
         | '\u{1D173}'..='\u{1D17A}'
         | '\u{E0001}'
         | '\u{E0020}'..='\u{E007F}'
+        // Line and paragraph separators.
+        | '\u{2028}'..='\u{2029}'
+        // Fillers: Hangul choseong and jungseong fillers, Hangul filler,
+        // halfwidth Hangul filler, braille pattern blank.
+        | '\u{115F}'..='\u{1160}'
+        | '\u{3164}'
+        | '\u{FFA0}'
+        | '\u{2800}'
     )
+}
+
+/// `text` without control characters and characters that cannot be seen
+/// ([`is_hidden_format_character`]).
+fn visible_characters(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars()
+        .filter(|&c| !c.is_control() && !is_hidden_format_character(c))
+}
+
+/// A name to show that is not a file name (recovery titles): the characters
+/// [`sanitize_file_name`] keeps visible, trimmed, and at most `max_bytes` of
+/// UTF-8, cut between characters.
+pub fn clean_display_text(text: &str, max_bytes: usize) -> String {
+    let visible: String = visible_characters(text).collect();
+    truncate_to_bytes(visible.trim(), max_bytes)
+        .trim_end()
+        .to_owned()
 }
 
 /// The longest prefix of `text` that fits in `max` bytes, cut between
@@ -142,13 +170,8 @@ fn truncate_to_bytes(text: &str, max: usize) -> &str {
 /// and at most 200 bytes long (UTF-8).
 pub fn sanitize_file_name(name: &str) -> String {
     let last = name.rsplit(['/', '\\']).next().unwrap_or_default();
-    let cleaned: String = last
-        .chars()
-        .filter(|&c| {
-            !c.is_control()
-                && !is_hidden_format_character(c)
-                && !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')
-        })
+    let cleaned: String = visible_characters(last)
+        .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
         .collect();
     let trimmed = cleaned.trim().trim_matches('.').trim();
     // Keep the extension (and its case) when there is one.
@@ -683,6 +706,14 @@ mod tests {
             sanitize_file_name("\u{FEFF}a\u{200B}b\u{200E}\u{2066}c\u{2069}.pdf"),
             "abc.pdf"
         );
+        // Line breaks of any kind, and fillers that only look like space.
+        assert_eq!(
+            sanitize_file_name(
+                "a\u{2028}b\u{2029}c\u{115F}\u{1160}d\u{3164}e\u{FFA0}f\u{2800}.pdf"
+            ),
+            "abcdef.pdf"
+        );
+        assert_eq!(sanitize_file_name("\u{3164}\u{2800}"), "Document.pdf");
         // Joiners are part of scripts and emoji.
         let family = "👨\u{200D}👩\u{200D}👧.pdf";
         assert_eq!(sanitize_file_name(family), family);
