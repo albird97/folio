@@ -1,13 +1,24 @@
-//! "Save a copy": writing PDF data from the webview to a file the user chose
-//! in the native save dialog. The webview never names a path; it proposes a
-//! file name and gets the chosen file's name back.
+//! Saving: "Save As" and "Save a Copy" write PDF data from the webview to a
+//! file the user chose in the native save dialog; "Save" writes it back to a
+//! file the user granted before (by token). The webview never names a path;
+//! it proposes a file name and gets the chosen file's name back.
 
 use crate::files::MAX_FILE_BYTES;
-use std::io::Write;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::io::{Read, Write};
 use std::path::Path;
 
 /// Header carrying the proposed file name, percent-encoded (headers are ASCII).
 pub const NAME_HEADER: &str = "x-folio-name";
+/// `1` asks `save_pdf_as` to keep write access to the chosen file (Save As).
+pub const KEEP_ACCESS_HEADER: &str = "x-folio-keep-access";
+/// The grant token of the file `write_granted_file` overwrites.
+pub const TOKEN_HEADER: &str = "x-folio-token";
+/// SHA-256 (hex) of what Folio last read from or wrote to that file.
+pub const EXPECTED_SHA256_HEADER: &str = "x-folio-expected-sha256";
+/// `1` writes even though the file changed on disk (the user confirmed).
+pub const OVERWRITE_HEADER: &str = "x-folio-overwrite";
 const FALLBACK_NAME: &str = "Document";
 const MAX_NAME_CHARS: usize = 200;
 
@@ -59,14 +70,21 @@ pub fn check_pdf(bytes: &[u8]) -> Result<(), SaveError> {
 /// The name to propose in the dialog: the last component of the decoded
 /// header, without characters file systems reject, ending in `.pdf`.
 pub fn suggested_file_name(header: Option<&str>) -> String {
-    let decoded = header
-        .map(|value| {
-            percent_encoding::percent_decode_str(value)
-                .decode_utf8_lossy()
-                .into_owned()
-        })
-        .unwrap_or_default();
-    let last = decoded.rsplit(['/', '\\']).next().unwrap_or_default();
+    let decoded = header.map(decode_header).unwrap_or_default();
+    sanitize_file_name(&decoded)
+}
+
+/// Decodes a percent-encoded header value (headers are ASCII).
+pub fn decode_header(value: &str) -> String {
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8_lossy()
+        .into_owned()
+}
+
+/// A plain file name for `name`: its last path component, without characters
+/// file systems reject, at most 200 characters before the `.pdf` it ends in.
+pub fn sanitize_file_name(name: &str) -> String {
+    let last = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let cleaned: String = last
         .chars()
         .filter(|c| !c.is_control() && !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
@@ -126,6 +144,109 @@ pub fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), SaveError> {
         return Err(SaveError::WriteFailed);
     }
     Ok(())
+}
+
+/// Whether `value` is a SHA-256 digest in hex.
+pub fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+pub fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    to_hex(&Sha256::digest(bytes))
+}
+
+/// Hashes a file without loading it into memory.
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0; 256 * 1024];
+    loop {
+        let read = match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        hasher.update(&buffer[..read]);
+    }
+    Ok(to_hex(&hasher.finalize()))
+}
+
+pub const MISSING_MESSAGE: &str = "The file could not be found. It may have been moved, renamed or deleted. Use Save As to save the document.";
+pub const READ_ONLY_MESSAGE: &str =
+    "The file is read-only. Use Save As to save the document under another name.";
+pub const UNWRITABLE_MESSAGE: &str =
+    "Folio could not write to the file. Use Save As to save the document somewhere else.";
+pub const SPOOLED_MESSAGE: &str =
+    "This document has no file on this computer yet. Use Save As to choose where to save it.";
+
+/// The outcome of writing back to a granted file (`WriteFileResult` in the
+/// frontend). Messages are shown to the user and never contain paths.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+pub enum WriteOutcome {
+    Saved,
+    /// The file no longer has the expected content; nothing was written.
+    ChangedOnDisk,
+    /// The file cannot be written (moved, deleted, read-only).
+    Unavailable {
+        message: String,
+    },
+}
+
+impl WriteOutcome {
+    pub fn unavailable(message: &str) -> Self {
+        WriteOutcome::Unavailable {
+            message: message.to_owned(),
+        }
+    }
+}
+
+/// Save: replaces the file at `path` with `bytes`, unless it no longer has
+/// the content Folio expects (`expected_sha256`, hex) and the user did not
+/// confirm overwriting it. Writes go through [`write_atomically`].
+pub fn write_back(
+    path: &Path,
+    bytes: &[u8],
+    expected_sha256: Option<&str>,
+    overwrite: bool,
+) -> WriteOutcome {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return WriteOutcome::unavailable(MISSING_MESSAGE),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return WriteOutcome::unavailable(MISSING_MESSAGE)
+        }
+        Err(_) => return WriteOutcome::unavailable(UNWRITABLE_MESSAGE),
+    }
+    if !overwrite {
+        let Some(expected) = expected_sha256 else {
+            return WriteOutcome::ChangedOnDisk;
+        };
+        match sha256_file(path) {
+            Ok(actual) if actual.eq_ignore_ascii_case(expected) => {}
+            Ok(_) => return WriteOutcome::ChangedOnDisk,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return WriteOutcome::unavailable(MISSING_MESSAGE)
+            }
+            Err(_) => return WriteOutcome::unavailable(UNWRITABLE_MESSAGE),
+        }
+    }
+    match write_atomically(path, bytes) {
+        Ok(()) => WriteOutcome::Saved,
+        Err(SaveError::ReadOnly) => WriteOutcome::unavailable(READ_ONLY_MESSAGE),
+        Err(_) => WriteOutcome::unavailable(UNWRITABLE_MESSAGE),
+    }
 }
 
 #[cfg(test)]
@@ -224,6 +345,116 @@ mod tests {
             Err(SaveError::ReadOnly)
         );
         assert_eq!(std::fs::read(&target).unwrap(), before);
+    }
+
+    #[test]
+    fn sanitizes_names_without_decoding_them() {
+        assert_eq!(sanitize_file_name("100%25 done"), "100%25 done.pdf");
+        assert_eq!(sanitize_file_name("../../etc/passwd"), "passwd.pdf");
+        assert_eq!(sanitize_file_name("a\u{0}b|c.pdf"), "abc.pdf");
+        assert_eq!(sanitize_file_name(""), "Document.pdf");
+    }
+
+    #[test]
+    fn hashes_files_like_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.pdf");
+        std::fs::write(&path, PDF).unwrap();
+        assert_eq!(sha256_file(&path).unwrap(), sha256_hex(PDF));
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert!(is_sha256_hex(&sha256_hex(b"abc")));
+        assert!(is_sha256_hex(&sha256_hex(b"abc").to_uppercase()));
+        assert!(!is_sha256_hex("abc"));
+        assert!(!is_sha256_hex(&"g".repeat(64)));
+    }
+
+    #[test]
+    fn writes_back_when_the_file_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.pdf");
+        std::fs::write(&path, b"%PDF-1.4 old").unwrap();
+        let expected = sha256_hex(b"%PDF-1.4 old").to_uppercase();
+        assert_eq!(
+            write_back(&path, PDF, Some(&expected), false),
+            WriteOutcome::Saved
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), PDF);
+    }
+
+    #[test]
+    fn refuses_to_write_back_over_changes_made_elsewhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.pdf");
+        std::fs::write(&path, b"%PDF-1.4 old").unwrap();
+        let stale = sha256_hex(b"%PDF-1.4 old");
+        std::fs::write(&path, b"%PDF-1.4 edited elsewhere").unwrap();
+        assert_eq!(
+            write_back(&path, PDF, Some(&stale), false),
+            WriteOutcome::ChangedOnDisk
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"%PDF-1.4 edited elsewhere");
+        assert_eq!(
+            write_back(&path, PDF, None, false),
+            WriteOutcome::ChangedOnDisk
+        );
+        // The user confirmed overwriting the other changes.
+        assert_eq!(
+            write_back(&path, PDF, Some(&stale), true),
+            WriteOutcome::Saved
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), PDF);
+    }
+
+    #[test]
+    fn reports_files_that_cannot_be_written_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("moved.pdf");
+        assert_eq!(
+            write_back(&missing, PDF, Some(&sha256_hex(b"")), false),
+            WriteOutcome::unavailable(MISSING_MESSAGE)
+        );
+        assert!(!missing.exists());
+        let folder = dir.path().join("folder.pdf");
+        std::fs::create_dir(&folder).unwrap();
+        assert_eq!(
+            write_back(&folder, PDF, None, true),
+            WriteOutcome::unavailable(MISSING_MESSAGE)
+        );
+
+        let locked = dir.path().join("locked.pdf");
+        std::fs::write(&locked, b"%PDF-1.4 locked").unwrap();
+        let mut permissions = std::fs::metadata(&locked).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&locked, permissions).unwrap();
+        let expected = sha256_hex(b"%PDF-1.4 locked");
+        assert_eq!(
+            write_back(&locked, PDF, Some(&expected), false),
+            WriteOutcome::unavailable(READ_ONLY_MESSAGE)
+        );
+        assert_eq!(std::fs::read(&locked).unwrap(), b"%PDF-1.4 locked");
+        for message in [MISSING_MESSAGE, READ_ONLY_MESSAGE, UNWRITABLE_MESSAGE] {
+            assert!(!message.contains(&*dir.path().to_string_lossy()));
+        }
+    }
+
+    #[test]
+    fn write_outcomes_match_the_frontend_contract() {
+        let json = |outcome: WriteOutcome| serde_json::to_value(outcome).unwrap();
+        assert_eq!(
+            json(WriteOutcome::Saved),
+            serde_json::json!({ "status": "saved" })
+        );
+        assert_eq!(
+            json(WriteOutcome::ChangedOnDisk),
+            serde_json::json!({ "status": "changed-on-disk" })
+        );
+        assert_eq!(
+            json(WriteOutcome::unavailable("Gone.")),
+            serde_json::json!({ "status": "unavailable", "message": "Gone." })
+        );
     }
 
     #[test]
