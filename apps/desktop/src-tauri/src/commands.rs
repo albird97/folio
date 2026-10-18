@@ -1,4 +1,7 @@
+use crate::close_guard::CloseGuard;
 use crate::files::{self, FileError, FileGrants, LaunchQueue, OpenedFiles, MAX_FILE_BYTES};
+use crate::incoming::{self, IncomingError, TransferQueue, TransferRequest};
+use crate::native_messaging::{self, RegistrationError, Status};
 use crate::recent::RecentFile;
 use crate::recovery::{self, RecoveryError, RecoveryRecord, RecoveryStore};
 use crate::save::{self, SaveError, WriteOutcome};
@@ -40,7 +43,13 @@ macro_rules! command_error_from {
     };
 }
 
-command_error_from!(FileError, SaveError, RecoveryError);
+command_error_from!(
+    FileError,
+    SaveError,
+    RecoveryError,
+    IncomingError,
+    RegistrationError
+);
 
 #[derive(Debug, Serialize)]
 pub struct SavedFile {
@@ -377,4 +386,108 @@ pub async fn recent_clear(app: AppHandle, storage: State<'_, Storage>) -> Result
         crate::recent_changed(&app);
     }
     Ok(())
+}
+
+/// The UI has unsaved work (`true`) or not. While it has, closing the window
+/// or quitting asks it first (`folio://close-requested`).
+#[tauri::command]
+pub fn set_close_guard(guard: State<'_, CloseGuard>, enabled: bool) {
+    guard.set_enabled(enabled);
+}
+
+/// Closes the window or quits, as requested, after the UI asked the user.
+/// Does nothing (and returns `false`) when nothing was requested.
+#[tauri::command]
+pub fn confirm_close(app: AppHandle, guard: State<'_, CloseGuard>) -> bool {
+    match guard.confirm() {
+        Some(intent) => {
+            crate::carry_out_close(&app, intent);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Hands over transfer requests that arrived before the UI was listening and
+/// switches to `folio://transfer-request` events.
+#[tauri::command]
+pub fn take_pending_transfers(queue: State<'_, TransferQueue>) -> Vec<TransferRequest> {
+    queue.drain()
+}
+
+/// Opens (accept) or deletes (decline) a document the Chrome extension sent.
+/// Only transfers the user was asked about can be answered, once.
+#[tauri::command]
+pub async fn answer_transfer(
+    grants: State<'_, FileGrants>,
+    queue: State<'_, TransferQueue>,
+    storage: State<'_, Storage>,
+    id: String,
+    accept: bool,
+) -> Result<OpenedFiles, CommandError> {
+    let base = storage
+        .incoming
+        .as_ref()
+        .ok_or(IncomingError::Unavailable)?;
+    let dir = incoming::entry_dir(base, &id).ok_or(IncomingError::UnknownTransfer)?;
+    if !queue.take(&id) {
+        return Err(IncomingError::UnknownTransfer.into());
+    }
+    block_in_place(|| {
+        if !accept {
+            incoming::remove(&dir);
+            return Ok(OpenedFiles::default());
+        }
+        let Some(meta) = incoming::read_meta(&dir) else {
+            incoming::remove(&dir);
+            return Err(IncomingError::UnknownTransfer.into());
+        };
+        let mut opened = OpenedFiles::default();
+        match grants.grant_spooled(&dir.join(incoming::DOCUMENT_FILE), &meta.name, &dir) {
+            Ok(file) => {
+                incoming::mark_accepted(&dir);
+                opened.files.push(file);
+            }
+            Err(_) => {
+                incoming::remove(&dir);
+                opened.unavailable.push(meta.name);
+            }
+        }
+        Ok(opened)
+    })
+}
+
+fn registration() -> Result<(native_messaging::Locations, PathBuf), CommandError> {
+    let locations = native_messaging::locations().ok_or(RegistrationError::Unavailable)?;
+    let exe = std::env::current_exe().map_err(|_| RegistrationError::Unavailable)?;
+    Ok((locations, exe))
+}
+
+/// Whether Chrome can reach this copy of Folio, and for which extensions.
+#[tauri::command]
+pub async fn native_messaging_status() -> Result<Status, CommandError> {
+    let (locations, exe) = registration()?;
+    Ok(block_in_place(|| {
+        native_messaging::status(&locations, &exe)
+    }))
+}
+
+/// Registers Folio as the native messaging host for the given extension ids
+/// (32 letters from a to p each) and returns the new status.
+#[tauri::command]
+pub async fn register_native_messaging(extension_ids: Vec<String>) -> Result<Status, CommandError> {
+    let (locations, exe) = registration()?;
+    block_in_place(|| {
+        native_messaging::register(&locations, &exe, &extension_ids)?;
+        Ok(native_messaging::status(&locations, &exe))
+    })
+}
+
+#[tauri::command]
+pub async fn unregister_native_messaging() -> Result<Status, CommandError> {
+    let (locations, exe) = registration()?;
+    block_in_place(|| {
+        native_messaging::unregister(&locations)?;
+        Ok(native_messaging::status(&locations, &exe))
+    })
 }

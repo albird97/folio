@@ -24,6 +24,13 @@ fn main() {
             "recent_open",
             "recent_remove",
             "recent_clear",
+            "set_close_guard",
+            "confirm_close",
+            "take_pending_transfers",
+            "answer_transfer",
+            "native_messaging_status",
+            "register_native_messaging",
+            "unregister_native_messaging",
         ]),
     ))
     .expect("failed to run tauri-build");
