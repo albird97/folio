@@ -30,6 +30,7 @@
     "lint:rust": "cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
     "capabilities:generate": "tsx scripts/generate-capabilities.ts",
     "fixtures:generate": "tsx scripts/generate-fixtures.ts",
+    "font-metrics:generate": "tsx scripts/generate-font-metrics.ts",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "test:e2e:desktop": "node tests/desktop/tauri-driver.e2e.mjs"
   },

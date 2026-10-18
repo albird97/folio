@@ -8,3 +8,4 @@ apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/icons/
 tests/fixtures/
 PLATFORM_CAPABILITIES.md
+.claude/

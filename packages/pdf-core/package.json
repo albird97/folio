@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts",
+    "./export": "./src/export/index.ts",
     "./testing": "./src/testing.ts",
     "./vite-plugin": "./vite/plugin.ts"
   },
@@ -15,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@cantoo/pdf-lib": "2.11.1",
     "@folio/document-model": "workspace:*",
     "pdfjs-dist": "6.4.299"
   },

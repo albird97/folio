@@ -212,6 +212,9 @@ importers:
 
   packages/pdf-core:
     dependencies:
+      '@cantoo/pdf-lib':
+        specifier: 2.11.1
+        version: 2.11.1(html-entities@2.6.0)
       '@folio/document-model':
         specifier: workspace:*
         version: link:../document-model

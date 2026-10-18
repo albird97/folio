@@ -24,6 +24,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install qpdf (checks the structure of exported PDFs)
+        run: sudo apt-get update && sudo apt-get install -y qpdf
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck

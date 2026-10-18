@@ -30,6 +30,9 @@ blob-report/
 *.p8
 *.key
 
+# Agent worktrees
+.claude/worktrees/
+
 # OS / editor
 .DS_Store
 Thumbs.db
