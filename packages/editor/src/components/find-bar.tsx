@@ -80,9 +80,10 @@ export function FindBar({ doc, onClose }: { doc: WorkspaceDocument; onClose(): v
     <div
       role="search"
       aria-label="Find in document"
-      className="flex h-10 shrink-0 items-center gap-1 border-b border-line bg-surface px-2"
+      className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-line bg-surface px-2 py-1.5"
     >
-      <label className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md bg-raised px-2 shadow-[inset_0_0_0_1px_var(--folio-border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--folio-focus)] sm:max-w-80">
+      {/* In a narrow window the buttons wrap below the field instead of squeezing it. */}
+      <label className="flex h-7 min-w-44 flex-1 items-center gap-2 rounded-md bg-raised px-2 shadow-[inset_0_0_0_1px_var(--folio-border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--folio-focus)] sm:max-w-80">
         <Search
           size={ICON.sm}
           strokeWidth={ICON.stroke}
@@ -116,56 +117,58 @@ export function FindBar({ doc, onClose }: { doc: WorkspaceDocument; onClose(): v
       <span role="status" className="sr-only">
         {announcement}
       </span>
-      <IconButton
-        label="Previous result"
-        size="icon-sm"
-        icon={<ChevronUp size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
-        disabled={count === 0}
-        onClick={() => stepSearch(doc.key, -1)}
-        shortcut={{ keys: shortcuts['find-previous'][0]!, platform: shortcutPlatform }}
-      />
-      <IconButton
-        label="Next result"
-        size="icon-sm"
-        icon={<ChevronDown size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
-        disabled={count === 0}
-        onClick={() => stepSearch(doc.key, 1)}
-        shortcut={{ keys: shortcuts['find-next'][0]!, platform: shortcutPlatform }}
-      />
-      <span aria-hidden className="mx-1 h-5 w-px bg-line" />
-      <Toggle
-        label="Match case"
-        pressed={search.options.matchCase}
-        onToggle={() =>
-          setSearch(doc.key, { query: text, options: { matchCase: !search.options.matchCase } })
-        }
-      >
-        <CaseSensitive size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
-      </Toggle>
-      <Toggle
-        label="Whole words"
-        pressed={search.options.wholeWords}
-        onToggle={() =>
-          setSearch(doc.key, { query: text, options: { wholeWords: !search.options.wholeWords } })
-        }
-      >
-        <WholeWord size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
-      </Toggle>
-      <IconButton
-        label="Show all results"
-        size="icon-sm"
-        icon={<List size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
-        onClick={() => {
-          commit(text);
-          showSidebar('results');
-        }}
-      />
-      <IconButton
-        label="Close find bar"
-        size="icon-sm"
-        icon={<X size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
-        onClick={onClose}
-      />
+      <div className="flex shrink-0 items-center gap-1">
+        <IconButton
+          label="Previous result"
+          size="icon-sm"
+          icon={<ChevronUp size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+          disabled={count === 0}
+          onClick={() => stepSearch(doc.key, -1)}
+          shortcut={{ keys: shortcuts['find-previous'][0]!, platform: shortcutPlatform }}
+        />
+        <IconButton
+          label="Next result"
+          size="icon-sm"
+          icon={<ChevronDown size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+          disabled={count === 0}
+          onClick={() => stepSearch(doc.key, 1)}
+          shortcut={{ keys: shortcuts['find-next'][0]!, platform: shortcutPlatform }}
+        />
+        <span aria-hidden className="mx-1 h-5 w-px bg-line" />
+        <Toggle
+          label="Match case"
+          pressed={search.options.matchCase}
+          onToggle={() =>
+            setSearch(doc.key, { query: text, options: { matchCase: !search.options.matchCase } })
+          }
+        >
+          <CaseSensitive size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
+        </Toggle>
+        <Toggle
+          label="Whole words"
+          pressed={search.options.wholeWords}
+          onToggle={() =>
+            setSearch(doc.key, { query: text, options: { wholeWords: !search.options.wholeWords } })
+          }
+        >
+          <WholeWord size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
+        </Toggle>
+        <IconButton
+          label="Show all results"
+          size="icon-sm"
+          icon={<List size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+          onClick={() => {
+            commit(text);
+            showSidebar('results');
+          }}
+        />
+        <IconButton
+          label="Close find bar"
+          size="icon-sm"
+          icon={<X size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+          onClick={onClose}
+        />
+      </div>
     </div>
   );
 }
