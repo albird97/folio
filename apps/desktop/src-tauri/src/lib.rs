@@ -3,6 +3,8 @@ mod commands;
 pub mod files;
 pub mod incoming;
 pub mod menu;
+pub mod native_host;
+pub mod native_messaging;
 pub mod paths;
 pub mod recent;
 pub mod recovery;
