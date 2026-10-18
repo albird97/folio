@@ -1,13 +1,12 @@
 import { isPdfError } from '@folio/pdf-core';
 import type { IncomingFile, TransferRequest } from '@folio/platform-adapters';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as tauriModule from './tauri';
 import {
   NativeCommandError,
   createTauriPlatformAdapter,
   nativeMessagingStatus,
-  registerNativeMessaging,
   toWellFormed,
-  unregisterNativeMessaging,
 } from './tauri';
 
 type Handler = (event: { payload: unknown }) => void;
@@ -508,38 +507,34 @@ describe('desktop platform adapter', () => {
     });
   });
 
-  describe('native messaging registration', () => {
-    it('reports, registers and unregisters the host', async () => {
+  describe('native messaging', () => {
+    it('reports the status, which the page cannot change', async () => {
       tauri.responses.set('native_messaging_status', { registered: false, extensionIds: [] });
       expect(await nativeMessagingStatus()).toEqual({ registered: false, extensionIds: [] });
-
-      const id = 'abcdefghijklmnopabcdefghijklmnop';
-      tauri.responses.set('register_native_messaging', { registered: true, extensionIds: [id] });
-      expect(await registerNativeMessaging([id])).toEqual({ registered: true, extensionIds: [id] });
-      expect(lastCall('register_native_messaging').args).toEqual({ extensionIds: [id] });
-      // The official extension alone.
-      await registerNativeMessaging();
-      expect(lastCall('register_native_messaging').args).toEqual({ extensionIds: [] });
-      tauri.responses.set(
-        'register_native_messaging',
-        rejectWith('cancelled', 'Chrome integration was not changed.'),
-      );
-      await expect(registerNativeMessaging()).rejects.toMatchObject({ code: 'cancelled' });
-
-      tauri.responses.set('unregister_native_messaging', { registered: false, extensionIds: [] });
-      expect((await unregisterNativeMessaging()).registered).toBe(false);
+      const official = 'ghfckfnleaidabfhaplbnfknipajedan';
+      tauri.responses.set('native_messaging_status', {
+        registered: true,
+        extensionIds: [official],
+      });
+      expect(await nativeMessagingStatus()).toEqual({ registered: true, extensionIds: [official] });
+      // Connecting happens in Folio's native dialogs (File > Connect to Chrome).
+      expect(Object.keys(tauriModule).filter((name) => /register/i.test(name))).toEqual([]);
+      expect(tauri.calls.map((call) => call.command)).toEqual([
+        'native_messaging_status',
+        'native_messaging_status',
+      ]);
     });
 
-    it('explains invalid extension ids', async () => {
+    it('explains why the status is unavailable', async () => {
       tauri.responses.set(
-        'register_native_messaging',
-        rejectWith('invalid-extension-id', 'Enter the ID of the Folio extension.'),
+        'native_messaging_status',
+        rejectWith('unavailable', 'Chrome integration is not available on this computer.'),
       );
-      const error = await registerNativeMessaging(['nope']).catch((caught: unknown) => caught);
+      const error = await nativeMessagingStatus().catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(NativeCommandError);
       expect(error).toMatchObject({
-        code: 'invalid-extension-id',
-        message: 'Enter the ID of the Folio extension.',
+        code: 'unavailable',
+        message: 'Chrome integration is not available on this computer.',
       });
     });
   });

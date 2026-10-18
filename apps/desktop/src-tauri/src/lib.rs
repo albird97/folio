@@ -1,5 +1,6 @@
 pub mod close_guard;
 mod commands;
+mod connect;
 pub mod files;
 pub mod incoming;
 pub mod menu;
@@ -64,7 +65,7 @@ impl Storage {
 /// The File ▸ Open Recent submenu, refilled when the recent files change.
 struct RecentMenu(Mutex<Option<Submenu<Wry>>>);
 
-fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
+pub(crate) fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(MAIN_WINDOW)
 }
 
@@ -246,6 +247,8 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         if app.state::<Storage>().recent.clear() {
             recent_changed(app);
         }
+    } else if id == menu::CONNECT_CHROME.0 {
+        connect::start(app);
     } else if let Some(recent) = menu::recent_file_for(id) {
         let opened = open_recent(app, recent);
         deliver(app, opened);
@@ -370,8 +373,6 @@ pub fn run() {
             commands::take_pending_transfers,
             commands::answer_transfer,
             commands::native_messaging_status,
-            commands::register_native_messaging,
-            commands::unregister_native_messaging,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Folio")

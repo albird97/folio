@@ -2,8 +2,8 @@
 //! (`io.github.albird97.folio`). It is the desktop binary itself: Chrome
 //! starts it with the caller's origin (`chrome-extension://<id>/`) as the
 //! first argument, and `main` then runs [`run_stdio`] instead of the app.
-//! The host only answers the official Folio extension and the extensions
-//! the user allowed in Folio (see `native_messaging`); anyone else gets
+//! The host only answers the official Folio extension
+//! ([`native_messaging::OFFICIAL_EXTENSION_IDS`]); anyone else gets
 //! `origin-not-allowed` and the host exits.
 //!
 //! Messages are UTF-8 JSON objects preceded by their length as a 32-bit
@@ -62,19 +62,13 @@ pub fn is_host_invocation(first_arg: Option<&OsStr>) -> bool {
         .is_some_and(|arg| arg.starts_with(ORIGIN_PREFIX))
 }
 
-/// Whether `origin` is exactly `chrome-extension://<id>/` for an extension
-/// Folio answers: the official one or one the user allowed (from Folio's own
-/// record in `data_dir`).
-pub fn origin_allowed(origin: Option<&OsStr>, data_dir: Option<&Path>) -> bool {
-    let Some(id) = origin
+/// Whether `origin` is exactly `chrome-extension://<id>/` for the official
+/// Folio extension.
+pub fn origin_allowed(origin: Option<&OsStr>) -> bool {
+    origin
         .and_then(OsStr::to_str)
         .and_then(native_messaging::extension_id_from_origin)
-    else {
-        return false;
-    };
-    native_messaging::allowed_extension_ids(data_dir)
-        .iter()
-        .any(|allowed| allowed == id)
+        .is_some_and(native_messaging::is_official)
 }
 
 #[derive(Debug)]
@@ -616,12 +610,12 @@ pub fn launch_app(dir: &Path, id: &str) -> io::Result<()> {
 /// Host mode: serves Chrome on stdin/stdout. `origin` is the first argument
 /// Chrome passed. Returns the exit code.
 pub fn run_stdio(origin: Option<&OsStr>) -> i32 {
-    let data_dir = paths::app_data_dir();
     let mut stdout = io::stdout().lock();
-    if !origin_allowed(origin, data_dir.as_deref()) {
+    if !origin_allowed(origin) {
         let _ = write_message(&mut stdout, &error_reply(&ORIGIN_NOT_ALLOWED, None));
         return 1;
     }
+    let data_dir = paths::app_data_dir();
     let incoming = data_dir.as_deref().map(|dir| {
         let _ = paths::prepare_data_dir(dir);
         dir.join(incoming::INCOMING_DIR)
@@ -745,35 +739,19 @@ mod tests {
     }
 
     #[test]
-    fn answers_the_official_extension_and_those_the_user_allowed() {
-        let dir = tempfile::tempdir().unwrap();
+    fn answers_the_official_extension_only() {
         let official = format!("chrome-extension://{OFFICIAL}/");
-        assert!(origin_allowed(Some(OsStr::new(&official)), None));
-        assert!(origin_allowed(
-            Some(OsStr::new(&official)),
-            Some(dir.path())
-        ));
-        let other = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
-        assert!(!origin_allowed(Some(OsStr::new(other)), Some(dir.path())));
-        // Folio's own record of the extensions the user allowed.
-        std::fs::write(
-            dir.path().join("native-messaging.json"),
-            r#"{"extensionIds":["abcdefghijklmnopabcdefghijklmnop"]}"#,
-        )
-        .unwrap();
-        assert!(origin_allowed(Some(OsStr::new(other)), Some(dir.path())));
+        assert!(origin_allowed(Some(OsStr::new(&official))));
         for origin in [
+            "chrome-extension://abcdefghijklmnopabcdefghijklmnop/".to_owned(),
             format!("chrome-extension://{OFFICIAL}"),
             format!("chrome-extension://{OFFICIAL}/extra"),
             format!("chrome-extension://{}/", OFFICIAL.to_uppercase()),
             "chrome-extension://".to_owned(),
         ] {
-            assert!(
-                !origin_allowed(Some(OsStr::new(&origin)), Some(dir.path())),
-                "{origin}"
-            );
+            assert!(!origin_allowed(Some(OsStr::new(&origin))), "{origin}");
         }
-        assert!(!origin_allowed(None, Some(dir.path())));
+        assert!(!origin_allowed(None));
     }
 
     #[test]

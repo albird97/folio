@@ -59,6 +59,7 @@ interface SavedFile {
 export interface NativeMessagingStatus {
   /** Chrome would start this copy of Folio for the extensions below. */
   registered: boolean;
+  /** The official Folio extension, when registered. */
   extensionIds: string[];
 }
 
@@ -290,26 +291,13 @@ function createTauriRecoveryStore(): RecoveryStore {
   };
 }
 
-/** Whether Chrome can reach this copy of Folio (desktop settings). */
+/**
+ * Whether Chrome can reach this copy of Folio. Connecting and disconnecting
+ * happen in Folio's native File ▸ Connect to Chrome… dialogs only; the page
+ * cannot change the registration.
+ */
 export function nativeMessagingStatus(): Promise<NativeMessagingStatus> {
   return call<NativeMessagingStatus>('native_messaging_status');
-}
-
-/**
- * Registers Folio as the native messaging host for the official Folio
- * extension and, optionally, other extensions (ids are 32 letters from a to
- * p), then returns the new status. Folio first shows a native confirmation
- * dialog listing every extension; when the user declines, this rejects with
- * a `NativeCommandError` whose code is `cancelled` and nothing changes.
- */
-export function registerNativeMessaging(
-  extensionIds: string[] = [],
-): Promise<NativeMessagingStatus> {
-  return call<NativeMessagingStatus>('register_native_messaging', { extensionIds });
-}
-
-export function unregisterNativeMessaging(): Promise<NativeMessagingStatus> {
-  return call<NativeMessagingStatus>('unregister_native_messaging');
 }
 
 export function isTauri(): boolean {

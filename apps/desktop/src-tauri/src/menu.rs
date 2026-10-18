@@ -1,6 +1,7 @@
 //! Native application menus. Custom items emit `folio://menu` with a
 //! command name the frontend understands; nothing else is forwarded. Closing
-//! the window, quitting and the Open Recent submenu are handled natively.
+//! the window, quitting, the Open Recent submenu and Connect to Chrome are
+//! handled natively.
 //!
 //! macOS: Folio, File, Edit, View, Pages and Window menus. Windows and Linux:
 //! File, Edit, View, Pages and Help menus.
@@ -77,6 +78,10 @@ pub const QUIT: MenuEntry = ("quit", "Quit Folio", Some("CmdOrCtrl+Q"));
 pub const QUIT: MenuEntry = ("quit", "Exit", Some("CmdOrCtrl+Q"));
 #[cfg(not(any(target_os = "macos", windows)))]
 pub const QUIT: MenuEntry = ("quit", "Quit", Some("CmdOrCtrl+Q"));
+
+/// File > Connect to Chrome…, handled entirely in Rust (see `connect`): the
+/// webview can neither start nor answer it.
+pub const CONNECT_CHROME: MenuEntry = ("connect-chrome", "Connect to Chrome…", None);
 
 /// File > Open Recent, filled from the recent files.
 pub const OPEN_RECENT: &str = "open-recent";
@@ -202,6 +207,8 @@ pub fn build<R: Runtime>(
         .separator()
         .item(&item(app, "print")?)
         .separator()
+        .item(&entry_item(app, &CONNECT_CHROME)?)
+        .separator()
         .item(&item(app, "close-tab")?);
     #[cfg(not(target_os = "macos"))]
     let file = file.separator().item(&entry_item(app, &QUIT)?);
@@ -296,7 +303,7 @@ mod tests {
     use super::*;
 
     /// Items handled natively rather than forwarded.
-    const NATIVE: [MenuEntry; 3] = [CLOSE_WINDOW, QUIT, CLEAR_RECENT];
+    const NATIVE: [MenuEntry; 4] = [CLOSE_WINDOW, QUIT, CLEAR_RECENT, CONNECT_CHROME];
 
     #[test]
     fn only_declared_commands_are_forwarded() {
@@ -324,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn closing_quitting_and_recent_files_are_handled_natively() {
+    fn closing_quitting_recent_files_and_chrome_are_handled_natively() {
         for (id, _, _) in NATIVE {
             assert_eq!(command_for(id), None);
             assert_eq!(recent_file_for(id), None);
@@ -362,6 +369,20 @@ mod tests {
             serde_json::from_str(include_str!("../../src/platform/menu-commands.json")).unwrap();
         let declared: Vec<&str> = MENU_COMMANDS.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(accepted, declared);
+        // Native items, Connect to Chrome among them, never reach the webview.
+        for (id, _, _) in NATIVE {
+            assert!(!accepted.iter().any(|command| command == id), "{id}");
+        }
+        assert!(!accepted.iter().any(|command| command.contains("chrome")));
+    }
+
+    #[test]
+    fn connect_to_chrome_is_in_the_file_menu_everywhere() {
+        let source = include_str!("menu.rs");
+        let file_menu = &source[source.find("SubmenuBuilder::new(app, \"File\")").unwrap()..];
+        let file_menu = &file_menu[..file_menu.find(".build()?").unwrap()];
+        assert!(file_menu.contains("entry_item(app, &CONNECT_CHROME)?"));
+        assert_eq!(CONNECT_CHROME.1, "Connect to Chrome…");
     }
 
     #[test]

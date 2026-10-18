@@ -608,38 +608,28 @@ try {
     );
   });
 
-  // Last: it leaves Folio's native confirmation dialog open, which WebDriver
-  // cannot answer.
-  await test('registering with Chrome waits for the native confirmation', async () => {
-    const chrome = join(configDir, 'google-chrome');
-    const manifest = join(chrome, 'NativeMessagingHosts', 'io.github.albird97.folio.json');
-    const record = join(dataDir, 'native-messaging.json');
+  await test('only Folio itself can connect to Chrome, never the page', async () => {
     assert.deepEqual(await invoke('native_messaging_status'), {
       registered: false,
       extensionIds: [],
     });
-    // Refused before anyone is asked.
-    const invalid = await invoke('register_native_messaging', { extensionIds: ['../evil'] });
-    assert.equal(invalid.rejected?.code, 'invalid-extension-id');
-    const noBrowser = await invoke('register_native_messaging', { extensionIds: [] });
-    assert.equal(noBrowser.rejected?.code, 'browser-not-found');
-    assert.ok(!existsSync(chrome) && !existsSync(join(configDir, 'chromium')));
-
-    // With Chrome installed, Folio asks first and writes nothing meanwhile.
+    // Even with Chrome installed, the page has no way to register Folio.
+    const chrome = join(configDir, 'google-chrome');
     mkdirSync(chrome, { recursive: true });
-    await run(`
-      window.__folioRegistration = 'pending';
-      window.__TAURI_INTERNALS__
-        .invoke('register_native_messaging', { extensionIds: [${JSON.stringify(OTHER_EXTENSION_ID)}] })
-        .then(
-          () => { window.__folioRegistration = 'registered'; },
-          (error) => { window.__folioRegistration = error?.code ?? 'failed'; },
-        );
-    `);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    assert.equal(await run('return window.__folioRegistration'), 'pending');
-    assert.ok(!existsSync(manifest), 'no manifest before the user agrees');
-    assert.ok(!existsSync(record), 'no extension allowed before the user agrees');
+    for (const [command, args] of [
+      ['register_native_messaging', { extensionIds: [OTHER_EXTENSION_ID] }],
+      ['register_native_messaging', { extensionIds: [] }],
+      ['unregister_native_messaging', {}],
+    ]) {
+      const outcome = await invoke(command, args);
+      assert.ok(outcome?.rejected, `${command} is not available to the page`);
+    }
+    assert.deepEqual(readdirSync(chrome), [], 'no manifest was written');
+    assert.ok(!existsSync(join(dataDir, 'native-messaging.json')));
+    assert.deepEqual(await invoke('native_messaging_status'), {
+      registered: false,
+      extensionIds: [],
+    });
   });
 } catch (error) {
   failed = true;

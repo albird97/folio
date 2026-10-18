@@ -160,6 +160,12 @@ fn deletes_an_unfinished_transfer_when_chrome_disconnects() {
 #[test]
 fn refuses_extensions_folio_does_not_know() {
     let data = tempfile::tempdir().unwrap();
+    // A list of other extensions, as an earlier build kept, allows nothing.
+    std::fs::write(
+        data.path().join("native-messaging.json"),
+        r#"{"extensionIds":["abcdefghijklmnopabcdefghijklmnop"]}"#,
+    )
+    .unwrap();
     for origin in [
         "chrome-extension://abcdefghijklmnopabcdefghijklmnop/",
         "chrome-extension://ghfckfnleaidabfhaplbnfknipajedan",
@@ -174,21 +180,6 @@ fn refuses_extensions_folio_does_not_know() {
         assert!(!host.finish().success(), "{origin}");
     }
     assert!(!data.path().join("incoming").exists());
-}
-
-#[test]
-fn answers_extensions_the_user_allowed_in_folio() {
-    let data = tempfile::tempdir().unwrap();
-    let origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
-    // Folio's own record of the extensions the user confirmed.
-    std::fs::write(
-        data.path().join("native-messaging.json"),
-        r#"{"extensionIds":["abcdefghijklmnopabcdefghijklmnop"]}"#,
-    )
-    .unwrap();
-    let mut host = Host::start_as(origin, data.path(), &[]);
-    assert_eq!(host.ask(json!({ "type": "hello" }))["type"], "hello");
-    assert!(host.finish().success());
 }
 
 #[cfg(unix)]
