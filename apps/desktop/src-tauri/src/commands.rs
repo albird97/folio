@@ -1,10 +1,14 @@
 use crate::files::{self, FileError, FileGrants, LaunchQueue, OpenedFiles, MAX_FILE_BYTES};
-use crate::save::{self, SaveError};
+use crate::recent::RecentFile;
+use crate::recovery::{self, RecoveryError, RecoveryRecord, RecoveryStore};
+use crate::save::{self, SaveError, WriteOutcome};
+use crate::Storage;
 use serde::Serialize;
 use std::path::PathBuf;
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
+use tokio::task::block_in_place;
 
 /// Errors cross the IPC boundary as `{ code, message }`. Messages never
 /// contain paths or document content.
@@ -14,28 +18,36 @@ pub struct CommandError {
     message: String,
 }
 
-impl From<FileError> for CommandError {
-    fn from(error: FileError) -> Self {
+impl CommandError {
+    fn new(code: &'static str, message: &str) -> Self {
         CommandError {
-            code: error.code(),
-            message: error.to_string(),
+            code,
+            message: message.to_owned(),
         }
     }
 }
 
-impl From<SaveError> for CommandError {
-    fn from(error: SaveError) -> Self {
-        CommandError {
-            code: error.code(),
-            message: error.to_string(),
-        }
-    }
+macro_rules! command_error_from {
+    ($($error:ty),*) => {
+        $(impl From<$error> for CommandError {
+            fn from(error: $error) -> Self {
+                CommandError {
+                    code: error.code(),
+                    message: error.to_string(),
+                }
+            }
+        })*
+    };
 }
+
+command_error_from!(FileError, SaveError, RecoveryError);
 
 #[derive(Debug, Serialize)]
 pub struct SavedFile {
     /// File name only, for display. Never the full path.
     name: String,
+    /// A grant for the new file when write access was asked for (Save As).
+    token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,13 +58,31 @@ pub struct AppInfo {
     arch: &'static str,
 }
 
+fn header<'a>(request: &'a Request<'_>, name: &str) -> Option<&'a str> {
+    request
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+}
+
+fn flag(request: &Request<'_>, name: &str) -> bool {
+    header(request, name) == Some("1")
+}
+
+/// Commands with a data body take it raw, never as JSON.
+fn raw_body<'a>(request: &'a Request<'_>) -> Result<&'a [u8], CommandError> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err(SaveError::InvalidRequest.into());
+    };
+    Ok(bytes)
+}
+
 /// Shows the native open dialog. The selection is granted on the Rust side;
 /// the webview only receives tokens and file names.
 #[tauri::command]
 pub async fn pick_pdf_files(
     app: AppHandle,
     window: WebviewWindow,
-    grants: State<'_, FileGrants>,
     multiple: bool,
 ) -> Result<OpenedFiles, CommandError> {
     let (sender, receiver) = tokio::sync::oneshot::channel::<Vec<PathBuf>>();
@@ -85,7 +115,7 @@ pub async fn pick_pdf_files(
     // file can disappear between picking and granting. Such files are reported
     // by name, like drops, instead of failing or silently shrinking the
     // selection.
-    Ok(grants.grant_all(&paths))
+    Ok(block_in_place(|| crate::grant_paths(&app, &paths)))
 }
 
 /// Returns the bytes of a granted file as a binary IPC response.
@@ -102,6 +132,7 @@ pub async fn read_granted_file(
     Ok(Response::new(bytes))
 }
 
+/// Gives up a grant. Documents received from Chrome are deleted with it.
 #[tauri::command]
 pub fn release_file(grants: State<'_, FileGrants>, token: String) -> bool {
     grants.release(&token)
@@ -113,32 +144,34 @@ pub fn take_pending_files(queue: State<'_, LaunchQueue>) -> OpenedFiles {
     queue.drain()
 }
 
-/// "Save a copy": shows the native save dialog and writes the PDF data sent as
-/// the raw request body to the file the user chose. The proposed name comes
-/// in the `x-folio-name` header. Anything that is not PDF data is refused
-/// before a dialog appears. Resolves to `null` when the user cancels; the
-/// webview only ever learns the chosen file's name.
+/// "Save As" and "Save a Copy": shows the native save dialog and writes the
+/// PDF data sent as the raw request body to the file the user chose. The
+/// proposed name comes in the `x-folio-name` header; `x-folio-keep-access: 1`
+/// (Save As) also grants the new file, so later saves can write to it.
+/// Anything that is not PDF data is refused before a dialog appears.
+/// Resolves to `null` when the user cancels; the webview only ever learns
+/// the chosen file's name and token.
 #[tauri::command]
 pub async fn save_pdf_as(
     app: AppHandle,
     window: WebviewWindow,
+    grants: State<'_, FileGrants>,
+    storage: State<'_, Storage>,
     request: Request<'_>,
 ) -> Result<Option<SavedFile>, CommandError> {
-    let InvokeBody::Raw(bytes) = request.body() else {
-        return Err(SaveError::InvalidRequest.into());
-    };
+    let bytes = raw_body(&request)?;
     save::check_pdf(bytes)?;
-    let proposed = save::suggested_file_name(
-        request
-            .headers()
-            .get(save::NAME_HEADER)
-            .and_then(|value| value.to_str().ok()),
-    );
+    let keep_access = flag(&request, save::KEEP_ACCESS_HEADER);
+    let proposed = save::suggested_file_name(header(&request, save::NAME_HEADER));
     let (sender, receiver) = tokio::sync::oneshot::channel::<Option<PathBuf>>();
     app.dialog()
         .file()
         .set_parent(&window)
-        .set_title("Save a Copy")
+        .set_title(if keep_access {
+            "Save As"
+        } else {
+            "Save a Copy"
+        })
         .set_file_name(&proposed)
         .add_filter("PDF document", &["pdf"])
         .save_file(move |path| {
@@ -149,12 +182,68 @@ pub async fn save_pdf_as(
     };
     // Writing borrows the request body, so it happens on this worker thread
     // (without blocking other tasks) instead of copying the data to another.
-    tokio::task::block_in_place(|| save::write_atomically(&target, bytes))?;
+    block_in_place(|| save::write_atomically(&target, bytes))?;
     let name = target
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or(proposed);
-    Ok(Some(SavedFile { name }))
+    let token = if keep_access {
+        grants.grant(&target).ok().map(|granted| granted.token)
+    } else {
+        None
+    };
+    if block_in_place(|| storage.recent.record(&target, &name)) {
+        crate::recent_changed(&app);
+    }
+    Ok(Some(SavedFile { name, token }))
+}
+
+/// "Save": writes the PDF data in the raw request body back to the file a
+/// token grants (`x-folio-token`), unless the file no longer has the content
+/// whose SHA-256 is in `x-folio-expected-sha256`. `x-folio-overwrite: 1`
+/// writes anyway (the user confirmed). Outcomes the user can act on (changed
+/// on disk, moved, read-only) are results, not errors.
+#[tauri::command]
+pub async fn write_granted_file(
+    grants: State<'_, FileGrants>,
+    request: Request<'_>,
+) -> Result<WriteOutcome, CommandError> {
+    let bytes = raw_body(&request)?;
+    let token = header(&request, save::TOKEN_HEADER).ok_or(SaveError::InvalidRequest)?;
+    let overwrite = flag(&request, save::OVERWRITE_HEADER);
+    let expected = header(&request, save::EXPECTED_SHA256_HEADER);
+    if expected.is_some_and(|hash| !save::is_sha256_hex(hash)) || (expected.is_none() && !overwrite)
+    {
+        return Err(SaveError::InvalidRequest.into());
+    }
+    let grant = grants.lookup(token)?;
+    save::check_pdf(bytes)?;
+    if !grant.writable {
+        return Ok(WriteOutcome::unavailable(save::SPOOLED_MESSAGE));
+    }
+    Ok(block_in_place(|| {
+        save::write_back(&grant.path, bytes, expected, overwrite)
+    }))
+}
+
+/// Opens the print dialog for the window's contents. Resolves once the
+/// dialog was shown; on Linux, once it is closed.
+#[tauri::command]
+pub async fn print_window(window: WebviewWindow) -> Result<(), CommandError> {
+    let failed = || CommandError::new("print-failed", "The print dialog could not be opened.");
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let target = window.clone();
+    // On the main thread, outside the IPC handler: Linux runs the dialog in
+    // a nested main loop until it is closed.
+    window
+        .run_on_main_thread(move || {
+            let _ = sender.send(target.print().is_ok());
+        })
+        .map_err(|_| failed())?;
+    match receiver.await {
+        Ok(true) => Ok(()),
+        _ => Err(failed()),
+    }
 }
 
 #[tauri::command]
@@ -164,4 +253,128 @@ pub fn app_info(app: AppHandle) -> AppInfo {
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
     }
+}
+
+fn recovery_store(storage: &Storage) -> Result<&RecoveryStore, CommandError> {
+    storage
+        .recovery
+        .as_ref()
+        .ok_or_else(|| RecoveryError::Unavailable.into())
+}
+
+#[tauri::command]
+pub async fn recovery_list(
+    storage: State<'_, Storage>,
+) -> Result<Vec<RecoveryRecord>, CommandError> {
+    let store = recovery_store(&storage)?;
+    Ok(block_in_place(|| store.list())?)
+}
+
+/// Body: the snapshot (UTF-8 JSON). Headers: `x-folio-recovery-id` and the
+/// percent-encoded `x-folio-recovery-title`.
+#[tauri::command]
+pub async fn recovery_save_snapshot(
+    storage: State<'_, Storage>,
+    request: Request<'_>,
+) -> Result<(), CommandError> {
+    let store = recovery_store(&storage)?;
+    let snapshot = raw_body(&request)?;
+    let id = header(&request, recovery::ID_HEADER).ok_or(RecoveryError::InvalidRequest)?;
+    let title = header(&request, recovery::TITLE_HEADER)
+        .map(save::decode_header)
+        .unwrap_or_default();
+    Ok(block_in_place(|| {
+        store.save_snapshot(id, &title, snapshot)
+    })?)
+}
+
+/// Body: the file. Headers: `x-folio-recovery-id`, `x-folio-recovery-key`.
+#[tauri::command]
+pub async fn recovery_save_file(
+    storage: State<'_, Storage>,
+    request: Request<'_>,
+) -> Result<(), CommandError> {
+    let store = recovery_store(&storage)?;
+    let bytes = raw_body(&request)?;
+    let id = header(&request, recovery::ID_HEADER).ok_or(RecoveryError::InvalidRequest)?;
+    let key = header(&request, recovery::KEY_HEADER).ok_or(RecoveryError::InvalidRequest)?;
+    Ok(block_in_place(|| store.save_file(id, key, bytes))?)
+}
+
+#[tauri::command]
+pub async fn recovery_has_file(
+    storage: State<'_, Storage>,
+    id: String,
+    key: String,
+) -> Result<bool, CommandError> {
+    let store = recovery_store(&storage)?;
+    Ok(block_in_place(|| store.has_file(&id, &key))?)
+}
+
+/// The snapshot, or `null` if there is no such record.
+#[tauri::command]
+pub async fn recovery_load_snapshot(
+    storage: State<'_, Storage>,
+    id: String,
+) -> Result<Option<String>, CommandError> {
+    let store = recovery_store(&storage)?;
+    Ok(block_in_place(|| store.load_snapshot(&id))?)
+}
+
+#[tauri::command]
+pub async fn recovery_load_file(
+    storage: State<'_, Storage>,
+    id: String,
+    key: String,
+) -> Result<Response, CommandError> {
+    let store = recovery_store(&storage)?;
+    let bytes = block_in_place(|| store.load_file(&id, &key))?;
+    Ok(Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn recovery_file_keys(
+    storage: State<'_, Storage>,
+    id: String,
+) -> Result<Vec<String>, CommandError> {
+    let store = recovery_store(&storage)?;
+    Ok(block_in_place(|| store.file_keys(&id))?)
+}
+
+#[tauri::command]
+pub async fn recovery_remove(storage: State<'_, Storage>, id: String) -> Result<(), CommandError> {
+    let store = recovery_store(&storage)?;
+    Ok(block_in_place(|| store.remove(&id))?)
+}
+
+/// Recent files, newest first. Names and dates only.
+#[tauri::command]
+pub fn recent_list(storage: State<'_, Storage>) -> Vec<RecentFile> {
+    storage.recent.list()
+}
+
+/// Grants a recent file again. A file that is gone is reported by name.
+#[tauri::command]
+pub async fn recent_open(app: AppHandle, id: String) -> Result<OpenedFiles, CommandError> {
+    Ok(block_in_place(|| crate::open_recent(&app, &id)))
+}
+
+#[tauri::command]
+pub async fn recent_remove(
+    app: AppHandle,
+    storage: State<'_, Storage>,
+    id: String,
+) -> Result<(), CommandError> {
+    if block_in_place(|| storage.recent.remove(&id)) {
+        crate::recent_changed(&app);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn recent_clear(app: AppHandle, storage: State<'_, Storage>) -> Result<(), CommandError> {
+    if block_in_place(|| storage.recent.clear()) {
+        crate::recent_changed(&app);
+    }
+    Ok(())
 }
