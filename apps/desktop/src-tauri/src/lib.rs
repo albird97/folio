@@ -1,7 +1,10 @@
+pub mod close_guard;
 mod commands;
 pub mod files;
+pub mod incoming;
 pub mod menu;
 pub mod paths;
+pub mod recent;
 pub mod recovery;
 pub mod save;
 pub mod time;
