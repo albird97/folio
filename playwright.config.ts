@@ -8,6 +8,12 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * Build first: `pnpm build:extension && pnpm build:desktop:web` (or `pnpm test:e2e`).
  */
+/**
+ * Browsers get a UTF-8 locale: under the C locale Chromium cannot name
+ * downloads with non-ASCII characters and falls back to "download".
+ */
+export const BROWSER_ENV = { ...process.env, LANG: process.env.LANG || 'C.UTF-8' };
+
 export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 30_000,
@@ -17,7 +23,7 @@ export default defineConfig({
   retries: 0,
   forbidOnly: Boolean(process.env.CI),
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
-  use: { trace: 'retain-on-failure' },
+  use: { trace: 'retain-on-failure', launchOptions: { env: BROWSER_ENV } },
   projects: [
     { name: 'extension', testDir: 'tests/e2e/extension' },
     {

@@ -78,34 +78,51 @@ a note below the table.
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Highlight, underline, strikethrough and comments | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 3 | Model unit tests only. |
-| Freehand drawing and shapes | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 3 | — |
-| Add text (new content on top of the page) | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 3 | — |
-| Add images | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 3 | — |
-| Undo and redo | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 3 | Model unit tests. |
-| Insert, delete, duplicate, extract and reorder pages | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 3 | Model unit tests. |
-| Merge and split | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 3 | — |
-| Edit metadata | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 3 | — |
+| Highlight, underline, strikethrough and comments | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back. |
+| Freehand drawing and shapes | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back. |
+| Add text (new content on top of the page) | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back. |
+| Add images | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back. |
+| Undo and redo | ✅ Full † | ✅ Full † | ✅ Full † | — | Model and store unit tests; e2e (Chromium) with the keyboard. |
+| Insert, delete, duplicate, extract and reorder pages | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back. |
+| Merge and split | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back. |
+| Edit metadata | ✅ Full † | ✅ Full † | ✅ Full † | — | Export tests read the saved metadata back with PDF.js; e2e (Chromium). |
+| Respect the document’s permission settings | ✅ Full † | ✅ Full † | ✅ Full † | — | Store unit tests; export tests re-open protected results; e2e (Chromium). |
 | Page numbers and watermarks | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 6 | — |
 
-- **Highlight, underline, strikethrough and comments (macOS):** Annotation types exist in the shared document model.
-- **Highlight, underline, strikethrough and comments (Windows):** Annotation types exist in the shared document model.
-- **Highlight, underline, strikethrough and comments (Chrome):** Annotation types exist in the shared document model.
-- **Add text (new content on top of the page) (macOS):** Adds new text objects; editing the PDF’s existing text is a separate, later capability.
-- **Add text (new content on top of the page) (Windows):** Adds new text objects; editing the PDF’s existing text is a separate, later capability.
-- **Add text (new content on top of the page) (Chrome):** Adds new text objects; editing the PDF’s existing text is a separate, later capability.
-- **Undo and redo (macOS):** Operation-based history is implemented and tested in the shared core; no editing UI uses it yet.
-- **Undo and redo (Windows):** Operation-based history is implemented and tested in the shared core; no editing UI uses it yet.
-- **Undo and redo (Chrome):** Operation-based history is implemented and tested in the shared core; no editing UI uses it yet.
-- **Insert, delete, duplicate, extract and reorder pages (macOS):** Model operations exist; writing the result to a PDF does not.
-- **Insert, delete, duplicate, extract and reorder pages (Windows):** Model operations exist; writing the result to a PDF does not.
-- **Insert, delete, duplicate, extract and reorder pages (Chrome):** Model operations exist; writing the result to a PDF does not.
+- **Highlight, underline, strikethrough and comments (macOS):** Marks the selected text (across pages too) and places notes; a Comments list finds, reviews and deletes them. Saved as standard PDF annotations with appearance streams, so other viewers show them.
+- **Highlight, underline, strikethrough and comments (Windows):** Marks the selected text (across pages too) and places notes; a Comments list finds, reviews and deletes them. Saved as standard PDF annotations with appearance streams, so other viewers show them.
+- **Highlight, underline, strikethrough and comments (Chrome):** Marks the selected text (across pages too) and places notes; a Comments list finds, reviews and deletes them. Saved as standard PDF annotations with appearance streams, so other viewers show them.
+- **Freehand drawing and shapes (macOS):** Pen, rectangle, ellipse, line and arrow, with colour, fill, opacity and line width; select, move, resize, nudge and delete.
+- **Freehand drawing and shapes (Windows):** Pen, rectangle, ellipse, line and arrow, with colour, fill, opacity and line width; select, move, resize, nudge and delete.
+- **Freehand drawing and shapes (Chrome):** Pen, rectangle, ellipse, line and arrow, with colour, fill, opacity and line width; select, move, resize, nudge and delete.
+- **Add text (new content on top of the page) (macOS):** Text boxes in the standard PDF fonts (Helvetica, Times, Courier), laid out identically on screen and in the file; characters those fonts lack are saved as “?” and the user is told. This adds new text; it does not edit the PDF’s existing text.
+- **Add text (new content on top of the page) (Windows):** Text boxes in the standard PDF fonts (Helvetica, Times, Courier), laid out identically on screen and in the file; characters those fonts lack are saved as “?” and the user is told. This adds new text; it does not edit the PDF’s existing text.
+- **Add text (new content on top of the page) (Chrome):** Text boxes in the standard PDF fonts (Helvetica, Times, Courier), laid out identically on screen and in the file; characters those fonts lack are saved as “?” and the user is told. This adds new text; it does not edit the PDF’s existing text.
+- **Add images (macOS):** PNG, JPEG, WebP, GIF or BMP pictures, re-encoded as PNG or JPEG with their orientation applied and their metadata (such as location) removed.
+- **Add images (Windows):** PNG, JPEG, WebP, GIF or BMP pictures, re-encoded as PNG or JPEG with their orientation applied and their metadata (such as location) removed.
+- **Add images (Chrome):** PNG, JPEG, WebP, GIF or BMP pictures, re-encoded as PNG or JPEG with their orientation applied and their metadata (such as location) removed.
+- **Undo and redo (macOS):** Every change to annotations, pages and properties, from the toolbar, menus or keyboard; typing in a text field keeps its own undo.
+- **Undo and redo (Windows):** Every change to annotations, pages and properties, from the toolbar, menus or keyboard; typing in a text field keeps its own undo.
+- **Undo and redo (Chrome):** Every change to annotations, pages and properties, from the toolbar, menus or keyboard; typing in a text field keeps its own undo.
+- **Insert, delete, duplicate, extract and reorder pages (macOS):** Multi-select in the pages panel, drag to reorder, rotate, duplicate, delete, insert blank pages or pages of other PDFs (protected ones ask for their password), extract pages to a new file. Removed pages leave no content, form values or bookmarks targets behind in saved files.
+- **Insert, delete, duplicate, extract and reorder pages (Windows):** Multi-select in the pages panel, drag to reorder, rotate, duplicate, delete, insert blank pages or pages of other PDFs (protected ones ask for their password), extract pages to a new file. Removed pages leave no content, form values or bookmarks targets behind in saved files.
+- **Insert, delete, duplicate, extract and reorder pages (Chrome):** Multi-select in the pages panel, drag to reorder, rotate, duplicate, delete, insert blank pages or pages of other PDFs (protected ones ask for their password), extract pages to a new file. Removed pages leave no content, form values or bookmarks targets behind in saved files.
+- **Merge and split (macOS):** Merge by inserting the pages of other PDFs; split every N pages or before selected pages into new documents.
+- **Merge and split (Windows):** Merge by inserting the pages of other PDFs; split every N pages or before selected pages into new documents.
+- **Merge and split (Chrome):** Merge by inserting the pages of other PDFs; split every N pages or before selected pages into new documents.
+- **Edit metadata (macOS):** Title, author, subject and keywords, written to both the Info dictionary and XMP.
+- **Edit metadata (Windows):** Title, author, subject and keywords, written to both the Info dictionary and XMP.
+- **Edit metadata (Chrome):** Title, author, subject and keywords, written to both the Info dictionary and XMP.
+- **Respect the document’s permission settings (macOS):** Commenting, page changes, editing properties and copying pages out follow the PDF’s permission flags, with an explanation; saved copies keep the original’s password and permissions.
+- **Respect the document’s permission settings (Windows):** Commenting, page changes, editing properties and copying pages out follow the PDF’s permission flags, with an explanation; saved copies keep the original’s password and permissions.
+- **Respect the document’s permission settings (Chrome):** Commenting, page changes, editing properties and copying pages out follow the PDF’s permission flags, with an explanation; saved copies keep the original’s password and permissions.
 
 ## Saving and export
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
 | Save and Save As | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported † | 4 | — |
+| Save changes as a new PDF (Save as) | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Export tests re-open every result with PDF.js and check it with qpdf; e2e (Chromium) reads downloaded files back with pdf-lib. The native save dialog cannot be automated. |
 | Save a copy of the original PDF | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Extension and desktop UI: e2e compares the SHA-256 of the saved file with the original. Desktop: Rust unit tests for validation, file names and atomic writes; tauri-driver checks that non-PDF data is refused. The native dialog cannot be automated. |
 | Export pages as images | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
 | Extract text | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
@@ -113,6 +130,9 @@ a note below the table.
 | Save the current webpage as PDF | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported | 5 | — |
 
 - **Save and Save As (Chrome):** Will download a copy; extensions cannot write back to the original file.
+- **Save changes as a new PDF (Save as) (macOS):** Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages. Implemented and built in CI, but not yet verified on a real Mac.
+- **Save changes as a new PDF (Save as) (Windows):** Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Save changes as a new PDF (Save as) (Chrome):** Downloads the edited document; comments can be kept editable or flattened into the pages.
 - **Save a copy of the original PDF (macOS):** Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path. Implemented and built in CI, but not yet verified on a real Mac.
 - **Save a copy of the original PDF (Windows):** Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Save a copy of the original PDF (Chrome):** Downloaded through Chrome’s downloads; needs no extra permission.
@@ -149,9 +169,9 @@ a note below the table.
 - **Native menus (macOS):** Folio (app), File, Edit, View and Window menus, with Save a Copy, Find and the zoom, rotation and Go to Page commands. Implemented and built in CI, but not yet verified on a real Mac.
 - **Native menus (Windows):** File, Edit, View and Help menus in the window menu bar, with the same commands. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Native menus (Chrome):** Not applicable.
-- **Keyboard shortcuts (macOS):** Open, Save a copy, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, rotate (⌘R/⌘L) and Close Window. Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Mac.
-- **Keyboard shortcuts (Windows):** Open, Save a copy, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, rotate (Ctrl+R/Ctrl+L). Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Windows PC.
-- **Keyboard shortcuts (Chrome):** Open, Save a copy, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab; rotation has no shortcut because Chrome keeps Ctrl+R and Ctrl+L. Switching the theme has no shortcut.
+- **Keyboard shortcuts (macOS):** Open, Save as, Save a copy, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, rotate (⌘R/⌘L) and Close Window. Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Mac.
+- **Keyboard shortcuts (Windows):** Open, Save as, Save a copy, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, rotate (Ctrl+R/Ctrl+L). Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Keyboard shortcuts (Chrome):** Open, Save as, Save a copy, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab; rotation has no shortcut because Chrome keeps Ctrl+R and Ctrl+L. Switching the theme has no shortcut.
 - **Clipboard (macOS):** Document property values and selected page text. Implemented and built in CI, but not yet verified on a real Mac.
 - **Clipboard (Windows):** Document property values and selected page text. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Clipboard (Chrome):** Document property values and selected page text.

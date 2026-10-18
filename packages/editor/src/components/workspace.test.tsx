@@ -118,6 +118,39 @@ describe('workspace', () => {
     });
   });
 
+  describe('commands from menus and the keyboard', () => {
+    it('runs repeated key presses but ignores a menu echo of the same press', () => {
+      const memory = createMemoryPlatformAdapter();
+      const adapter: PlatformAdapter = { ...memory.adapter, os: 'windows' };
+      const ui = createUiStore(adapter.storage);
+      render(
+        <WorkspaceProvider
+          adapter={adapter}
+          engine={pendingEngine}
+          profile="desktop"
+          stores={{ workspace: createWorkspaceStore(pendingEngine), ui }}
+        >
+          <Workspace />
+        </WorkspaceProvider>,
+      );
+      const press = () =>
+        fireEvent.keyDown(document.body, { key: '2', code: 'Digit2', ctrlKey: true, altKey: true });
+      expect(ui.getState().rightPanelOpen).toBe(true);
+      // Two presses in quick succession are two commands.
+      act(() => {
+        press();
+        press();
+      });
+      expect(ui.getState().rightPanelOpen).toBe(true);
+      // A native menu accelerator reporting the same press is one command.
+      act(() => {
+        press();
+        memory.command('toggle-right-panel');
+      });
+      expect(ui.getState().rightPanelOpen).toBe(false);
+    });
+  });
+
   describe('shortcuts while typing a password', () => {
     async function passwordField(options: Parameters<typeof setup>[0]) {
       const stores = setup(options);

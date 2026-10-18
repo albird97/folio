@@ -293,19 +293,13 @@ export function AnnotationHitArea({
       />
     );
   }
+  // Marked text stays selectable: the page view selects text markup on click.
   if (
     annotation.kind === 'highlight' ||
     annotation.kind === 'underline' ||
     annotation.kind === 'strikeout'
   ) {
-    return (
-      <g fill="transparent" pointerEvents="all">
-        {annotation.rects.map((raw, index) => {
-          const rect = normalizeRect(raw);
-          return <rect key={index} x={rect.x} y={rect.y} width={rect.width} height={rect.height} />;
-        })}
-      </g>
-    );
+    return null;
   }
   const bounds = growRect(annotationBounds(annotation), slop / 2);
   return (

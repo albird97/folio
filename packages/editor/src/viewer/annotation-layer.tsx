@@ -167,7 +167,13 @@ export const AnnotationLayer = memo(function AnnotationLayer({
   const { workspace, ui } = useWorkspaceContext();
   const layerRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
-  const [preview, setPreview] = useState<Annotation[] | null>(null);
+  const [preview, setPreviewState] = useState<Annotation[] | null>(null);
+  /** The latest preview, for the release that ends a drag (it can precede a re-render). */
+  const latestPreview = useRef<Annotation[] | null>(null);
+  const setPreview = (next: Annotation[] | null) => {
+    latestPreview.current = next;
+    setPreviewState(next);
+  };
   const [editing, setEditing] = useState<TextEditing | null>(null);
 
   const display = displaySpaceSize(page, viewRotation);
@@ -595,7 +601,7 @@ export const AnnotationLayer = memo(function AnnotationLayer({
     const current = gesture.current;
     if (!current || current.pointerId !== event.pointerId) return;
     gesture.current = null;
-    const changed = preview;
+    const changed = latestPreview.current;
     setPreview(null);
     setDraftBox(null);
     if (cancelled) return;

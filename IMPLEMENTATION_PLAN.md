@@ -4,8 +4,9 @@ Folio is one PDF product with three targets: a macOS app, a Windows app (both Ta
 Chrome extension (Manifest V3). Document logic is written once in shared packages; each target
 contributes only a thin platform adapter and its own shell.
 
-- **Status:** Phases 1 (Foundation) and 2 (Shared PDF viewer) are complete. See
-  [Phase 2 results](#phase-2-results) and [Phase 1 results](#phase-1-results).
+- **Status:** Phases 1 (Foundation), 2 (Shared PDF viewer) and 3 (Core editing) are complete.
+  See [Phase 3 results](#phase-3-results), [Phase 2 results](#phase-2-results) and
+  [Phase 1 results](#phase-1-results).
 - **What works where:** [PLATFORM_CAPABILITIES.md](PLATFORM_CAPABILITIES.md) (generated, tested).
 - **How to build and run:** [README.md](README.md).
 
@@ -227,17 +228,29 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
       destinations, text selection and copying, byte-identical saved copies, axe in both themes,
       and WebKitGTK checks of the text layer, highlights and the save command in the real binary.
 
-### Phase 3: Core editing 🔜
+### Phase 3: Core editing ✅
 
-- Annotation layer (pointer events, not HTML5 drag and drop, because Tauri's native drop handling
-  disables DOM drag and drop on Windows): highlight, underline and strikethrough from text
-  selection; notes; ink; shapes; added text; added images. Move, resize and delete, all through
-  model operations and history (⌘/Ctrl Z, ⇧⌘Z / Ctrl Y).
-- Page management UI: rotate, delete, duplicate, extract, reorder (thumbnail drag via pointer
-  events), insert blank pages or pages from another PDF, merge and split.
-- `pdf-core/export`: writes the model to a new PDF with @cantoo/pdf-lib, either as editable
-  annotations or flattened. Integrity tests re-open exports with PDF.js and qpdf (`qpdf --check`).
-- Metadata editing in the properties panel.
+- [x] Annotation layer (pointer events, not HTML5 drag and drop, because Tauri's native drop
+      handling disables DOM drag and drop on Windows): highlight, underline and strikethrough
+      from text selection; notes; ink; shapes (rectangle, ellipse, line, arrow); added text;
+      added images. Select, move, resize, nudge and delete, all through model operations and
+      history (⌘/Ctrl Z, ⇧⌘Z / Ctrl Y), with an inspector and a Comments list.
+- [x] Shared layout: annotation geometry and the added-text layout (standard-font metrics,
+      wrapping, baselines) live in `document-model`, so the SVG on screen and the appearance
+      streams in the file agree. Text and images added to a turned page read level.
+- [x] Page management UI: multi-select, rotate, delete, duplicate, extract, reorder (thumbnail
+      drag via pointer events), insert blank pages or pages from another PDF (password prompt
+      for protected files), merge and split into new tabs. A document can combine several
+      source files; search, thumbnails and bookmarks follow pages as they move.
+- [x] `pdf-core/export`: writes the model to a new PDF with @cantoo/pdf-lib, as editable
+      annotations with appearance streams or flattened. Pages are copied without dragging in the
+      pages they link to; removed pages leave no content, annotations or form values behind;
+      protected documents stay protected with the same password and permissions. Integrity
+      tests re-open every export with PDF.js and run `qpdf --check` (installed on CI).
+- [x] Metadata editing in the properties panel (Info dictionary and XMP kept consistent).
+- [x] Permission flags (comment, assemble, modify, copy) are honoured and explained.
+- [x] Save as (download in browsers, native dialog on desktop), with editable or flattened
+      comments; closing a changed document asks first.
 
 ### Phase 4: Desktop integration ⏳
 
@@ -282,6 +295,27 @@ performance profiling, a security review (IPC fuzzing, CSP, permissions), auto-u
 (`tauri-plugin-updater` with signed manifests), Web Store submission and release notes.
 
 ## 6. Results
+
+### Phase 3 results
+
+#### Verified in this environment
+
+| Area                | What was run                                       | Result                                                                                                                                                                                                                                         |
+| ------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared packages     | `pnpm test` (Vitest)                               | 281 tests passed (40 files), adding the exporter (20 tests that re-open results with PDF.js and run `qpdf --check`), annotation layout and text wrapping, editing store actions, page-size corrections through history and page-space geometry |
+| Types, lint, format | `pnpm typecheck`, `pnpm lint`, `pnpm format:check` | Clean                                                                                                                                                                                                                                          |
+| Desktop UI          | `pnpm build:desktop:web` + Playwright (Chromium)   | 26 tests passed, adding 10 editing tests that read the downloaded files back with pdf-lib: markup from selected text, drawing, moving, resizing, undo/redo, page operations, insertion with a password, extract, split, flatten, properties    |
+| Extension           | `pnpm build:extension` + Playwright (Chromium)     | 19 tests passed, adding highlighting, inserting a page and downloading the edited PDF                                                                                                                                                          |
+
+Saved files were also rendered with poppler (`pdftoppm`), an independent PDF renderer, to check
+that annotations, flattened content and added text look the same as in Folio.
+
+#### Not verified here
+
+- The editing UI in WKWebView (macOS) and WebView2 (Windows); it is the same web code, verified in
+  Chromium.
+- Very large edits: exporting runs on the main thread, so saving a document of hundreds of
+  megabytes pauses the UI while pdf-lib writes it.
 
 ### Phase 2 results
 
@@ -356,7 +390,13 @@ nothing beyond that is claimed here.
   drawn but not editable (Phase 6), and bookmarks that point to websites or other files are listed
   but not followed.
 - **Page labels:** page numbers are physical positions; `/PageLabels` (such as roman numerals for
-  front matter) are not shown yet.
+  front matter) are not shown yet. Saved files keep page labels only while the original pages keep
+  their positions; after reordering or deleting pages they are dropped rather than left wrong.
+- **Editing limits:** added text uses the standard PDF fonts, so characters outside Windows-1252
+  (such as Chinese or emoji) are saved as "?" (Folio warns). Form fields and tagged structure on
+  pages copied from other files are kept as drawn but not merged into the document's form or
+  structure tree. Changing a signed document invalidates its signatures (Folio says so when
+  saving). Exporting runs on the main thread.
 - **Search:** scanned pages have no text until OCR (Phase 6); right-to-left and vertical text are
   untested; results stop at 10,000 matches (the find bar says so).
 - **macOS and Windows:** the native dialog, drag and drop, menus, shortcuts and file association

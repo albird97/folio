@@ -22,6 +22,7 @@ import { useMemo, type KeyboardEvent } from 'react';
 import { useWorkspace } from '../context';
 import { formatDate } from '../format';
 import type { WorkspaceDocument } from '../store/workspace';
+import { EDIT_ANNOTATION_EVENT } from '../viewer/annotation-layer';
 
 const KIND_LABELS: Record<Annotation['kind'], string> = {
   highlight: 'Highlight',
@@ -111,6 +112,7 @@ export function orderedAnnotations(
 /** Every annotation of the document, to find, select and review them. */
 export function CommentsPanel({ doc }: { doc: WorkspaceDocument }) {
   const selectAnnotations = useWorkspace((state) => state.selectAnnotations);
+  const deleteAnnotations = useWorkspace((state) => state.deleteAnnotations);
   const navigate = useWorkspace((state) => state.navigate);
   const model = doc.editor?.model;
   const entries = useMemo(() => (model ? orderedAnnotations(model) : []), [model]);
@@ -134,7 +136,34 @@ export function CommentsPanel({ doc }: { doc: WorkspaceDocument }) {
     });
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, annotation: Annotation) => {
+    if ((event.key === 'Delete' || event.key === 'Backspace') && doc.permissions.annotate) {
+      event.preventDefault();
+      // Keep the list's focus on the neighbouring comment.
+      const items = Array.from(
+        event.currentTarget.closest('ul')?.querySelectorAll<HTMLButtonElement>('button') ?? [],
+      );
+      const index = items.indexOf(event.currentTarget);
+      deleteAnnotations(doc.key, [annotation.id]);
+      requestAnimationFrame(() => {
+        const remaining = Array.from(
+          document.querySelectorAll<HTMLButtonElement>('ul[aria-label="Comments"] button'),
+        );
+        remaining[Math.min(index, remaining.length - 1)]?.focus();
+      });
+      return;
+    }
+    if (
+      event.key === 'Enter' &&
+      (event.metaKey || event.ctrlKey) &&
+      (annotation.kind === 'note' || annotation.kind === 'added-text')
+    ) {
+      event.preventDefault();
+      window.dispatchEvent(
+        new CustomEvent(EDIT_ANNOTATION_EVENT, { detail: { docKey: doc.key, id: annotation.id } }),
+      );
+      return;
+    }
     const items = Array.from(
       event.currentTarget.closest('ul')?.querySelectorAll<HTMLButtonElement>('button') ?? [],
     );
@@ -170,7 +199,7 @@ export function CommentsPanel({ doc }: { doc: WorkspaceDocument }) {
             <button
               type="button"
               onClick={() => open(page, annotation)}
-              onKeyDown={onKeyDown}
+              onKeyDown={(event) => onKeyDown(event, annotation)}
               aria-current={selected.has(annotation.id) || undefined}
               className={cn(
                 'flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none',

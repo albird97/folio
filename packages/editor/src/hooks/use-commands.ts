@@ -18,24 +18,35 @@ function isEditable(target: EventTarget | null): boolean {
   return (target instanceof HTMLElement && target.isContentEditable) || !!target.closest(EDITABLE);
 }
 
+/** Where a command came from: a native menu, a key press, or a control in the page. */
+type CommandSource = 'menu' | 'keyboard' | 'ui';
+
 /** Commands a text field handles itself (its own undo history) when it has focus. */
 const FIELD_COMMANDS: ReadonlySet<AppCommand> = new Set(['undo', 'redo']);
 
 /** Runs app commands from native menus and the keyboard. Returns the dispatcher. */
 export function useCommands(): (command: AppCommand) => void {
   const { adapter, workspace, ui, profile, shortcutPlatform } = useWorkspaceContext();
-  const last = useRef<{ command: AppCommand; at: number } | null>(null);
+  const last = useRef<{ command: AppCommand; at: number; source: CommandSource } | null>(null);
   const closeDocument = useCloseDocument();
   const saveCopy = useSaveCopy();
   const saveAs = useSaveAs();
   const activeDoc = useActiveDocument();
   const pageCommands = usePageCommands(activeDoc?.status === 'ready' ? activeDoc : null);
 
-  const dispatch = useCallback(
-    (command: AppCommand) => {
+  const run = useCallback(
+    (command: AppCommand, source: CommandSource) => {
       const now = performance.now();
-      if (last.current?.command === command && now - last.current.at < COMMAND_DEDUPE_MS) return;
-      last.current = { command, at: now };
+      // One key press can reach both a native menu accelerator and the page.
+      // Repeats from the same source (pressing Undo twice) are separate.
+      const previous = last.current;
+      const echo =
+        (previous?.source === 'menu' && source === 'keyboard') ||
+        (previous?.source === 'keyboard' && source === 'menu');
+      if (previous?.command === command && echo && now - previous.at < COMMAND_DEDUPE_MS) {
+        return;
+      }
+      last.current = { command, at: now, source };
       const state = workspace.getState();
       const active = state.documents.find((doc) => doc.key === state.activeKey);
       // Viewer commands need an open, readable document.
@@ -153,7 +164,9 @@ export function useCommands(): (command: AppCommand) => void {
     [adapter, workspace, ui, closeDocument, saveCopy, saveAs, pageCommands],
   );
 
-  useEffect(() => adapter.onCommand(dispatch), [adapter, dispatch]);
+  const dispatch = useCallback((command: AppCommand) => run(command, 'ui'), [run]);
+
+  useEffect(() => adapter.onCommand((command) => run(command, 'menu')), [adapter, run]);
 
   useEffect(() => {
     const shortcuts = COMMAND_SHORTCUTS[profile];
@@ -183,14 +196,14 @@ export function useCommands(): (command: AppCommand) => void {
           )
         ) {
           event.preventDefault();
-          dispatch(command);
+          run(command, 'keyboard');
           return;
         }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dispatch, profile, shortcutPlatform]);
+  }, [run, profile, shortcutPlatform]);
 
   return dispatch;
 }

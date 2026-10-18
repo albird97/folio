@@ -55,8 +55,11 @@ const REAL_MACHINE: Record<DesktopTarget, string> = {
 const unverified = (target: DesktopTarget, note: string): TargetSupport =>
   limited(`${note} Implemented and built in CI, but not yet verified on ${REAL_MACHINE[target]}.`);
 
+const EDITING_VERIFIED =
+  'Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back.';
+
 const SHORTCUTS =
-  'Open, Save a copy, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous';
+  'Open, Save as, Save a copy, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous';
 const NO_THEME_SHORTCUT = 'Switching the theme has no shortcut.';
 
 export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
@@ -259,73 +262,107 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'markup',
     area: 'Editing',
     feature: 'Highlight, underline, strikethrough and comments',
-    plannedPhase: 3,
-    targets: all(none('Annotation types exist in the shared document model.')),
-    verification: 'Model unit tests only.',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'Marks the selected text (across pages too) and places notes; a Comments list finds, reviews and deletes them. Saved as standard PDF annotations with appearance streams, so other viewers show them.',
+      ),
+    ),
+    verification: EDITING_VERIFIED,
   },
   {
     id: 'drawing',
     area: 'Editing',
     feature: 'Freehand drawing and shapes',
-    plannedPhase: 3,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'Pen, rectangle, ellipse, line and arrow, with colour, fill, opacity and line width; select, move, resize, nudge and delete.',
+      ),
+    ),
+    verification: EDITING_VERIFIED,
   },
   {
     id: 'added-text',
     area: 'Editing',
     feature: 'Add text (new content on top of the page)',
-    plannedPhase: 3,
+    plannedPhase: null,
     targets: all(
-      none(
-        'Adds new text objects; editing the PDF’s existing text is a separate, later capability.',
+      full(
+        'Text boxes in the standard PDF fonts (Helvetica, Times, Courier), laid out identically on screen and in the file; characters those fonts lack are saved as “?” and the user is told. This adds new text; it does not edit the PDF’s existing text.',
       ),
     ),
-    verification: '—',
+    verification: EDITING_VERIFIED,
   },
   {
     id: 'added-images',
     area: 'Editing',
     feature: 'Add images',
-    plannedPhase: 3,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'PNG, JPEG, WebP, GIF or BMP pictures, re-encoded as PNG or JPEG with their orientation applied and their metadata (such as location) removed.',
+      ),
+    ),
+    verification: EDITING_VERIFIED,
   },
   {
     id: 'undo-redo',
     area: 'Editing',
     feature: 'Undo and redo',
-    plannedPhase: 3,
+    plannedPhase: null,
     targets: all(
-      none(
-        'Operation-based history is implemented and tested in the shared core; no editing UI uses it yet.',
+      full(
+        'Every change to annotations, pages and properties, from the toolbar, menus or keyboard; typing in a text field keeps its own undo.',
       ),
     ),
-    verification: 'Model unit tests.',
+    verification: 'Model and store unit tests; e2e (Chromium) with the keyboard.',
   },
   {
     id: 'page-operations',
     area: 'Editing',
     feature: 'Insert, delete, duplicate, extract and reorder pages',
-    plannedPhase: 3,
-    targets: all(none('Model operations exist; writing the result to a PDF does not.')),
-    verification: 'Model unit tests.',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'Multi-select in the pages panel, drag to reorder, rotate, duplicate, delete, insert blank pages or pages of other PDFs (protected ones ask for their password), extract pages to a new file. Removed pages leave no content, form values or bookmarks targets behind in saved files.',
+      ),
+    ),
+    verification: EDITING_VERIFIED,
   },
   {
     id: 'merge-split',
     area: 'Editing',
     feature: 'Merge and split',
-    plannedPhase: 3,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'Merge by inserting the pages of other PDFs; split every N pages or before selected pages into new documents.',
+      ),
+    ),
+    verification: EDITING_VERIFIED,
   },
   {
     id: 'metadata-edit',
     area: 'Editing',
     feature: 'Edit metadata',
-    plannedPhase: 3,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: all(
+      full('Title, author, subject and keywords, written to both the Info dictionary and XMP.'),
+    ),
+    verification: 'Export tests read the saved metadata back with PDF.js; e2e (Chromium).',
+  },
+  {
+    id: 'permissions',
+    area: 'Editing',
+    feature: 'Respect the document’s permission settings',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'Commenting, page changes, editing properties and copying pages out follow the PDF’s permission flags, with an explanation; saved copies keep the original’s password and permissions.',
+      ),
+    ),
+    verification: 'Store unit tests; export tests re-open protected results; e2e (Chromium).',
   },
   {
     id: 'watermarks',
@@ -348,6 +385,28 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     },
     verification: '—',
     runtimeFeature: 'saveInPlace',
+  },
+  {
+    id: 'save-as-edited',
+    area: 'Saving and export',
+    feature: 'Save changes as a new PDF (Save as)',
+    plannedPhase: 4,
+    targets: {
+      macos: unverified(
+        'macos',
+        'Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages.',
+      ),
+      windows: unverified(
+        'windows',
+        'Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages.',
+      ),
+      chrome: full(
+        'Downloads the edited document; comments can be kept editable or flattened into the pages.',
+      ),
+    },
+    verification:
+      'Export tests re-open every result with PDF.js and check it with qpdf; e2e (Chromium) reads downloaded files back with pdf-lib. The native save dialog cannot be automated.',
+    runtimeFeature: 'saveCopy',
   },
   {
     id: 'export-pdf',

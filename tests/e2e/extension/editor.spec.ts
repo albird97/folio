@@ -1,3 +1,4 @@
+import { PDFArray, PDFDict, PDFDocument, PDFName } from '@cantoo/pdf-lib';
 import { readFileSync } from 'node:fs';
 import {
   chooseFiles,
@@ -79,6 +80,36 @@ test.describe('extension editor', () => {
     expect(readFileSync((await file.path())!)).toEqual(
       readFileSync(fixture('outline-and-text.pdf')),
     );
+  });
+
+  test('highlights text, inserts a blank page and downloads the edited PDF', async ({ page }) => {
+    await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
+      'basic-3-pages.pdf',
+    ]);
+    await pageRendered(page);
+    await page
+      .getByRole('toolbar', { name: 'Comment and drawing tools' })
+      .getByRole('radio', { name: 'Highlight' })
+      .click();
+    const run = page.locator('[data-page="1"] .textLayer span').filter({ hasText: 'quick' });
+    const box = (await run.first().boundingBox())!;
+    await page.mouse.move(box.x + 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect(page.getByRole('tab', { name: /^Comments/ })).toHaveText(/Comments\s*1/);
+    await page.getByRole('button', { name: 'Insert pages' }).click();
+    await page.getByRole('menuitem', { name: 'Blank page' }).click();
+    await expect(page.getByRole('tab', { name: /^Pages/ })).toHaveText(/Pages\s*4/);
+
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download PDF' }).click();
+    const file = await download;
+    expect(file.suggestedFilename()).toBe('basic-3-pages.pdf');
+    const saved = await PDFDocument.load(readFileSync((await file.path())!));
+    expect(saved.getPageCount()).toBe(4);
+    const annots = saved.getPage(0).node.lookupMaybe(PDFName.of('Annots'), PDFArray);
+    expect(annots?.lookup(0, PDFDict).get(PDFName.of('Subtype'))?.toString()).toBe('/Highlight');
   });
 
   test('unlocks password-protected PDFs', async ({ page }) => {

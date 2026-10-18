@@ -1,12 +1,14 @@
 import {
   moveAnnotation,
   newAnnotationId,
+  normalizeRect,
   type Annotation,
   type AnnotationId,
   type DocumentViewState,
   type PageId,
   type PageModel,
   type SourceId,
+  type TextMarkupAnnotation,
 } from '@folio/document-model';
 import { applyTransform, type PdfDocumentHandle } from '@folio/pdf-core';
 import {
@@ -18,6 +20,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
 } from 'react';
 import { useUi, useWorkspaceContext } from '../context';
@@ -28,6 +31,7 @@ import { AnnotationLayer } from './annotation-layer';
 import {
   applyMatrix,
   displaySize,
+  displaySpaceSize,
   invertMatrix,
   invertTransform,
   pageSource,
@@ -579,13 +583,55 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
   const selection = doc.selection.annotations;
   const editable = doc.permissions.annotate;
 
+  const press = useRef<{ x: number; y: number } | null>(null);
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !(event.target instanceof Element)) return;
     event.target.closest('.textLayer')?.classList.add('selecting');
+    press.current = { x: event.clientX, y: event.clientY };
     // A press away from every annotation clears the annotation selection.
     if (selection.length > 0 && !event.target.closest('[data-annotation-id], [data-handle]')) {
       workspace.getState().selectAnnotations(key, []);
     }
+  };
+
+  // Highlighted text stays selectable by dragging, so text markup has no hit
+  // area of its own: a click (not a drag) on it selects it instead.
+  const onClick = (event: MouseEvent<HTMLDivElement>) => {
+    const start = press.current;
+    press.current = null;
+    if (tool !== 'select' || !(event.target instanceof Element) || !start) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 3) return;
+    if (event.target.closest('[data-annotation-id], [data-handle]')) return;
+    if (window.getSelection()?.isCollapsed === false) return;
+    const pageElement = event.target.closest<HTMLElement>('.folio-page');
+    const page = pageElement ? pages[Number(pageElement.dataset.page) - 1] : undefined;
+    if (!pageElement || !page) return;
+    const bounds = pageElement.getBoundingClientRect();
+    const size = displaySpaceSize(page, view.rotation);
+    const point = applyMatrix(invertMatrix(pageToDisplay(page, view.rotation)), {
+      x: ((event.clientX - bounds.left) / bounds.width) * size.width,
+      y: ((event.clientY - bounds.top) / bounds.height) * size.height,
+    });
+    const hit = (annotationsByPage.get(page.id) ?? [])
+      .filter(
+        (annotation): annotation is TextMarkupAnnotation =>
+          annotation.kind === 'highlight' ||
+          annotation.kind === 'underline' ||
+          annotation.kind === 'strikeout',
+      )
+      .reverse()
+      .find((annotation) =>
+        annotation.rects.some((raw) => {
+          const rect = normalizeRect(raw);
+          return (
+            point.x >= rect.x &&
+            point.x <= rect.x + rect.width &&
+            point.y >= rect.y &&
+            point.y <= rect.y + rect.height
+          );
+        }),
+      );
+    if (hit) workspace.getState().selectAnnotations(key, [hit.id]);
   };
 
   // Highlight, underline and strikethrough mark the text selected while they are active.
@@ -748,6 +794,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
       tabIndex={0}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
+      onClick={onClick}
       className="h-full w-full touch-pan-x touch-pan-y overflow-auto outline-none [scrollbar-gutter:stable] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
     >
       {layout ? (

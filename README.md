@@ -7,7 +7,8 @@ Folio is a local-first PDF suite for **macOS**, **Windows** and **Google Chrome*
 product: the document model, PDF engine, design system and workspace UI are shared, and each
 target adds a thin platform adapter.
 
-> **Status: Phase 2 (Viewer) complete.** Folio opens and reads PDFs on all three targets:
+> **Status: Phase 3 (Core editing) complete.** Folio opens, reads and edits PDFs on all three
+> targets:
 >
 > - Ways to open: file picker, drag and drop, launch arguments and Finder events on desktop, and a
 >   side-panel hand-off in Chrome. Password-protected files can be unlocked.
@@ -15,15 +16,21 @@ target adds a thin platform adapter.
 >   bookmarks, page navigation, zoom (fit width, fit page, presets, Ctrl+wheel and pinch), view
 >   rotation, text selection and copying, and whole-document search with highlights and a
 >   results list.
-> - **Save a copy** writes the original file to a new location (a save dialog on desktop, a
->   download in Chrome). Folio never modifies the files you open.
+> - Editing: highlight, underline and strike through text, notes, freehand drawing, shapes,
+>   added text and images, with a Comments list and an inspector. Pages can be reordered by
+>   dragging, rotated, duplicated, deleted, inserted (blank or from other PDFs), extracted and
+>   split. Document properties are editable. Everything is undoable.
+> - **Save as** writes the edited document to a new file (a save dialog on desktop, a download in
+>   Chrome), with comments kept editable or flattened into the pages. **Save a copy of the
+>   original** writes the opened file unchanged. Folio never overwrites the files you open on its
+>   own.
 > - Multiple documents in tabs, document properties, light and dark themes, keyboard shortcuts.
 > - On macOS and Windows, the native file and save dialogs, drag and drop, menus, shortcuts,
 >   pinch zoom and file association are built in CI but not yet verified on a real Mac or
 >   Windows PC.
 >
-> Editing, saving changes and the advanced tools follow in later phases. See
-> [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the roadmap and
+> Saving in place, printing, crash recovery and the Chrome integrations follow in Phases 4 and 5.
+> See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the roadmap and
 > [PLATFORM_CAPABILITIES.md](PLATFORM_CAPABILITIES.md) for the support matrix.
 
 Documents are processed on your device. Folio makes no network requests with document data, and
@@ -98,7 +105,9 @@ Installers appear under `target/release/bundle/` (or `target/universal-apple-dar
 | Action                   | macOS               | Windows / Linux                       |
 | ------------------------ | ------------------- | ------------------------------------- |
 | Open                     | ⌘O                  | Ctrl+O                                |
-| Save a copy              | ⇧⌘S                 | Ctrl+Shift+S                          |
+| Save as                  | ⇧⌘S                 | Ctrl+Shift+S                          |
+| Save a copy of original  | ⌥⌘S                 | Ctrl+Alt+S                            |
+| Undo / redo              | ⌘Z / ⇧⌘Z            | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y       |
 | Close document           | ⌘W                  | Ctrl+W                                |
 | Close window             | ⇧⌘W                 | —                                     |
 | Next / previous document | ⌃Tab / ⌃⇧Tab        | Ctrl+Tab / Ctrl+Shift+Tab             |
@@ -122,11 +131,35 @@ Help (**Help → About Folio**). Switching the theme has no shortcut: use the to
 **View → Switch Theme**. Letter shortcuts follow your keyboard layout (AZERTY included), and
 AltGr combinations never trigger shortcuts.
 
-Folio never modifies the files you open. **File → Save a Copy…** writes the opened file,
-unchanged, to a new file you choose in the native save dialog: the Rust layer accepts only PDF
-data and writes it through a temporary file, so an interrupted save never leaves a half-written
-file. The webview never sees paths: files are reachable only through tokens issued by the Rust
-layer, and the save command returns only the chosen file's name.
+### Editing
+
+- **Comments and drawing:** the tool bar above the pages has Select, Highlight, Underline,
+  Strikethrough, Note, Draw, Rectangle, Ellipse, Line, Arrow, Add text and Add image. The markup
+  tools mark the text you select. With Select, click an annotation to select it, drag it to
+  move it, drag its handles to resize it, use the arrow keys to nudge it (Shift for 10 pt) and
+  Delete to remove it; double-click a note or a text box to edit it. The Properties panel shows
+  the selected annotation's colour, opacity, line width, font and text. The **Comments** tab in
+  the sidebar lists every annotation.
+- **Added text is new content** placed on top of the page in a standard PDF font (Helvetica,
+  Times or Courier). Folio does not edit the PDF's existing text. Characters these fonts cannot
+  show are saved as "?", and Folio says so.
+- **Pages:** select pages in the Pages tab (Shift-click for a range, Ctrl/⌘-click to add), drag
+  them to reorder, and use the buttons above the thumbnails to insert a blank page or pages of
+  another PDF, rotate, duplicate, delete, extract or split. In browsers, PDFs dropped between
+  thumbnails are inserted there.
+- **Properties:** title, author, subject and keywords are editable in the Properties panel.
+- Folio follows the document's permission settings (for example, a PDF that does not allow
+  comments), and saved copies of password-protected PDFs keep the same password and permissions.
+
+Folio never overwrites the files you open on its own. **Save as** (in the toolbar, ⇧⌘S /
+Ctrl+Shift+S) writes the edited document to a new file you choose in the native save dialog (the
+original is replaced only if you pick it there); its menu also offers a copy with comments
+flattened into the pages, and **Save a copy of the original**, which writes the opened file
+unchanged. The Rust layer
+accepts only PDF data and writes it through a temporary file, so an interrupted save never leaves
+a half-written file. The webview never sees paths: files are reachable only through tokens issued
+by the Rust layer, and the save command returns only the chosen file's name. Closing a document
+with unsaved changes asks first.
 
 ## Installing and testing the Chrome extension
 

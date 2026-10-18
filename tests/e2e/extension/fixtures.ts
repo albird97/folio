@@ -1,3 +1,4 @@
+import { BROWSER_ENV } from '../../../playwright.config';
 import { test as base, chromium, type BrowserContext, type Worker } from '@playwright/test';
 import { join } from 'node:path';
 
@@ -17,6 +18,7 @@ export const test = base.extend<ExtensionFixtures>({
       channel: 'chromium',
       args: [`--disable-extensions-except=${EXTENSION}`, `--load-extension=${EXTENSION}`],
       viewport: { width: 1280, height: 800 },
+      env: BROWSER_ENV,
     });
     await use(context);
     await context.close();
