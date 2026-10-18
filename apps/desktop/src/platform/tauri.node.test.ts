@@ -1,13 +1,12 @@
 import { isPdfError } from '@folio/pdf-core';
 import type { IncomingFile, TransferRequest } from '@folio/platform-adapters';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as tauriModule from './tauri';
 import {
   NativeCommandError,
   createTauriPlatformAdapter,
   nativeMessagingStatus,
-  registerNativeMessaging,
   toWellFormed,
-  unregisterNativeMessaging,
 } from './tauri';
 
 type Handler = (event: { payload: unknown }) => void;
@@ -123,6 +122,20 @@ describe('desktop platform adapter', () => {
     expect((missing as Error).message).toMatch(/could not be found/);
   });
 
+  it("explains that Folio's own files and spooled documents are not opened", async () => {
+    const adapter = await createTauriPlatformAdapter();
+    const received: IncomingFile[][] = [];
+    adapter.onIncomingFiles((files) => received.push(files));
+    fire('folio://files-opened', { ...nothing, refused: ['document.pdf'] });
+    const [refused] = received[0] ?? [];
+    expect(refused?.name).toBe('document.pdf');
+    expect(refused?.origin).toEqual({ kind: 'local-file', handle: null });
+    const error = await readError(refused);
+    expect(isPdfError(error, 'unknown')).toBe(true);
+    expect((error as Error).message).toMatch(/own data folder/);
+    expect(callsTo('read_granted_file')).toEqual([]);
+  });
+
   it('delivers files that vanished before the UI was ready as errors', async () => {
     tauri.responses.set('take_pending_files', { ...nothing, unavailable: ['gone.pdf'] });
     const adapter = await createTauriPlatformAdapter();
@@ -202,6 +215,23 @@ describe('desktop platform adapter', () => {
       expect(lastCall('recovery_save_snapshot').options?.headers).toMatchObject({
         'x-folio-recovery-title': '%EF%BF%BDx',
       });
+    });
+
+    it('reports a kept previous version as a file that could not be saved', async () => {
+      const adapter = await createTauriPlatformAdapter();
+      const message =
+        'Folio could not replace the file or put its previous version back. That version was kept as \u201c.folio-0123.bak\u201d in the same folder.';
+      tauri.responses.set('write_granted_file', {
+        status: 'kept-copy',
+        name: '.folio-0123.bak',
+        message,
+      });
+      const result = await adapter.writeFile({
+        handle: 't1',
+        bytes,
+        expectedSha256: 'ab'.repeat(32),
+      });
+      expect(result).toEqual({ status: 'unavailable', message });
     });
 
     it('writes back through the grant only while the file is unchanged', async () => {
@@ -508,38 +538,34 @@ describe('desktop platform adapter', () => {
     });
   });
 
-  describe('native messaging registration', () => {
-    it('reports, registers and unregisters the host', async () => {
+  describe('native messaging', () => {
+    it('reports the status, which the page cannot change', async () => {
       tauri.responses.set('native_messaging_status', { registered: false, extensionIds: [] });
       expect(await nativeMessagingStatus()).toEqual({ registered: false, extensionIds: [] });
-
-      const id = 'abcdefghijklmnopabcdefghijklmnop';
-      tauri.responses.set('register_native_messaging', { registered: true, extensionIds: [id] });
-      expect(await registerNativeMessaging([id])).toEqual({ registered: true, extensionIds: [id] });
-      expect(lastCall('register_native_messaging').args).toEqual({ extensionIds: [id] });
-      // The official extension alone.
-      await registerNativeMessaging();
-      expect(lastCall('register_native_messaging').args).toEqual({ extensionIds: [] });
-      tauri.responses.set(
-        'register_native_messaging',
-        rejectWith('cancelled', 'Chrome integration was not changed.'),
-      );
-      await expect(registerNativeMessaging()).rejects.toMatchObject({ code: 'cancelled' });
-
-      tauri.responses.set('unregister_native_messaging', { registered: false, extensionIds: [] });
-      expect((await unregisterNativeMessaging()).registered).toBe(false);
+      const official = 'ghfckfnleaidabfhaplbnfknipajedan';
+      tauri.responses.set('native_messaging_status', {
+        registered: true,
+        extensionIds: [official],
+      });
+      expect(await nativeMessagingStatus()).toEqual({ registered: true, extensionIds: [official] });
+      // Connecting happens in Folio's native dialogs (File > Connect to Chrome).
+      expect(Object.keys(tauriModule).filter((name) => /register/i.test(name))).toEqual([]);
+      expect(tauri.calls.map((call) => call.command)).toEqual([
+        'native_messaging_status',
+        'native_messaging_status',
+      ]);
     });
 
-    it('explains invalid extension ids', async () => {
+    it('explains why the status is unavailable', async () => {
       tauri.responses.set(
-        'register_native_messaging',
-        rejectWith('invalid-extension-id', 'Enter the ID of the Folio extension.'),
+        'native_messaging_status',
+        rejectWith('unavailable', 'Chrome integration is not available on this computer.'),
       );
-      const error = await registerNativeMessaging(['nope']).catch((caught: unknown) => caught);
+      const error = await nativeMessagingStatus().catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(NativeCommandError);
       expect(error).toMatchObject({
-        code: 'invalid-extension-id',
-        message: 'Enter the ID of the Folio extension.',
+        code: 'unavailable',
+        message: 'Chrome integration is not available on this computer.',
       });
     });
   });

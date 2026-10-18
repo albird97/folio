@@ -8,7 +8,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs::Metadata;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Header carrying the proposed file name, percent-encoded (headers are ASCII).
@@ -22,8 +22,9 @@ pub const EXPECTED_SHA256_HEADER: &str = "x-folio-expected-sha256";
 /// `1` writes even though the file changed on disk (the user confirmed).
 pub const OVERWRITE_HEADER: &str = "x-folio-overwrite";
 const FALLBACK_NAME: &str = "Document";
-/// File systems count names in bytes (usually 255); this leaves room.
-const MAX_NAME_BYTES: usize = 200;
+/// File systems count names in bytes (usually 255); this leaves room. Also
+/// the limit for other names Folio shows, such as recovery titles.
+pub const MAX_NAME_BYTES: usize = 200;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SaveError {
@@ -37,6 +38,13 @@ pub enum SaveError {
     WriteFailed,
     #[error("This file is read-only.")]
     ReadOnly,
+    #[error("Folio keeps its own data in this folder. Choose another folder.")]
+    Reserved,
+    /// The new version could not take the file's place, and its previous
+    /// version could not be put back: that version was kept under this
+    /// name, in the same folder.
+    #[error("Folio could not replace the file or put its previous version back. That version was kept as \u{201c}{0}\u{201d} in the same folder.")]
+    KeptCopy(String),
 }
 
 impl SaveError {
@@ -47,6 +55,8 @@ impl SaveError {
             SaveError::InvalidRequest => "invalid-request",
             SaveError::WriteFailed => "write-failed",
             SaveError::ReadOnly => "read-only",
+            SaveError::Reserved => "reserved-location",
+            SaveError::KeptCopy(_) => "kept-copy",
         }
     }
 }
@@ -84,10 +94,12 @@ pub fn decode_header(value: &str) -> String {
         .into_owned()
 }
 
-/// Invisible formatting characters (Unicode category Cf) that can disguise a
-/// name, such as the right-to-left override (U+202E) that makes
-/// `report<U+202E>fdp.exe` read as `reportexe.pdf`. The joiners U+200C and
-/// U+200D stay: scripts and emoji need them.
+/// Characters that can disguise a name without being seen: formatting
+/// characters (Unicode category Cf) such as the right-to-left override
+/// (U+202E) that makes `report<U+202E>fdp.exe` read as `reportexe.pdf`, the
+/// line and paragraph separators, and fillers that show as blank space
+/// (Hangul fillers, the braille blank). The joiners U+200C and U+200D stay:
+/// scripts and emoji need them.
 fn is_hidden_format_character(c: char) -> bool {
     matches!(c,
         '\u{00AD}'
@@ -112,7 +124,32 @@ fn is_hidden_format_character(c: char) -> bool {
         | '\u{1D173}'..='\u{1D17A}'
         | '\u{E0001}'
         | '\u{E0020}'..='\u{E007F}'
+        // Line and paragraph separators.
+        | '\u{2028}'..='\u{2029}'
+        // Fillers: Hangul choseong and jungseong fillers, Hangul filler,
+        // halfwidth Hangul filler, braille pattern blank.
+        | '\u{115F}'..='\u{1160}'
+        | '\u{3164}'
+        | '\u{FFA0}'
+        | '\u{2800}'
     )
+}
+
+/// `text` without control characters and characters that cannot be seen
+/// ([`is_hidden_format_character`]).
+fn visible_characters(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars()
+        .filter(|&c| !c.is_control() && !is_hidden_format_character(c))
+}
+
+/// A name to show that is not a file name (recovery titles): the characters
+/// [`sanitize_file_name`] keeps visible, trimmed, and at most `max_bytes` of
+/// UTF-8, cut between characters.
+pub fn clean_display_text(text: &str, max_bytes: usize) -> String {
+    let visible: String = visible_characters(text).collect();
+    truncate_to_bytes(visible.trim(), max_bytes)
+        .trim_end()
+        .to_owned()
 }
 
 /// The longest prefix of `text` that fits in `max` bytes, cut between
@@ -133,13 +170,8 @@ fn truncate_to_bytes(text: &str, max: usize) -> &str {
 /// and at most 200 bytes long (UTF-8).
 pub fn sanitize_file_name(name: &str) -> String {
     let last = name.rsplit(['/', '\\']).next().unwrap_or_default();
-    let cleaned: String = last
-        .chars()
-        .filter(|&c| {
-            !c.is_control()
-                && !is_hidden_format_character(c)
-                && !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')
-        })
+    let cleaned: String = visible_characters(last)
+        .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
         .collect();
     let trimmed = cleaned.trim().trim_matches('.').trim();
     // Keep the extension (and its case) when there is one.
@@ -213,8 +245,12 @@ fn file_identity(_path: &Path, _metadata: &Metadata) -> Option<(u64, u64)> {
 #[derive(Debug, PartialEq, Eq)]
 enum ReplaceError {
     Failed(SaveError),
-    /// The target no longer matches the stamp it was checked against.
+    /// The target no longer matches the stamp it was checked against, or it
+    /// is gone.
     Changed,
+    /// The target is gone and its previous version was kept under this name
+    /// in the same folder (the only copy of that version).
+    KeptCopy(String),
 }
 
 impl From<std::io::Error> for ReplaceError {
@@ -274,6 +310,7 @@ fn default_file_mode() -> u32 {
 /// Gives the finished temporary file the permissions the target has (or a
 /// new file would get) and, on macOS, its ACL and extended attributes
 /// (Finder tags, quarantine). Windows keeps them through `ReplaceFileW`.
+/// For a new file this is best effort: it is already private (0600).
 fn finish_permissions(
     temporary: &Path,
     target: &Path,
@@ -282,11 +319,16 @@ fn finish_permissions(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = match existing {
-            Some(metadata) => metadata.permissions().mode() & 0o7777,
-            None => default_file_mode(),
-        };
-        std::fs::set_permissions(temporary, std::fs::Permissions::from_mode(mode))?;
+        match existing {
+            Some(metadata) => {
+                let mode = metadata.permissions().mode() & 0o7777;
+                std::fs::set_permissions(temporary, std::fs::Permissions::from_mode(mode))?;
+            }
+            None => {
+                let mode = std::fs::Permissions::from_mode(default_file_mode());
+                let _ = std::fs::set_permissions(temporary, mode);
+            }
+        }
     }
     #[cfg(target_os = "macos")]
     if existing.is_some() {
@@ -322,49 +364,82 @@ fn copy_acl_and_attributes(from: &Path, to: &Path) {
     }
 }
 
+/// Why the new version did not take the target's place.
+#[derive(Debug)]
+// Only Windows replaces a file in more than one step.
+#[cfg_attr(not(windows), allow(dead_code))]
+enum SwapError {
+    /// Nothing changed: the target is as it was.
+    Failed,
+    /// The target was gone before the swap.
+    TargetMissing,
+    /// The target is gone; its previous version only exists in this file.
+    KeptCopy(PathBuf),
+}
+
 /// Moves the temporary file over the target. Windows replaces existing
-/// files with `ReplaceFileW`, which keeps their attributes and ACL.
+/// files with `ReplaceFileW`, which keeps their attributes and ACL, through
+/// a backup file: if the new version cannot be moved in, the previous one
+/// is put back from the backup instead of being lost.
 #[cfg(windows)]
-fn swap_into_place(temporary: &Path, target: &Path, replacing: bool) -> std::io::Result<()> {
+fn swap_into_place(temporary: &Path, target: &Path, replacing: bool) -> Result<(), SwapError> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::ERROR_UNABLE_TO_MOVE_REPLACEMENT;
     use windows_sys::Win32::Storage::FileSystem::{ReplaceFileW, REPLACEFILE_IGNORE_MERGE_ERRORS};
     if !replacing {
-        return std::fs::rename(temporary, target);
+        return std::fs::rename(temporary, target).map_err(|_| SwapError::Failed);
     }
+    let backup = temporary.with_extension("bak");
     let wide =
         |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain(Some(0)).collect() };
-    let (target_wide, temporary_wide) = (wide(target), wide(temporary));
-    // SAFETY: both paths are NUL-terminated; the optional arguments are null.
+    let (target_wide, temporary_wide, backup_wide) = (wide(target), wide(temporary), wide(&backup));
+    // SAFETY: the three paths are NUL-terminated; the reserved arguments are
+    // null.
     let replaced = unsafe {
         ReplaceFileW(
             target_wide.as_ptr(),
             temporary_wide.as_ptr(),
-            std::ptr::null(),
+            backup_wide.as_ptr(),
             REPLACEFILE_IGNORE_MERGE_ERRORS,
             std::ptr::null(),
             std::ptr::null(),
         )
     };
     if replaced != 0 {
+        // The previous version, no longer needed.
+        let _ = std::fs::remove_file(&backup);
         return Ok(());
     }
-    let error = std::io::Error::last_os_error();
-    // The old file is gone but the new one kept its temporary name.
-    if error.raw_os_error() == Some(ERROR_UNABLE_TO_MOVE_REPLACEMENT as i32) && !target.exists() {
-        return std::fs::rename(temporary, target);
+    if target.exists() {
+        // Both files kept their names (ERROR_UNABLE_TO_MOVE_REPLACEMENT with a
+        // backup name, and most other failures).
+        let _ = std::fs::remove_file(&backup);
+        return Err(SwapError::Failed);
     }
-    Err(error)
+    if backup.exists() {
+        // ERROR_UNABLE_TO_MOVE_REPLACEMENT_2: the previous version has the
+        // backup name and the new one its temporary name.
+        return match std::fs::rename(&backup, target) {
+            Ok(()) => Err(SwapError::Failed),
+            Err(_) => Err(SwapError::KeptCopy(backup)),
+        };
+    }
+    Err(SwapError::TargetMissing)
 }
 
+/// Moves the temporary file over the target: `rename` replaces it in one
+/// step, so after a failure the target is as it was.
 #[cfg(not(windows))]
-fn swap_into_place(temporary: &Path, target: &Path, _replacing: bool) -> std::io::Result<()> {
-    std::fs::rename(temporary, target)
+fn swap_into_place(temporary: &Path, target: &Path, _replacing: bool) -> Result<(), SwapError> {
+    std::fs::rename(temporary, target).map_err(|_| SwapError::Failed)
 }
 
 /// Writes `bytes` over `target` through a private temporary file in the same
 /// folder. With `unchanged`, the target must still match that stamp right
-/// before it is replaced.
+/// before it is replaced (a target that is gone by then counts as changed).
+///
+/// Every failure deletes the temporary file: the new version is still in
+/// the app. The only file left behind is a previous version that could not
+/// be put back after a failed swap ([`ReplaceError::KeptCopy`]).
 fn replace_file(
     target: &Path,
     bytes: &[u8],
@@ -394,7 +469,23 @@ fn replace_file(
                 return Err(ReplaceError::Changed);
             }
         }
-        swap_into_place(&temporary, target, existing.is_some())?;
+        match swap_into_place(&temporary, target, existing.is_some()) {
+            Ok(()) => {}
+            Err(SwapError::Failed) => return Err(ReplaceError::Failed(SaveError::WriteFailed)),
+            // Save must not bring back a file someone removed.
+            Err(SwapError::TargetMissing) if unchanged.is_some() => {
+                return Err(ReplaceError::Changed)
+            }
+            // Save As: the chosen place is free now.
+            Err(SwapError::TargetMissing) => std::fs::rename(&temporary, target)?,
+            Err(SwapError::KeptCopy(kept)) => {
+                let name = kept
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                return Err(ReplaceError::KeptCopy(name));
+            }
+        }
         // Make the rename itself durable.
         #[cfg(unix)]
         if let Ok(folder) = std::fs::File::open(directory) {
@@ -402,8 +493,7 @@ fn replace_file(
         }
         Ok(())
     })();
-    // Never delete the only remaining copy of the document.
-    if written.is_err() && (target.exists() || existing.is_none()) {
+    if written.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
     written
@@ -419,6 +509,7 @@ pub fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), SaveError> {
     replace_file(target, bytes, None).map_err(|error| match error {
         ReplaceError::Failed(error) => error,
         ReplaceError::Changed => SaveError::WriteFailed,
+        ReplaceError::KeptCopy(name) => SaveError::KeptCopy(name),
     })
 }
 
@@ -478,6 +569,13 @@ pub enum WriteOutcome {
     Unavailable {
         message: String,
     },
+    /// The file could not be replaced and its previous version could not be
+    /// put back: that version was kept as `name` in the same folder. The
+    /// document is still unsaved.
+    KeptCopy {
+        name: String,
+        message: String,
+    },
 }
 
 impl WriteOutcome {
@@ -526,6 +624,10 @@ pub fn write_back(
     match replace_file(path, bytes, Some(&stamp)) {
         Ok(()) => WriteOutcome::Saved,
         Err(ReplaceError::Changed) => WriteOutcome::ChangedOnDisk,
+        Err(ReplaceError::KeptCopy(name)) => WriteOutcome::KeptCopy {
+            message: SaveError::KeptCopy(name.clone()).to_string(),
+            name,
+        },
         Err(ReplaceError::Failed(SaveError::ReadOnly)) => {
             WriteOutcome::unavailable(READ_ONLY_MESSAGE)
         }
@@ -604,6 +706,14 @@ mod tests {
             sanitize_file_name("\u{FEFF}a\u{200B}b\u{200E}\u{2066}c\u{2069}.pdf"),
             "abc.pdf"
         );
+        // Line breaks of any kind, and fillers that only look like space.
+        assert_eq!(
+            sanitize_file_name(
+                "a\u{2028}b\u{2029}c\u{115F}\u{1160}d\u{3164}e\u{FFA0}f\u{2800}.pdf"
+            ),
+            "abcdef.pdf"
+        );
+        assert_eq!(sanitize_file_name("\u{3164}\u{2800}"), "Document.pdf");
         // Joiners are part of scripts and emoji.
         let family = "👨\u{200D}👩\u{200D}👧.pdf";
         assert_eq!(sanitize_file_name(family), family);
@@ -708,6 +818,50 @@ mod tests {
         let stamp = FileStamp::of(&target).unwrap();
         assert_eq!(replace_file(&target, PDF, Some(&stamp)), Ok(()));
         assert_eq!(std::fs::read(&target).unwrap(), PDF);
+    }
+
+    #[test]
+    fn leaves_nothing_behind_when_the_file_goes_away_while_it_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("a.pdf");
+        std::fs::write(&target, b"%PDF-1.4 old").unwrap();
+        let stamp = FileStamp::of(&target).unwrap();
+        std::fs::remove_file(&target).unwrap();
+        assert_eq!(
+            replace_file(&target, PDF, Some(&stamp)),
+            Err(ReplaceError::Changed)
+        );
+        // Save does not bring the file back, nor leave its temporary file.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        assert_eq!(
+            write_back(&target, PDF, Some(&sha256_hex(b"%PDF-1.4 old")), false),
+            WriteOutcome::unavailable(MISSING_MESSAGE)
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_keeps_its_private_mode_when_it_cannot_get_the_usual_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let temporary = dir.path().join(".probe");
+        drop(create_private_file(&temporary).unwrap());
+        // A missing temporary file cannot be changed: still no error.
+        finish_permissions(
+            &dir.path().join(".missing"),
+            &dir.path().join("new.pdf"),
+            None,
+        )
+        .unwrap();
+        finish_permissions(&temporary, &dir.path().join("new.pdf"), None).unwrap();
+        let mode = std::fs::metadata(&temporary).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, default_file_mode());
+        // The mode of a file that is replaced must carry over.
+        let existing = std::fs::metadata(&temporary).unwrap();
+        assert!(
+            finish_permissions(&dir.path().join(".missing"), &temporary, Some(&existing)).is_err()
+        );
     }
 
     #[test]
@@ -836,6 +990,20 @@ mod tests {
         assert_eq!(
             json(WriteOutcome::unavailable("Gone.")),
             serde_json::json!({ "status": "unavailable", "message": "Gone." })
+        );
+        let kept = SaveError::KeptCopy(".folio-0123.bak".into());
+        assert_eq!(kept.code(), "kept-copy");
+        assert!(kept.to_string().contains("\u{201c}.folio-0123.bak\u{201d}"));
+        assert_eq!(
+            json(WriteOutcome::KeptCopy {
+                name: ".folio-0123.bak".into(),
+                message: kept.to_string(),
+            }),
+            serde_json::json!({
+                "status": "kept-copy",
+                "name": ".folio-0123.bak",
+                "message": kept.to_string(),
+            })
         );
     }
 

@@ -2,6 +2,8 @@
 //! waiting for the user to accept them in the app.
 //!
 //! ```text
+//! incoming/.lock                      held while a host checks and claims room
+//! incoming/<uuid>/announced           the size the extension announced
 //! incoming/<uuid>/document.pdf.part   while the host receives it
 //! incoming/<uuid>/document.pdf        complete and verified
 //! incoming/<uuid>/meta.json           { name, size, createdAt }, written last
@@ -15,10 +17,14 @@
 //! also offers every complete transfer nobody answered yet.
 //!
 //! At most [`MAX_PENDING`] transfers totalling [`MAX_PENDING_BYTES`] wait at
-//! a time. Entries are deleted when declined, when their grant is released,
-//! once older than a day, and (unfinished ones) once nothing was written to
-//! them for a quarter of an hour; the app also deletes accepted ones at
-//! startup.
+//! a time. Several hosts can run at once (one per extension connection), so
+//! a host checks the limits and creates its transfer folder while it holds
+//! [`lock`], and a transfer that is still arriving counts with the size its
+//! extension announced.
+//!
+//! Entries are deleted when declined, when their grant is released, once
+//! older than a day, and (unfinished ones) once nothing was written to them
+//! for a quarter of an hour; the app also deletes accepted ones at startup.
 
 use crate::paths;
 use serde::{Deserialize, Serialize};
@@ -31,6 +37,10 @@ pub const INCOMING_DIR: &str = "incoming";
 pub const DOCUMENT_FILE: &str = "document.pdf";
 pub const PART_FILE: &str = "document.pdf.part";
 pub const META_FILE: &str = "meta.json";
+/// The size announced for a transfer that is arriving, in decimal.
+pub const ANNOUNCED_FILE: &str = "announced";
+/// Taken by hosts while they check the limits and claim room.
+pub const LOCK_FILE: &str = ".lock";
 const ACCEPTED_MARKER: &str = "accepted";
 const MAX_META_BYTES: u64 = 64 * 1024;
 /// Unanswered transfers are deleted after this long.
@@ -183,27 +193,70 @@ pub fn purge(base: &Path, now: SystemTime, accepted: bool) -> usize {
     removed
 }
 
+/// Records the size the extension announced, before the host answers
+/// `ready`, so other hosts count the whole transfer from the start.
+pub fn write_announced(dir: &Path, size: u64) -> std::io::Result<()> {
+    std::fs::write(dir.join(ANNOUNCED_FILE), size.to_string())
+}
+
+fn read_announced(dir: &Path) -> Option<u64> {
+    let bytes = paths::read_limited(&dir.join(ANNOUNCED_FILE), 32).ok()?;
+    std::str::from_utf8(&bytes).ok()?.trim().parse().ok()
+}
+
+/// Exclusive access to the spool's limits, across processes: an advisory
+/// lock on [`LOCK_FILE`] (`flock` on Unix, `LockFileEx` on Windows),
+/// released when this is dropped.
+#[derive(Debug)]
+pub struct SpoolLock {
+    _file: std::fs::File,
+}
+
+/// Waits for the spool lock, creating the spool folder if needed.
+pub fn lock(base: &Path) -> std::io::Result<SpoolLock> {
+    paths::create_private_dir(base)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(base.join(LOCK_FILE))?;
+    file.lock()?;
+    Ok(SpoolLock { _file: file })
+}
+
 /// Transfers waiting for an answer or still arriving.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Usage {
     pub count: usize,
+    /// Their sizes: as announced, or what is on disk if that is more.
     pub bytes: u64,
+    /// What transfers that are still arriving will add to the disk.
+    pub arriving: u64,
 }
 
-/// What the spool holds that has not been answered yet, to keep it bounded.
+/// What the spool holds or has promised room for that has not been answered
+/// yet, to keep it bounded.
 pub fn usage(base: &Path) -> Usage {
     let mut usage = Usage::default();
     for (_, dir) in entries(base) {
         if is_accepted(&dir) {
             continue;
         }
-        let size = |name: &str| std::fs::metadata(dir.join(name)).map(|m| m.len()).ok();
         usage.count += 1;
-        usage.bytes += read_meta(&dir)
-            .map(|meta| meta.size)
-            .or_else(|| size(DOCUMENT_FILE))
-            .or_else(|| size(PART_FILE))
-            .unwrap_or(0);
+        if let Some(meta) = read_meta(&dir) {
+            usage.bytes = usage.bytes.saturating_add(meta.size);
+            continue;
+        }
+        let size = |name: &str| std::fs::metadata(dir.join(name)).map(|m| m.len()).ok();
+        let on_disk = size(PART_FILE).or_else(|| size(DOCUMENT_FILE)).unwrap_or(0);
+        let announced = read_announced(&dir).unwrap_or(0);
+        usage.bytes = usage.bytes.saturating_add(on_disk.max(announced));
+        usage.arriving = usage
+            .arriving
+            .saturating_add(announced.saturating_sub(on_disk));
     }
     usage
 }
@@ -221,6 +274,18 @@ pub fn pending_requests(base: &Path) -> Vec<TransferRequest> {
         .collect();
     pending.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.id.cmp(&b.1.id)));
     pending.into_iter().map(|(_, request)| request).collect()
+}
+
+/// Whether `path` has the shape of a spooled document of any Folio:
+/// `…/incoming/<uuid>/document.pdf` (or its `.part`).
+pub fn looks_like_spool_document(path: &Path) -> bool {
+    let name = path.file_name();
+    let dir = path.parent();
+    let id = dir.and_then(Path::file_name).and_then(|id| id.to_str());
+    let spool = dir.and_then(Path::parent).and_then(Path::file_name);
+    (name == Some(DOCUMENT_FILE.as_ref()) || name == Some(PART_FILE.as_ref()))
+        && id.is_some_and(is_valid_id)
+        && spool == Some(INCOMING_DIR.as_ref())
 }
 
 /// The transfer whose spooled document `path` is (macOS hands the app the
@@ -410,9 +475,64 @@ mod tests {
             usage(dir.path()),
             Usage {
                 count: 2,
-                bytes: 14
+                bytes: 14,
+                arriving: 0,
             }
         );
+    }
+
+    #[test]
+    fn counts_arriving_transfers_with_their_announced_size() {
+        let dir = tempfile::tempdir().unwrap();
+        // 6 of 1000 announced bytes have arrived.
+        let arriving = partial(dir.path(), b"%PDF-1");
+        write_announced(&dir.path().join(&arriving), 1000).unwrap();
+        // Announced, nothing received yet.
+        let announced = new_id();
+        std::fs::create_dir(dir.path().join(&announced)).unwrap();
+        write_announced(&dir.path().join(&announced), 300).unwrap();
+        assert_eq!(
+            usage(dir.path()),
+            Usage {
+                count: 2,
+                bytes: 1300,
+                arriving: 994 + 300,
+            }
+        );
+        // More on disk than announced counts as what is on disk.
+        let grown = partial(dir.path(), &[b'x'; 50]);
+        write_announced(&dir.path().join(&grown), 10).unwrap();
+        assert_eq!(usage(dir.path()).bytes, 1350);
+        assert_eq!(usage(dir.path()).arriving, 1294);
+        // Folio's lock file is not a transfer.
+        drop(lock(dir.path()).unwrap());
+        assert!(dir.path().join(LOCK_FILE).is_file());
+        assert_eq!(usage(dir.path()).count, 3);
+    }
+
+    #[test]
+    fn the_spool_lock_is_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("incoming");
+        let held = lock(&base).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let waiting = {
+            let base = base.clone();
+            std::thread::spawn(move || {
+                let second = lock(&base).unwrap();
+                sender.send(()).unwrap();
+                drop(second);
+            })
+        };
+        // The second taker waits while the lock is held.
+        assert!(receiver
+            .recv_timeout(std::time::Duration::from_millis(300))
+            .is_err());
+        drop(held);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        waiting.join().unwrap();
     }
 
     #[test]
@@ -459,6 +579,29 @@ mod tests {
             transfer_for_document(dir.path(), &other.join(DOCUMENT_FILE)),
             None
         );
+    }
+
+    #[test]
+    fn recognizes_the_shape_of_spooled_documents() {
+        let id = new_id();
+        let base = Path::new("/somewhere/io.github.albird97.folio/incoming");
+        for name in [DOCUMENT_FILE, PART_FILE] {
+            assert!(looks_like_spool_document(&base.join(&id).join(name)));
+        }
+        assert!(looks_like_spool_document(
+            &Path::new("/other/incoming").join(&id).join(DOCUMENT_FILE)
+        ));
+        for path in [
+            base.join(&id).join(META_FILE),
+            base.join("not-a-uuid").join(DOCUMENT_FILE),
+            Path::new("/somewhere/outgoing")
+                .join(&id)
+                .join(DOCUMENT_FILE),
+            base.join(DOCUMENT_FILE),
+            PathBuf::from(DOCUMENT_FILE),
+        ] {
+            assert!(!looks_like_spool_document(&path), "{}", path.display());
+        }
     }
 
     #[test]

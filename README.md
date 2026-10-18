@@ -165,7 +165,6 @@ AltGr combinations never trigger shortcuts.
 - **Properties:** title, author, subject and keywords are editable in the Properties panel.
 - Folio follows the document's permission settings (for example, a PDF that does not allow
   comments), and saved copies of password-protected PDFs keep the same password and permissions.
-
 - **Clipboard:** with the pages focused, ⌘C/⌘X/⌘V (Ctrl+C/X/V) copy, cut and paste the selected
   comments, also into another open document; an image on the clipboard is pasted as an added
   image. Selected page text is copied as usual.
@@ -174,7 +173,9 @@ Folio never overwrites the files you open on its own. **Save** (⌘S / Ctrl+S) w
 back to the file you opened (or last saved as) when you choose it: through a temporary file and an
 atomic replace, so an interrupted save never leaves a half-written file. If another program
 changed the file since Folio read it, Folio asks whether to replace it or save elsewhere; files
-that cannot be written (read-only, moved) fall back to **Save as**. **Save as** (⇧⌘S /
+that cannot be written (read-only, moved) fall back to **Save as**. If the operating system lets
+Folio move the old version aside but not put the new one in place, Folio puts the old version
+back; should even that fail, it keeps the old version next to the file and says where. **Save as** (⇧⌘S /
 Ctrl+Shift+S) writes the edited document to a new file you choose, and later saves go there; its
 menu also offers a copy with comments flattened into the pages, and **Save a copy of the
 original**, which writes the opened file unchanged. The Rust layer accepts only PDF data. The
@@ -192,8 +193,12 @@ Passwords are never stored, so protected documents ask for theirs again.
 The data folder is `~/Library/Application Support/io.github.albird97.folio` on macOS,
 `%LOCALAPPDATA%\io.github.albird97.folio` on Windows and `~/.local/share/io.github.albird97.folio`
 on Linux. It holds recovery data, the recent files list, documents waiting to be accepted from
-Chrome (deleted when declined or after 24 hours) and, on Windows, the Chrome registration. Only
-your user can open it. `FOLIO_DATA_DIR` moves it (used by tests).
+Chrome (deleted when declined or after 24 hours) and, on Windows, the Chrome registration. Folio
+creates it so that only your user can open it, and never opens files inside it as documents
+(documents from Chrome only open through their prompt). While Folio runs it holds a lock there,
+so a second copy started by accident does not clean up anything the first one still uses.
+`FOLIO_DATA_DIR` moves the folder, and in debug builds `FOLIO_NATIVE_HOST_NO_LAUNCH=1` keeps the
+native messaging host from starting the app (both used by tests).
 
 ## Installing and testing the Chrome extension
 
@@ -257,15 +262,23 @@ scripts on its own pages and the Web Store; Folio says so where that matters.
 The extension hands documents to the desktop app through Chrome native messaging. The host is the
 Folio desktop binary itself, registered as `io.github.albird97.folio`.
 
-1. Install and open Folio for desktop, choose **File → Connect to Chrome…** and confirm.
+1. Install Folio for desktop (move it to Applications on macOS first), open it, choose
+   **File → Connect to Chrome…** and select **Connect**. The dialog defaults to **Cancel**, and
+   only the app's own menu can connect: the app's web page cannot.
 2. In Chrome, use **Open in Folio for desktop** in the editor's save menu or in the side panel.
    Chrome asks once for the `nativeMessaging` permission.
 3. Folio for desktop asks before it opens the document. Declined documents are deleted.
 
 If the app is missing or not connected, the extension explains how to connect it, and
-**Settings → Folio for desktop → Check connection** tests the link. The host checks the calling
-extension's ID, accepts only PDFs (up to 512 MB, at most three waiting at a time), verifies their
-size and SHA-256 and spools them in the data folder until you answer.
+**Settings → Folio for desktop → Check connection** tests the link. **Connect to Chrome…** refuses
+to register a copy of Folio that others could replace: one running from the temporary folder, a
+removable or RAM disk, a folder others can write to, or (on macOS) a translocated download. Move
+Folio to Applications (macOS) or install it normally (Windows), then try again.
+
+The host answers only the official extension ID, accepts only PDFs (up to 512 MB, at most three
+waiting or arriving at a time, and only with enough free disk space, even when several Chrome
+connections send at once), verifies their size and SHA-256 and spools them in the data folder
+until you answer.
 
 Where the registration lives (written by **Connect to Chrome…**, removed by its **Disconnect**):
 

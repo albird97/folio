@@ -131,9 +131,14 @@ existing text objects (see [§4](#4-pdf-engines-and-licensing)).
   the official extension id is answered; messages are length-prefixed JSON objects of at most
   12 MiB, parsed into fixed types (`hello`, `begin`, `chunk`, `end`); documents must be PDFs of
   at most 512 MB, arrive in order and match their announced size and SHA-256; no more than three
-  may wait, with disk-space checks; they are spooled in the data folder and the app asks the user
-  before opening one. Nothing runs a shell. Registration with Chrome is a native menu action
-  with a native confirmation; the webview cannot register anything.
+  may wait or arrive, checked under a lock shared by all host processes together with the free
+  disk space; they are spooled in the data folder and the app asks the user before opening one.
+  Paths inside the data folder are never opened as documents. Nothing runs a shell.
+- **Registration with Chrome** is a native menu action (File → Connect to Chrome…) with a native
+  confirmation whose default is Cancel; the webview cannot register anything. Only the official
+  extension id is registered and answered, and a copy of Folio that others could replace
+  (temporary or removable locations, folders writable by others, App Translocation) refuses to
+  register itself.
 
 **Extension**
 
@@ -329,6 +334,37 @@ performance profiling, a security review (IPC fuzzing, CSP, permissions), auto-u
 (`tauri-plugin-updater` with signed manifests), Web Store submission and release notes.
 
 ## 6. Results
+
+### Phase 4 and 5 results
+
+#### Verified in this environment (Linux)
+
+| Area                | What was run                                                                    | Result                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Shared packages     | `pnpm test` (Vitest)                                                            | 349 tests passed (50 files): Save decisions, recovery (restore with history, passwords asked again, damaged records refused), print ranges and resolution, dialogs that settle their questions, recent files, the transfer prompt, ZIP writing (read back with Python's zipfile), text extraction, URL downloads and the native messaging client against a scripted host |
+| Types, lint, format | `pnpm typecheck`, `pnpm lint`, `pnpm format:check`                              | Clean                                                                                                                                                                                                                                                                                                                                                                    |
+| Rust                | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`                   | Clean; 148 unit and 5 integration tests passed (also clippy-clean for `x86_64-pc-windows-msvc`)                                                                                                                                                                                                                                                                          |
+| Desktop UI          | `pnpm build:desktop:web` + Playwright (Chromium)                                | 33 tests passed, adding printing through the print layout (printed to a PDF and counted), crash recovery after closing the window (and nothing kept once saved, undone or discarded), copy and paste of comments and images, and filled-in form values                                                                                                                   |
+| Extension           | `pnpm build:extension` + Playwright (Chromium)                                  | 35 tests passed, adding opening from a web address (local server; downloads without cookies or referrer, sign-in consent, refused access, errors), the popup and side panel tab tools, the side panel page tools (files read back), printing, recovery and a check for CSP violations from the first script on                                                           |
+| Native messaging    | Playwright: the extension and the real desktop binary as Chrome's native host   | 3 tests passed: documents sent from the side panel and the editor arrive in the desktop spool byte for byte (the editor's with its changes), and a missing host is explained                                                                                                                                                                                             |
+| Native desktop      | `pnpm build:desktop:linux` + `xvfb-run node tests/desktop/tauri-driver.e2e.mjs` | 18 tests passed in WebKitGTK: Save through a grant (refusing a file changed on disk), recovery storage, a second launch handing its file to the running window, Chrome transfers spooled and opened only once accepted, spooled and data-folder paths opening only as transfers, and no way for the page to register with Chrome                                         |
+
+Printed output was also rendered with poppler to check that pages fill the sheet and turn to fit
+it, and the filled-form fixture was checked with poppler.
+
+#### Verified only in CI
+
+- The macOS (universal `.dmg`) and Windows (`.msi`, NSIS `.exe`) installers build, and
+  `cargo test` passes on macOS and Windows runners.
+
+#### Not yet verified anywhere
+
+- On a real Mac or Windows PC: Save and Save As through the native dialogs, printing through the
+  system dialog, recovery, recent files, single instance, window state, menus and shortcuts,
+  copy and paste in WebKit and WebView2, the native messaging host started by Chrome, and the
+  Connect to Chrome dialog.
+- Chrome's own permission prompts and the activeTab grant from a click on the toolbar button
+  (stubbed in the e2e tests, which cannot click browser UI).
 
 ### Phase 3 results
 

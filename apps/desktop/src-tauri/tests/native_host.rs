@@ -1,5 +1,9 @@
 //! Runs the real binary the way Chrome starts a native messaging host and
 //! sends a document through it.
+//!
+//! Debug builds only: release builds ignore FOLIO_NATIVE_HOST_NO_LAUNCH and
+//! would start the app for every document.
+#![cfg(debug_assertions)]
 
 use base64::Engine as _;
 use serde_json::{json, Value};
@@ -160,6 +164,12 @@ fn deletes_an_unfinished_transfer_when_chrome_disconnects() {
 #[test]
 fn refuses_extensions_folio_does_not_know() {
     let data = tempfile::tempdir().unwrap();
+    // A list of other extensions, as an earlier build kept, allows nothing.
+    std::fs::write(
+        data.path().join("native-messaging.json"),
+        r#"{"extensionIds":["abcdefghijklmnopabcdefghijklmnop"]}"#,
+    )
+    .unwrap();
     for origin in [
         "chrome-extension://abcdefghijklmnopabcdefghijklmnop/",
         "chrome-extension://ghfckfnleaidabfhaplbnfknipajedan",
@@ -174,21 +184,6 @@ fn refuses_extensions_folio_does_not_know() {
         assert!(!host.finish().success(), "{origin}");
     }
     assert!(!data.path().join("incoming").exists());
-}
-
-#[test]
-fn answers_extensions_the_user_allowed_in_folio() {
-    let data = tempfile::tempdir().unwrap();
-    let origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
-    // Folio's own record of the extensions the user confirmed.
-    std::fs::write(
-        data.path().join("native-messaging.json"),
-        r#"{"extensionIds":["abcdefghijklmnopabcdefghijklmnop"]}"#,
-    )
-    .unwrap();
-    let mut host = Host::start_as(origin, data.path(), &[]);
-    assert_eq!(host.ask(json!({ "type": "hello" }))["type"], "hello");
-    assert!(host.finish().success());
 }
 
 #[cfg(unix)]
@@ -215,4 +210,51 @@ fn clears_what_ended_hosts_left_behind() {
     assert_eq!(host.ask(json!({ "type": "hello" }))["type"], "hello");
     assert!(!dir.exists());
     assert!(host.finish().success());
+}
+
+/// The transfer folders in the spool (not its lock file).
+fn spooled(data: &std::path::Path) -> usize {
+    std::fs::read_dir(data.join("incoming"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn hosts_running_at_once_keep_the_spool_bounded() {
+    let data = tempfile::tempdir().unwrap();
+    let document = pdf();
+    let begin = json!({
+        "type": "begin",
+        "name": "a.pdf",
+        "size": document.len(),
+        "sha256": "0".repeat(64),
+    });
+    // One host per extension connection, all up before any transfer starts.
+    let mut hosts: Vec<Host> = (0..6).map(|_| Host::start(data.path(), &[])).collect();
+    for host in &mut hosts {
+        assert_eq!(host.ask(json!({ "type": "hello" }))["type"], "hello");
+    }
+    for host in &mut hosts {
+        host.send(&begin);
+    }
+    let replies: Vec<Value> = hosts.iter_mut().map(Host::receive).collect();
+    let ready = replies
+        .iter()
+        .filter(|reply| reply["type"] == "ready")
+        .count();
+    assert_eq!(ready, 3, "{replies:?}");
+    for reply in replies.iter().filter(|reply| reply["type"] != "ready") {
+        assert_eq!(reply["code"], "busy", "{reply}");
+    }
+    assert_eq!(spooled(data.path()), 3);
+    for host in hosts {
+        assert!(host.finish().success());
+    }
+    // Unfinished transfers go with their hosts.
+    assert_eq!(spooled(data.path()), 0);
 }

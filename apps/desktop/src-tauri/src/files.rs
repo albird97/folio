@@ -9,7 +9,12 @@
 //! cannot be scoped by event name, so a compromised page could still
 //! subscribe to Tauri's built-in `tauri://drag-*` events, which do carry
 //! paths. It still could not read those files.)
+//!
+//! Folio's own data folder and documents in a Chrome spool are never
+//! granted or remembered as ordinary files (see [`is_reserved_path`]): a
+//! document from Chrome only opens after the user accepts its transfer.
 
+use crate::incoming;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -38,17 +43,24 @@ pub struct OpenedFiles {
     pub skipped: Vec<String>,
     /// Names of files that could no longer be found when they were granted.
     pub unavailable: Vec<String>,
+    /// Names of files Folio does not open as ordinary files: its own data
+    /// and documents in a Chrome spool (see [`is_reserved_path`]).
+    pub refused: Vec<String>,
 }
 
 impl OpenedFiles {
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty() && self.skipped.is_empty() && self.unavailable.is_empty()
+        self.files.is_empty()
+            && self.skipped.is_empty()
+            && self.unavailable.is_empty()
+            && self.refused.is_empty()
     }
 
     fn append(&mut self, other: OpenedFiles) {
         self.files.extend(other.files);
         self.skipped.extend(other.skipped);
         self.unavailable.extend(other.unavailable);
+        self.refused.extend(other.refused);
     }
 }
 
@@ -64,6 +76,8 @@ pub enum FileError {
     TooLarge,
     #[error("The file could not be read.")]
     Unreadable,
+    #[error("Folio does not open files from its own data folder.")]
+    Reserved,
 }
 
 impl FileError {
@@ -74,6 +88,7 @@ impl FileError {
             FileError::NotFound => "not-found",
             FileError::TooLarge => "too-large",
             FileError::Unreadable => "unreadable",
+            FileError::Reserved => "reserved",
         }
     }
 }
@@ -101,6 +116,35 @@ pub fn is_likely_pdf_name(name: &str) -> bool {
 pub fn is_likely_pdf(path: &Path) -> bool {
     path.file_name()
         .is_none_or(|name| is_likely_pdf_name(&name.to_string_lossy()))
+}
+
+/// Whether Folio must not open, grant or remember `path` as an ordinary
+/// file: it is inside Folio's data folder (`data_dir`), or it looks like a
+/// document in a Chrome spool (`…/incoming/<uuid>/document.pdf`), whichever
+/// Folio it belongs to. Both the path as given and where it really leads
+/// count, so links do not get around it. Missing files are judged by where
+/// they would be.
+pub fn is_reserved_path(path: &Path, data_dir: Option<&Path>) -> bool {
+    let resolved = std::fs::canonicalize(path).ok().or_else(|| {
+        let folder = std::fs::canonicalize(path.parent()?).ok()?;
+        Some(folder.join(path.file_name()?))
+    });
+    let spellings = [Some(path), resolved.as_deref()];
+    if spellings
+        .iter()
+        .flatten()
+        .any(|path| incoming::looks_like_spool_document(path))
+    {
+        return true;
+    }
+    let Some(data_dir) = data_dir else {
+        return false;
+    };
+    let data_dir = std::fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    spellings
+        .iter()
+        .flatten()
+        .any(|path| path.starts_with(&data_dir))
 }
 
 /// Marks the id of a document the Chrome extension sent (see `incoming`). The
@@ -174,9 +218,23 @@ pub struct GrantInfo {
 #[derive(Debug, Default)]
 pub struct FileGrants {
     grants: Mutex<HashMap<String, Grant>>,
+    /// Folio's data folder, whose files are never granted.
+    data_dir: Option<PathBuf>,
 }
 
 impl FileGrants {
+    pub fn new(data_dir: Option<PathBuf>) -> Self {
+        FileGrants {
+            grants: Mutex::default(),
+            data_dir,
+        }
+    }
+
+    /// See [`is_reserved_path`].
+    pub fn is_reserved(&self, path: &Path) -> bool {
+        is_reserved_path(path, self.data_dir.as_deref())
+    }
+
     /// Registers a user-chosen file and returns its token.
     pub fn grant(&self, path: &Path) -> Result<GrantedFile, FileError> {
         if !is_likely_pdf(path) {
@@ -186,6 +244,9 @@ impl FileGrants {
         let metadata = std::fs::metadata(&canonical).map_err(|_| FileError::NotFound)?;
         if !metadata.is_file() {
             return Err(FileError::NotFound);
+        }
+        if self.is_reserved(path) {
+            return Err(FileError::Reserved);
         }
         // The name the user chose (not the symlink target's), so the name the
         // UI shows is the one `is_likely_pdf` checked.
@@ -255,6 +316,7 @@ impl FileGrants {
             let name = name.to_string_lossy().into_owned();
             match error {
                 FileError::NotPdf => opened.skipped.push(name),
+                FileError::Reserved => opened.refused.push(name),
                 _ if path.is_dir() => {}
                 _ => opened.unavailable.push(name),
             }
@@ -411,6 +473,40 @@ mod tests {
         fs::create_dir(&folder).unwrap();
         assert_eq!(grants.grant(&folder), Err(FileError::NotFound));
         assert!(grants.is_empty());
+    }
+
+    #[test]
+    fn never_grants_folios_own_files_or_spooled_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir(&data).unwrap();
+        let grants = FileGrants::new(Some(data.clone()));
+        // Folio's own data, also through a link.
+        let own = temp_pdf(&data, "notes.pdf");
+        assert_eq!(grants.grant(&own), Err(FileError::Reserved));
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link.pdf");
+            std::os::unix::fs::symlink(&own, &link).unwrap();
+            assert_eq!(grants.grant(&link), Err(FileError::Reserved));
+        }
+        // A document in any Chrome spool, this Folio's or not.
+        let spool = dir
+            .path()
+            .join("elsewhere")
+            .join(incoming::INCOMING_DIR)
+            .join(incoming::new_id());
+        fs::create_dir_all(&spool).unwrap();
+        let spooled = temp_pdf(&spool, incoming::DOCUMENT_FILE);
+        assert_eq!(grants.grant(&spooled), Err(FileError::Reserved));
+        assert!(grants.is_reserved(&data.join("missing.pdf")));
+        let opened = grants.grant_all(&[own, spooled, temp_pdf(dir.path(), "ok.pdf")]);
+        assert_eq!(opened.files.len(), 1);
+        assert_eq!(opened.refused, ["notes.pdf", "document.pdf"]);
+        assert!(opened.unavailable.is_empty() && opened.skipped.is_empty());
+        // Ordinary files next to the data folder are fine.
+        assert!(!grants.is_reserved(&dir.path().join("data-2").join("a.pdf")));
+        assert!(!is_reserved_path(&dir.path().join("ok.pdf"), None));
     }
 
     #[test]
@@ -593,6 +689,7 @@ mod tests {
             files: vec![file.clone()],
             skipped: vec!["b.png".into()],
             unavailable: vec![],
+            refused: vec!["document.pdf".into()],
         };
         let second = OpenedFiles {
             unavailable: vec!["c.pdf".into()],
@@ -604,6 +701,7 @@ mod tests {
         assert_eq!(drained.files, vec![file.clone()]);
         assert_eq!(drained.skipped, ["b.png"]);
         assert_eq!(drained.unavailable, ["c.pdf"]);
+        assert_eq!(drained.refused, ["document.pdf"]);
         let later = OpenedFiles {
             files: vec![file],
             ..OpenedFiles::default()

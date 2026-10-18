@@ -1,5 +1,6 @@
 pub mod close_guard;
 mod commands;
+mod connect;
 pub mod files;
 pub mod incoming;
 pub mod menu;
@@ -50,11 +51,19 @@ pub struct Storage {
 }
 
 impl Storage {
-    pub fn new(data_dir: Option<PathBuf>) -> Self {
+    /// `alone`: no other copy of Folio uses the data directory (see
+    /// [`paths::lock_instance`]). Otherwise nothing that copy could still
+    /// be using is deleted.
+    pub fn new(data_dir: Option<PathBuf>, alone: bool) -> Self {
         Storage {
-            recovery: data_dir
-                .as_ref()
-                .map(|dir| RecoveryStore::new(dir.join("recovery"))),
+            recovery: data_dir.as_ref().map(|dir| {
+                let store = RecoveryStore::new(dir.join("recovery"));
+                if alone {
+                    store
+                } else {
+                    store.without_orphan_sweep()
+                }
+            }),
             recent: RecentFiles::load(data_dir.as_ref().map(|dir| dir.join("recent.json"))),
             incoming: data_dir.map(|dir| dir.join(incoming::INCOMING_DIR)),
         }
@@ -64,7 +73,12 @@ impl Storage {
 /// The File ▸ Open Recent submenu, refilled when the recent files change.
 struct RecentMenu(Mutex<Option<Submenu<Wry>>>);
 
-fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
+/// Keeps the instance lock (see [`paths::lock_instance`]) until Folio quits.
+struct InstanceLock {
+    _file: Option<std::fs::File>,
+}
+
+pub(crate) fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(MAIN_WINDOW)
 }
 
@@ -123,24 +137,26 @@ fn deliver(app: &AppHandle, opened: OpenedFiles) {
     focus_main_window(app);
 }
 
-/// Grants user-provided paths and delivers them to the UI. Documents in the
-/// Chrome spool (macOS hands them over through LaunchServices) are offered
-/// as transfers instead, so the user is asked first.
+/// Grants user-provided paths and delivers them to the UI. A document of a
+/// transfer waiting in Folio's own spool (macOS hands them over through
+/// LaunchServices) is offered as that transfer, so the user is asked first.
+/// Anything else in Folio's data folder or shaped like a spooled document
+/// is refused with a notice and never granted (see `files::is_reserved_path`).
 fn open_paths(app: &AppHandle, paths: &[PathBuf]) {
     let base = app.state::<Storage>().incoming.clone();
-    let (transfers, files): (Vec<_>, Vec<_>) = paths.iter().partition(|path| {
-        base.as_deref()
-            .and_then(|base| incoming::transfer_for_document(base, path))
-            .is_some()
-    });
-    if let Some(base) = base.as_deref() {
-        let ids: Vec<String> = transfers
-            .iter()
-            .filter_map(|path| incoming::transfer_for_document(base, path))
-            .collect();
-        offer_transfers(app, &ids);
+    let mut requests = Vec::new();
+    let mut files = Vec::new();
+    for path in paths {
+        let request = base.as_deref().and_then(|base| {
+            let id = incoming::transfer_for_document(base, path)?;
+            incoming::request_for(base, &id)
+        });
+        match request {
+            Some(request) => requests.push(request),
+            None => files.push(path.clone()),
+        }
     }
-    let files: Vec<PathBuf> = files.into_iter().cloned().collect();
+    offer_requests(app, requests);
     let opened = grant_paths(app, &files);
     deliver(app, opened);
 }
@@ -161,6 +177,7 @@ pub(crate) fn open_recent(app: &AppHandle, id: &str) -> OpenedFiles {
             opened.files.push(file);
         }
         Err(FileError::NotPdf) => opened.skipped.push(name),
+        Err(FileError::Reserved) => opened.refused.push(name),
         Err(_) => opened.unavailable.push(name),
     }
     opened
@@ -246,6 +263,8 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         if app.state::<Storage>().recent.clear() {
             recent_changed(app);
         }
+    } else if id == menu::CONNECT_CHROME.0 {
+        connect::start(app);
     } else if let Some(recent) = menu::recent_file_for(id) {
         let opened = open_recent(app, recent);
         deliver(app, opened);
@@ -282,6 +301,12 @@ pub fn run() {
         // Only the user may enter Folio's data folder, also an older one.
         let _ = paths::prepare_data_dir(dir);
     }
+    // Another copy may run next to this one, notably on macOS, which has no
+    // single-instance plugin. Only a copy that runs alone deletes what the
+    // other could still be using (accepted transfers, abandoned recovery
+    // records) and offers waiting transfers at startup.
+    let instance = data_dir.as_deref().and_then(paths::lock_instance);
+    let alone = data_dir.is_none() || instance.is_some();
     let builder = tauri::Builder::default();
     // First: a second launch hands over its arguments and exits before
     // anything else starts. macOS needs no plugin: LaunchServices routes
@@ -291,13 +316,14 @@ pub fn run() {
     builder
         .plugin(window_state_plugin(data_dir.as_deref()))
         .plugin(tauri_plugin_dialog::init())
-        .manage(FileGrants::default())
+        .manage(FileGrants::new(data_dir.clone()))
         .manage(LaunchQueue::default())
         .manage(TransferQueue::default())
         .manage(CloseGuard::default())
         .manage(RecentMenu(Mutex::new(None)))
-        .manage(Storage::new(data_dir))
-        .setup(|app| {
+        .manage(InstanceLock { _file: instance })
+        .manage(Storage::new(data_dir, alone))
+        .setup(move |app| {
             let handle = app.handle();
             let entries = handle.state::<Storage>().recent.menu_entries();
             let (menu, recent) = menu::build(handle, &entries)?;
@@ -312,9 +338,12 @@ pub fn run() {
             // released (Folio quit), ones nobody answered for a day and
             // leftovers of interrupted transfers are deleted. The others
             // still need the user's answer, so they are offered again.
-            if let Some(base) = handle.state::<Storage>().incoming.clone() {
-                incoming::purge(&base, SystemTime::now(), true);
-                offer_requests(handle, incoming::pending_requests(&base));
+            match handle.state::<Storage>().incoming.clone() {
+                Some(base) if alone => {
+                    incoming::purge(&base, SystemTime::now(), true);
+                    offer_requests(handle, incoming::pending_requests(&base));
+                }
+                _ => {}
             }
             // Windows and Linux pass files opened from the file manager as
             // arguments; the native messaging host passes `--incoming <id>`.
@@ -370,8 +399,6 @@ pub fn run() {
             commands::take_pending_transfers,
             commands::answer_transfer,
             commands::native_messaging_status,
-            commands::register_native_messaging,
-            commands::unregister_native_messaging,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Folio")
@@ -417,7 +444,7 @@ mod tests {
     #[test]
     fn storage_lives_in_the_data_directory() {
         let dir = tempfile::tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_path_buf()));
+        let storage = Storage::new(Some(dir.path().to_path_buf()), true);
         assert_eq!(storage.incoming, Some(dir.path().join("incoming")));
         storage
             .recovery
@@ -426,7 +453,7 @@ mod tests {
             .save_snapshot("doc", "t", b"{}")
             .unwrap();
         assert!(dir.path().join("recovery").join("doc").is_dir());
-        let without = Storage::new(None);
+        let without = Storage::new(None, true);
         assert!(without.recovery.is_none() && without.incoming.is_none());
     }
 }

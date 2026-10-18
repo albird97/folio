@@ -37,6 +37,15 @@ dirs = "7"
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 tauri-plugin-single-instance = "2.5"
 
+# Connect to Chrome asks with a safe default button (see `connect.rs`):
+# through rfd (which the dialog plugin uses) on macOS and Windows, and
+# through GTK (which Tauri uses) on Linux.
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+rfd = { version = "0.16", default-features = false, features = ["common-controls-v6"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

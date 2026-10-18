@@ -14,7 +14,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   copyFileSync,
   existsSync,
@@ -575,8 +575,59 @@ try {
       files: [],
       skipped: [],
       unavailable: [],
+      refused: [],
     });
     assert.ok(!existsSync(join(dataDir, 'incoming', declined)), 'declined documents are deleted');
+  });
+
+  await test("Folio's own data and spooled documents only open as transfers", async () => {
+    // macOS hands Folio the document of a waiting transfer (LaunchServices):
+    // it is offered like any transfer and not opened as a file.
+    const bytes = readFileSync(join(fixtures, 'outline-and-text.pdf'));
+    const id = randomUUID();
+    const entry = join(dataDir, 'incoming', id);
+    mkdirSync(entry, { recursive: true });
+    writeFileSync(join(entry, 'document.pdf'), bytes);
+    writeFileSync(
+      join(entry, 'meta.json'),
+      JSON.stringify({
+        name: 'Waiting.pdf',
+        size: bytes.length,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    const before = await tabCount();
+    const offering = spawn(application, [join(entry, 'document.pdf')], { env, stdio: 'ignore' });
+    assert.equal(await exitOf(offering), 0);
+    const request = await waitFor(
+      `return window.__folioTransfers.find((request) => request.id === ${JSON.stringify(id)}) ?? null`,
+    );
+    assert.deepEqual(request, { id, name: 'Waiting.pdf', size: bytes.length });
+    assert.equal(await tabCount(), before);
+    await invoke('answer_transfer', { id, accept: false });
+    assert.ok(!existsSync(entry), 'declined documents are deleted');
+
+    // Anything else in the data folder or shaped like a spooled document is
+    // refused with a notice, and never granted or listed as recent.
+    const own = join(dataDir, 'notes.pdf');
+    copyFileSync(join(fixtures, 'basic-3-pages.pdf'), own);
+    const elsewhere = join(work, 'elsewhere', 'incoming', randomUUID());
+    mkdirSync(elsewhere, { recursive: true });
+    copyFileSync(join(fixtures, 'basic-3-pages.pdf'), join(elsewhere, 'document.pdf'));
+    const refusing = spawn(application, [own, join(elsewhere, 'document.pdf')], {
+      env,
+      stdio: 'ignore',
+    });
+    assert.equal(await exitOf(refusing), 0);
+    await waitFor(
+      `return document.querySelectorAll('button[data-document-tab]').length === ${before + 2}`,
+    );
+    await waitFor(`return document.querySelector('main')?.innerText?.includes('own data folder')`);
+    const recent = await invoke('recent_list');
+    assert.ok(
+      !recent.some((file) => ['notes.pdf', 'document.pdf'].includes(file.name)),
+      JSON.stringify(recent),
+    );
   });
 
   await test('the host refuses extensions Folio does not know', async () => {
@@ -608,38 +659,28 @@ try {
     );
   });
 
-  // Last: it leaves Folio's native confirmation dialog open, which WebDriver
-  // cannot answer.
-  await test('registering with Chrome waits for the native confirmation', async () => {
-    const chrome = join(configDir, 'google-chrome');
-    const manifest = join(chrome, 'NativeMessagingHosts', 'io.github.albird97.folio.json');
-    const record = join(dataDir, 'native-messaging.json');
+  await test('only Folio itself can connect to Chrome, never the page', async () => {
     assert.deepEqual(await invoke('native_messaging_status'), {
       registered: false,
       extensionIds: [],
     });
-    // Refused before anyone is asked.
-    const invalid = await invoke('register_native_messaging', { extensionIds: ['../evil'] });
-    assert.equal(invalid.rejected?.code, 'invalid-extension-id');
-    const noBrowser = await invoke('register_native_messaging', { extensionIds: [] });
-    assert.equal(noBrowser.rejected?.code, 'browser-not-found');
-    assert.ok(!existsSync(chrome) && !existsSync(join(configDir, 'chromium')));
-
-    // With Chrome installed, Folio asks first and writes nothing meanwhile.
+    // Even with Chrome installed, the page has no way to register Folio.
+    const chrome = join(configDir, 'google-chrome');
     mkdirSync(chrome, { recursive: true });
-    await run(`
-      window.__folioRegistration = 'pending';
-      window.__TAURI_INTERNALS__
-        .invoke('register_native_messaging', { extensionIds: [${JSON.stringify(OTHER_EXTENSION_ID)}] })
-        .then(
-          () => { window.__folioRegistration = 'registered'; },
-          (error) => { window.__folioRegistration = error?.code ?? 'failed'; },
-        );
-    `);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    assert.equal(await run('return window.__folioRegistration'), 'pending');
-    assert.ok(!existsSync(manifest), 'no manifest before the user agrees');
-    assert.ok(!existsSync(record), 'no extension allowed before the user agrees');
+    for (const [command, args] of [
+      ['register_native_messaging', { extensionIds: [OTHER_EXTENSION_ID] }],
+      ['register_native_messaging', { extensionIds: [] }],
+      ['unregister_native_messaging', {}],
+    ]) {
+      const outcome = await invoke(command, args);
+      assert.ok(outcome?.rejected, `${command} is not available to the page`);
+    }
+    assert.deepEqual(readdirSync(chrome), [], 'no manifest was written');
+    assert.ok(!existsSync(join(dataDir, 'native-messaging.json')));
+    assert.deepEqual(await invoke('native_messaging_status'), {
+      registered: false,
+      extensionIds: [],
+    });
   });
 } catch (error) {
   failed = true;

@@ -34,8 +34,6 @@
     "allow-cancel-close",
     "allow-take-pending-transfers",
     "allow-answer-transfer",
-    "allow-native-messaging-status",
-    "allow-register-native-messaging",
-    "allow-unregister-native-messaging"
+    "allow-native-messaging-status"
   ]
 }

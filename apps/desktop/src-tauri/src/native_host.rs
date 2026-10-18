@@ -2,8 +2,8 @@
 //! (`io.github.albird97.folio`). It is the desktop binary itself: Chrome
 //! starts it with the caller's origin (`chrome-extension://<id>/`) as the
 //! first argument, and `main` then runs [`run_stdio`] instead of the app.
-//! The host only answers the official Folio extension and the extensions
-//! the user allowed in Folio (see `native_messaging`); anyone else gets
+//! The host only answers the official Folio extension
+//! ([`native_messaging::OFFICIAL_EXTENSION_IDS`]); anyone else gets
 //! `origin-not-allowed` and the host exits.
 //!
 //! Messages are UTF-8 JSON objects preceded by their length as a 32-bit
@@ -44,7 +44,8 @@ pub const MAX_REPLY_BYTES: usize = 1024 * 1024;
 pub const MAX_TRANSFER_BYTES: u64 = 512 * 1024 * 1024;
 /// Largest decoded chunk.
 pub const MAX_CHUNK_BYTES: usize = 8 * 1024 * 1024;
-/// `1` spools transfers without starting the app (tests).
+/// `1` spools transfers without starting the app, in debug builds only
+/// (tests); release builds ignore it.
 pub const NO_LAUNCH_ENV: &str = "FOLIO_NATIVE_HOST_NO_LAUNCH";
 const ORIGIN_PREFIX: &str = "chrome-extension://";
 /// PDF readers accept the header anywhere in the first 1024 bytes.
@@ -62,19 +63,13 @@ pub fn is_host_invocation(first_arg: Option<&OsStr>) -> bool {
         .is_some_and(|arg| arg.starts_with(ORIGIN_PREFIX))
 }
 
-/// Whether `origin` is exactly `chrome-extension://<id>/` for an extension
-/// Folio answers: the official one or one the user allowed (from Folio's own
-/// record in `data_dir`).
-pub fn origin_allowed(origin: Option<&OsStr>, data_dir: Option<&Path>) -> bool {
-    let Some(id) = origin
+/// Whether `origin` is exactly `chrome-extension://<id>/` for the official
+/// Folio extension.
+pub fn origin_allowed(origin: Option<&OsStr>) -> bool {
+    origin
         .and_then(OsStr::to_str)
         .and_then(native_messaging::extension_id_from_origin)
-    else {
-        return false;
-    };
-    native_messaging::allowed_extension_ids(data_dir)
-        .iter()
-        .any(|allowed| allowed == id)
+        .is_some_and(native_messaging::is_official)
 }
 
 #[derive(Debug)]
@@ -333,6 +328,11 @@ impl Host {
         let Some(base) = self.incoming.clone() else {
             return error_reply(&UNAVAILABLE, None);
         };
+        // Other hosts may be starting transfers at the same time: the limits
+        // are checked and the room is claimed under one lock.
+        let Ok(_spool) = incoming::lock(&base) else {
+            return error_reply(&STORAGE_FAILED, None);
+        };
         // The spool stays small: a few documents waiting for an answer.
         let usage = incoming::usage(&base);
         if usage.count >= incoming::MAX_PENDING
@@ -340,22 +340,26 @@ impl Host {
         {
             return error_reply(&BUSY, None);
         }
-        if paths::create_private_dir(&base).is_err() {
-            return error_reply(&STORAGE_FAILED, None);
-        }
-        if (self.free_space)(&base)
-            .is_some_and(|free| free < begin.size.saturating_add(DISK_RESERVE))
-        {
+        // Room for this document, for what other transfers have yet to
+        // write, and some to spare.
+        let needed = usage
+            .arriving
+            .saturating_add(begin.size)
+            .saturating_add(DISK_RESERVE);
+        if (self.free_space)(&base).is_some_and(|free| free < needed) {
             return error_reply(&DISK_FULL, None);
         }
         let id = incoming::new_id();
         let dir = base.join(&id);
-        let file = paths::create_private_dir(&dir).and_then(|()| {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(dir.join(incoming::PART_FILE))
-        });
+        // The announced size first, so other hosts count all of it at once.
+        let file = paths::create_private_dir(&dir)
+            .and_then(|()| incoming::write_announced(&dir, begin.size))
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(dir.join(incoming::PART_FILE))
+            });
         let file = match file {
             Ok(file) => file,
             Err(_) => {
@@ -613,15 +617,20 @@ pub fn launch_app(dir: &Path, id: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Whether [`NO_LAUNCH_ENV`] (with this value) turns starting the app off.
+fn launch_disabled_by(value: Option<&OsStr>) -> bool {
+    cfg!(debug_assertions) && value == Some(OsStr::new("1"))
+}
+
 /// Host mode: serves Chrome on stdin/stdout. `origin` is the first argument
 /// Chrome passed. Returns the exit code.
 pub fn run_stdio(origin: Option<&OsStr>) -> i32 {
-    let data_dir = paths::app_data_dir();
     let mut stdout = io::stdout().lock();
-    if !origin_allowed(origin, data_dir.as_deref()) {
+    if !origin_allowed(origin) {
         let _ = write_message(&mut stdout, &error_reply(&ORIGIN_NOT_ALLOWED, None));
         return 1;
     }
+    let data_dir = paths::app_data_dir();
     let incoming = data_dir.as_deref().map(|dir| {
         let _ = paths::prepare_data_dir(dir);
         dir.join(incoming::INCOMING_DIR)
@@ -631,9 +640,10 @@ pub fn run_stdio(origin: Option<&OsStr>) -> i32 {
     if let Some(base) = &incoming {
         incoming::purge(base, SystemTime::now(), false);
     }
-    let launch = match std::env::var(NO_LAUNCH_ENV) {
-        Ok(value) if value == "1" => None,
-        _ => Some(Box::new(launch_app) as Launch),
+    let launch = if launch_disabled_by(std::env::var_os(NO_LAUNCH_ENV).as_deref()) {
+        None
+    } else {
+        Some(Box::new(launch_app) as Launch)
     };
     let mut host = Host::new(incoming, launch);
     let served = host.serve(&mut io::stdin().lock(), &mut stdout);
@@ -714,12 +724,14 @@ mod tests {
             self.dir.path().join("incoming")
         }
 
+        /// The transfer folders (not the spool's lock file).
         fn spooled(&self) -> Vec<String> {
             std::fs::read_dir(self.incoming())
                 .map(|entries| {
                     entries
                         .flatten()
                         .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .filter(|name| !name.starts_with('.'))
                         .collect()
                 })
                 .unwrap_or_default()
@@ -745,35 +757,30 @@ mod tests {
     }
 
     #[test]
-    fn answers_the_official_extension_and_those_the_user_allowed() {
-        let dir = tempfile::tempdir().unwrap();
+    fn answers_the_official_extension_only() {
         let official = format!("chrome-extension://{OFFICIAL}/");
-        assert!(origin_allowed(Some(OsStr::new(&official)), None));
-        assert!(origin_allowed(
-            Some(OsStr::new(&official)),
-            Some(dir.path())
-        ));
-        let other = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
-        assert!(!origin_allowed(Some(OsStr::new(other)), Some(dir.path())));
-        // Folio's own record of the extensions the user allowed.
-        std::fs::write(
-            dir.path().join("native-messaging.json"),
-            r#"{"extensionIds":["abcdefghijklmnopabcdefghijklmnop"]}"#,
-        )
-        .unwrap();
-        assert!(origin_allowed(Some(OsStr::new(other)), Some(dir.path())));
+        assert!(origin_allowed(Some(OsStr::new(&official))));
         for origin in [
+            "chrome-extension://abcdefghijklmnopabcdefghijklmnop/".to_owned(),
             format!("chrome-extension://{OFFICIAL}"),
             format!("chrome-extension://{OFFICIAL}/extra"),
             format!("chrome-extension://{}/", OFFICIAL.to_uppercase()),
             "chrome-extension://".to_owned(),
         ] {
-            assert!(
-                !origin_allowed(Some(OsStr::new(&origin)), Some(dir.path())),
-                "{origin}"
-            );
+            assert!(!origin_allowed(Some(OsStr::new(&origin))), "{origin}");
         }
-        assert!(!origin_allowed(None, Some(dir.path())));
+        assert!(!origin_allowed(None));
+    }
+
+    #[test]
+    fn only_debug_builds_can_turn_starting_the_app_off() {
+        assert_eq!(
+            launch_disabled_by(Some(OsStr::new("1"))),
+            cfg!(debug_assertions)
+        );
+        assert!(!launch_disabled_by(Some(OsStr::new("0"))));
+        assert!(!launch_disabled_by(Some(OsStr::new("true"))));
+        assert!(!launch_disabled_by(None));
     }
 
     #[test]
@@ -1153,6 +1160,75 @@ mod tests {
         // When the system does not say, the host tries.
         fixture.host.free_space = |_| None;
         fixture.complete(PDF);
+    }
+
+    #[test]
+    fn announces_the_size_before_answering_ready() {
+        let mut fixture = fixture();
+        let transfer = fixture.begin(PDF);
+        let announced = fixture
+            .incoming()
+            .join(&transfer)
+            .join(incoming::ANNOUNCED_FILE);
+        assert_eq!(
+            std::fs::read_to_string(announced).unwrap(),
+            PDF.len().to_string()
+        );
+        // Counted at its full size while it arrives.
+        assert_eq!(
+            incoming::usage(&fixture.incoming()).arriving,
+            PDF.len() as u64
+        );
+    }
+
+    #[test]
+    fn the_disk_must_hold_what_other_transfers_still_write() {
+        let mut fixture = fixture();
+        const MIB: u64 = 1024 * 1024;
+        fixture.host.free_space = |_| Some(600 * MIB);
+        // Another host announced 500 MiB and has written nothing yet.
+        let other = fixture.incoming().join(incoming::new_id());
+        std::fs::create_dir_all(&other).unwrap();
+        incoming::write_announced(&other, 500 * MIB).unwrap();
+        // 500 + 100 + the reserve do not fit in 600 MiB; 500 + 10 + 64 do.
+        let reply = fixture.send(announce(100 * MIB));
+        assert_error(&reply, "busy");
+        assert!(reply["message"].as_str().unwrap().contains("disk space"));
+        assert_eq!(fixture.send(announce(10 * MIB))["type"], "ready");
+    }
+
+    #[test]
+    fn hosts_starting_at_once_stay_within_the_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("incoming");
+        let hosts = 8;
+        let start = std::sync::Arc::new(std::sync::Barrier::new(hosts));
+        let finish = std::sync::Arc::new(std::sync::Barrier::new(hosts));
+        let threads: Vec<_> = (0..hosts)
+            .map(|_| {
+                let (base, start, finish) = (base.clone(), start.clone(), finish.clone());
+                std::thread::spawn(move || {
+                    let mut host = Host::new(Some(base), None);
+                    host.free_space = |_| None;
+                    let message = serde_json::to_vec(&announce(PDF.len() as u64)).unwrap();
+                    start.wait();
+                    let reply = host.handle(&message);
+                    // Transfers stay in progress until every host answered.
+                    finish.wait();
+                    reply["type"].as_str().unwrap().to_owned()
+                })
+            })
+            .collect();
+        let replies: Vec<String> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        let ready = replies.iter().filter(|reply| *reply == "ready").count();
+        assert_eq!(ready, incoming::MAX_PENDING, "{replies:?}");
+        assert_eq!(
+            replies.iter().filter(|reply| *reply == "error").count(),
+            hosts - incoming::MAX_PENDING
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, State, WebviewWindow};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_dialog::DialogExt;
 use tokio::task::block_in_place;
 
 /// Errors cross the IPC boundary as `{ code, message }`. Messages never
@@ -189,6 +189,10 @@ pub async fn save_pdf_as(
     let Some(target) = receiver.await.ok().flatten() else {
         return Ok(None);
     };
+    // Never into Folio's own data: the file would be granted and listed.
+    if block_in_place(|| grants.is_reserved(&target)) {
+        return Err(SaveError::Reserved.into());
+    }
     // Writing borrows the request body, so it happens on this worker thread
     // (without blocking other tasks) instead of copying the data to another.
     block_in_place(|| save::write_atomically(&target, bytes))?;
@@ -465,79 +469,15 @@ pub async fn answer_transfer(
     })
 }
 
-fn registration() -> Result<(native_messaging::Locations, PathBuf), CommandError> {
+/// Whether Chrome can reach this copy of Folio, and for which official
+/// extensions. Registering and unregistering happen natively only, through
+/// File ▸ Connect to Chrome… (see `connect.rs`).
+#[tauri::command]
+pub async fn native_messaging_status() -> Result<Status, CommandError> {
     let locations = native_messaging::locations().ok_or(RegistrationError::Unavailable)?;
     // The AppImage, not its temporary mount, when Folio runs from one.
     let exe = paths::executable().map_err(|_| RegistrationError::Unavailable)?;
-    Ok((locations, exe))
-}
-
-/// Whether Chrome can reach this copy of Folio, and for which extensions.
-#[tauri::command]
-pub async fn native_messaging_status() -> Result<Status, CommandError> {
-    let (locations, exe) = registration()?;
-    let data_dir = paths::app_data_dir();
     Ok(block_in_place(|| {
-        native_messaging::status(&locations, &exe, data_dir.as_deref())
+        native_messaging::status(&locations, &exe)
     }))
-}
-
-/// Registers Folio as the native messaging host for the official Folio
-/// extension and, optionally, other extension ids (32 letters from a to p
-/// each), then returns the new status. Nothing is written until the user
-/// confirms a native dialog that lists every extension; declining rejects
-/// with `cancelled`.
-#[tauri::command]
-pub async fn register_native_messaging(
-    app: AppHandle,
-    window: WebviewWindow,
-    extension_ids: Vec<String>,
-) -> Result<Status, CommandError> {
-    let extra_ids = native_messaging::clean_extension_ids(&extension_ids)?;
-    let (locations, exe) = registration()?;
-    let data_dir = paths::app_data_dir().ok_or(RegistrationError::Unavailable)?;
-    block_in_place(|| native_messaging::check_can_register(&locations, &exe))?;
-
-    let (title, text) = native_messaging::confirmation_text(&extra_ids);
-    let kind = if extra_ids.is_empty() {
-        MessageDialogKind::Info
-    } else {
-        MessageDialogKind::Warning
-    };
-    let (sender, receiver) = tokio::sync::oneshot::channel::<bool>();
-    app.dialog()
-        .message(text)
-        .title(title)
-        .kind(kind)
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Allow".to_owned(),
-            "Cancel".to_owned(),
-        ))
-        .parent(&window)
-        .show(move |allowed| {
-            let _ = sender.send(allowed);
-        });
-    if !receiver.await.unwrap_or(false) {
-        return Err(RegistrationError::Cancelled.into());
-    }
-    block_in_place(|| {
-        native_messaging::register(&locations, &exe, &data_dir, &extra_ids)?;
-        Ok(native_messaging::status(&locations, &exe, Some(&data_dir)))
-    })
-}
-
-/// Removes this copy's registration (other copies' stay) and returns the
-/// new status.
-#[tauri::command]
-pub async fn unregister_native_messaging() -> Result<Status, CommandError> {
-    let (locations, exe) = registration()?;
-    let data_dir = paths::app_data_dir();
-    block_in_place(|| {
-        native_messaging::unregister(&locations, &exe, data_dir.as_deref())?;
-        Ok(native_messaging::status(
-            &locations,
-            &exe,
-            data_dir.as_deref(),
-        ))
-    })
 }

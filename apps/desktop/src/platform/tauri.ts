@@ -34,6 +34,11 @@ interface OpenedFiles {
   skipped: string[];
   /** Names of files that could no longer be found when they were granted. */
   unavailable: string[];
+  /**
+   * Names of files Folio does not open as ordinary files: its own data, and
+   * documents in a Chrome spool (those open once their transfer is accepted).
+   */
+  refused?: string[];
 }
 
 interface AppInfo {
@@ -48,6 +53,13 @@ interface CommandError {
   message: string;
 }
 
+/**
+ * Mirrors `save::WriteOutcome`. `kept-copy`: the file could not be replaced
+ * and its previous version could not be put back, so it was kept under
+ * `name` in the same folder (the message says so).
+ */
+type WriteOutcome = WriteFileResult | { status: 'kept-copy'; name: string; message: string };
+
 /** Mirrors `commands::SavedFile`: the chosen file's name, never its path. */
 interface SavedFile {
   name: string;
@@ -59,6 +71,7 @@ interface SavedFile {
 export interface NativeMessagingStatus {
   /** Chrome would start this copy of Folio for the extensions below. */
   registered: boolean;
+  /** The official Folio extension, when registered. */
   extensionIds: string[];
 }
 
@@ -142,6 +155,12 @@ function headerText(text: string): string {
 const notFound = () =>
   new PdfError('unknown', 'The file could not be found. It may have been moved or deleted.');
 
+const reserved = () =>
+  new PdfError(
+    'unknown',
+    'Folio does not open files from its own data folder. Documents sent from Chrome open once you accept them in Folio.',
+  );
+
 function commandError(error: unknown): Partial<CommandError> {
   if (typeof error === 'string') return { message: error };
   return (error ?? {}) as Partial<CommandError>;
@@ -207,11 +226,15 @@ function failedToIncoming(name: string, error: () => Error): IncomingFile {
   };
 }
 
-function toIncoming({ files, skipped, unavailable }: OpenedFiles, writable = true): IncomingFile[] {
+function toIncoming(
+  { files, skipped, unavailable, refused = [] }: OpenedFiles,
+  writable = true,
+): IncomingFile[] {
   return [
     ...files.map((file) => grantedToIncoming(file, writable)),
     ...skipped.map((name) => failedToIncoming(name, () => new PdfError('not-a-pdf'))),
     ...unavailable.map((name) => failedToIncoming(name, notFound)),
+    ...refused.map((name) => failedToIncoming(name, reserved)),
   ];
 }
 
@@ -290,26 +313,13 @@ function createTauriRecoveryStore(): RecoveryStore {
   };
 }
 
-/** Whether Chrome can reach this copy of Folio (desktop settings). */
+/**
+ * Whether Chrome can reach this copy of Folio. Connecting and disconnecting
+ * happen in Folio's native File ▸ Connect to Chrome… dialogs only; the page
+ * cannot change the registration.
+ */
 export function nativeMessagingStatus(): Promise<NativeMessagingStatus> {
   return call<NativeMessagingStatus>('native_messaging_status');
-}
-
-/**
- * Registers Folio as the native messaging host for the official Folio
- * extension and, optionally, other extensions (ids are 32 letters from a to
- * p), then returns the new status. Folio first shows a native confirmation
- * dialog listing every extension; when the user declines, this rejects with
- * a `NativeCommandError` whose code is `cancelled` and nothing changes.
- */
-export function registerNativeMessaging(
-  extensionIds: string[] = [],
-): Promise<NativeMessagingStatus> {
-  return call<NativeMessagingStatus>('register_native_messaging', { extensionIds });
-}
-
-export function unregisterNativeMessaging(): Promise<NativeMessagingStatus> {
-  return call<NativeMessagingStatus>('unregister_native_messaging');
 }
 
 export function isTauri(): boolean {
@@ -450,7 +460,14 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
       };
       if (overwriteExternalChanges) headers[HEADERS.overwrite] = '1';
       try {
-        return await invoke<WriteFileResult>('write_granted_file', bytes, { headers });
+        const outcome = await invoke<WriteOutcome>('write_granted_file', bytes, { headers });
+        // The platform contract has no kept-copy status: the document is
+        // still unsaved, and the message tells the user where the kept
+        // version is.
+        if (outcome.status === 'kept-copy') {
+          return { status: 'unavailable', message: outcome.message };
+        }
+        return outcome;
       } catch (error) {
         // The grant was released (or never existed): only Save As can help.
         if (commandError(error).code === 'unknown-token') {
