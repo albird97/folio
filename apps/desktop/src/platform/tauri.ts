@@ -53,6 +53,13 @@ interface CommandError {
   message: string;
 }
 
+/**
+ * Mirrors `save::WriteOutcome`. `kept-copy`: the file could not be replaced
+ * and its previous version could not be put back, so it was kept under
+ * `name` in the same folder (the message says so).
+ */
+type WriteOutcome = WriteFileResult | { status: 'kept-copy'; name: string; message: string };
+
 /** Mirrors `commands::SavedFile`: the chosen file's name, never its path. */
 interface SavedFile {
   name: string;
@@ -453,7 +460,14 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
       };
       if (overwriteExternalChanges) headers[HEADERS.overwrite] = '1';
       try {
-        return await invoke<WriteFileResult>('write_granted_file', bytes, { headers });
+        const outcome = await invoke<WriteOutcome>('write_granted_file', bytes, { headers });
+        // The platform contract has no kept-copy status: the document is
+        // still unsaved, and the message tells the user where the kept
+        // version is.
+        if (outcome.status === 'kept-copy') {
+          return { status: 'unavailable', message: outcome.message };
+        }
+        return outcome;
       } catch (error) {
         // The grant was released (or never existed): only Save As can help.
         if (commandError(error).code === 'unknown-token') {

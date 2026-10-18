@@ -217,6 +217,23 @@ describe('desktop platform adapter', () => {
       });
     });
 
+    it('reports a kept previous version as a file that could not be saved', async () => {
+      const adapter = await createTauriPlatformAdapter();
+      const message =
+        'Folio could not replace the file or put its previous version back. That version was kept as \u201c.folio-0123.bak\u201d in the same folder.';
+      tauri.responses.set('write_granted_file', {
+        status: 'kept-copy',
+        name: '.folio-0123.bak',
+        message,
+      });
+      const result = await adapter.writeFile({
+        handle: 't1',
+        bytes,
+        expectedSha256: 'ab'.repeat(32),
+      });
+      expect(result).toEqual({ status: 'unavailable', message });
+    });
+
     it('writes back through the grant only while the file is unchanged', async () => {
       const adapter = await createTauriPlatformAdapter();
       const expectedSha256 = 'ab'.repeat(32);
