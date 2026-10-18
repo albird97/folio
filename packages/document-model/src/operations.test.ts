@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { newAnnotationId, newPageId } from './ids';
+import { createSourceDocument, primarySource } from './create';
+import { newAnnotationId, newAssetId, newPageId } from './ids';
 import { applyOperation, movePagesOperation, OperationError, type Operation } from './operations';
-import { sampleModel } from './test-helpers';
+import { descriptor, sampleModel } from './test-helpers';
 import type { Annotation, DocumentModel, NoteAnnotation, PageModel } from './types';
 
 function note(model: DocumentModel, pageIndex: number, contents = 'Check this'): NoteAnnotation {
@@ -128,6 +129,23 @@ describe('page operations', () => {
     ).toThrowError(expect.objectContaining({ code: 'unknown-source' }) as Error);
   });
 
+  it('registers the sources of inserted pages and keeps them after an undo', () => {
+    const model = sampleModel(2);
+    const { source, pages } = createSourceDocument(descriptor(1, { fileName: 'other.pdf' }));
+    const forward = applyOperation(model, {
+      type: 'pages/insert',
+      entries: [{ index: 0, page: pages[0]! }],
+      annotations: [],
+      sources: [source],
+    });
+    expect(Object.keys(forward.model.sources)).toHaveLength(2);
+    // The opened file stays the primary source, whatever comes first.
+    expect(primarySource(forward.model)?.fileName).toBe('sample.pdf');
+    const back = applyOperation(forward.model, forward.inverse);
+    expect(ids(back.model)).toEqual(ids(model));
+    expect(back.model.sources[source.id]).toEqual(source);
+  });
+
   it('reports unknown pages', () => {
     const model = sampleModel(1);
     expect(() =>
@@ -161,6 +179,37 @@ describe('metadata and annotation operations', () => {
     expect(() =>
       applyOperation(added, { type: 'annotations/add', annotations: [annotation] }),
     ).toThrowError(expect.objectContaining({ code: 'duplicate-id' }) as Error);
+  });
+
+  it('registers the images of added annotations', () => {
+    const model = sampleModel(1);
+    const asset = {
+      id: newAssetId(),
+      mimeType: 'image/png' as const,
+      byteLength: 10,
+      sha256: 'b'.repeat(64),
+    };
+    const { position: _position, contents: _contents, ...common } = note(model, 0);
+    const image: Annotation = {
+      ...common,
+      kind: 'added-image',
+      rect: { x: 0, y: 0, width: 10, height: 10 },
+      assetId: asset.id,
+      rotation: 0,
+    };
+    expect(() =>
+      applyOperation(model, { type: 'annotations/add', annotations: [image] }),
+    ).toThrowError(expect.objectContaining({ code: 'unknown-asset' }) as Error);
+    const forward = applyOperation(model, {
+      type: 'annotations/add',
+      annotations: [image],
+      assets: [asset],
+    });
+    expect(forward.model.assets[asset.id]).toEqual(asset);
+    // Undo removes the annotation; the image stays known for a redo.
+    const back = applyOperation(forward.model, forward.inverse);
+    expect(back.model.annotations).toEqual({});
+    expect(back.model.assets[asset.id]).toEqual(asset);
   });
 
   it('applies batches atomically and inverts them in reverse order', () => {

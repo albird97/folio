@@ -17,15 +17,18 @@ export const PRIORITY = {
   thumbnail: 1000,
 } as const;
 
-export const pageVariant = (docKey: string, rotation: number, scale: number, ratio: number) =>
-  `${docKey}|r${rotation}@${scale.toFixed(4)}x${ratio.toFixed(2)}`;
+/**
+ * Renderings are cached per document and source file (a document can show
+ * pages of several files): variants start with this key.
+ */
+export const renderCacheKey = (docKey: string, sourceId: string) => `${docKey}/${sourceId}`;
 
-export const thumbnailVariant = (docKey: string, rotation: number, ratio: number) =>
-  `${docKey}|thumb-r${rotation}x${ratio.toFixed(2)}`;
+export const pageVariant = (cacheKey: string, rotation: number, scale: number, ratio: number) =>
+  `${cacheKey}|r${rotation}@${scale.toFixed(4)}x${ratio.toFixed(2)}`;
 
 /** Drops cached renderings of documents that are no longer open. */
 export function forgetDocuments(openKeys: ReadonlySet<string>): void {
-  const isClosed = (variant: string) => !openKeys.has(variant.slice(0, variant.indexOf('|')));
+  const isClosed = (variant: string) => !openKeys.has(variant.slice(0, variant.indexOf('/')));
   pageCache.removeWhere(isClosed);
   thumbnailCache.removeWhere(isClosed);
 }

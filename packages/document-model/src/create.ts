@@ -77,9 +77,11 @@ export function createViewState(model: DocumentModel): DocumentViewState {
   };
 }
 
-/** The primary source (the file the document was opened from). */
+/**
+ * The primary source: the file the document was opened from. Sources keep
+ * the order they were added in, so it stays first whatever happens to its
+ * pages (moved, deleted) or to pages inserted from other files.
+ */
 export function primarySource(model: DocumentModel): SourceDocument | null {
-  const first = model.pages.find((page) => page.source.kind === 'source');
-  if (first?.source.kind === 'source') return model.sources[first.source.sourceId] ?? null;
   return Object.values(model.sources)[0] ?? null;
 }

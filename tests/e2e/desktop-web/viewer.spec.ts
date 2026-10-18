@@ -301,7 +301,8 @@ test.describe('document viewer', () => {
   test('saves an exact copy of the original file', async ({ page }) => {
     await open(page, 'outline-and-text.pdf');
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Download a copy' }).click();
+    await page.getByRole('button', { name: 'More ways to save' }).click();
+    await page.getByRole('menuitem', { name: 'Download the original' }).click();
     const file = await download;
     expect(file.suggestedFilename()).toBe('outline-and-text.pdf');
     const original = readFileSync(fixture('outline-and-text.pdf'));
@@ -343,7 +344,9 @@ test.describe('document viewer', () => {
     // Only pages near the window exist in the DOM.
     await expect(page.locator('.folio-page')).not.toHaveCount(0);
     expect(await page.locator('.folio-page').count()).toBeLessThanOrEqual(8);
-    expect(await page.locator('ol[aria-label="Pages"] > li').count()).toBeLessThanOrEqual(16);
+    expect(
+      await page.getByRole('listbox', { name: 'Pages' }).getByRole('option').count(),
+    ).toBeLessThanOrEqual(16);
 
     await viewer(page).focus();
     await page.keyboard.press('End');

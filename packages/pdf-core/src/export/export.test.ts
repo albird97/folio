@@ -358,6 +358,7 @@ describe('exportPdf: copies and removals', () => {
           text: 'only on the first copy',
           fontSize: 14,
           fontFamily: 'sans',
+          rotation: 0,
         },
       ],
     }).model;
@@ -604,12 +605,14 @@ describe('exportPdf: annotations', () => {
         fontSize: 14,
         fontFamily: 'serif',
         color: '#000080',
+        rotation: 0,
       },
       {
         ...base(pageId),
         kind: 'added-image',
         rect: { x: 400, y: 100, width: 40, height: 40 },
         assetId,
+        rotation: 0,
       },
     ];
     const edited = applyOperation(
@@ -723,6 +726,59 @@ describe('exportPdf: annotations', () => {
     expect(Array.from(annotation!.rect as number[])).toEqual([60, 80, 90, 120]);
   });
 
+  it('keeps text added to a turned page level with how the page is shown', async () => {
+    const { model, sources } = await fixtureModel('basic-3-pages.pdf');
+    const turned = applyOperation(model, {
+      type: 'pages/rotate',
+      pageIds: [model.pages[0]!.id],
+      delta: 90,
+    }).model;
+    const edited = applyOperation(turned, {
+      type: 'annotations/add',
+      annotations: [
+        {
+          ...base(model.pages[0]!.id),
+          kind: 'added-text',
+          rect: { x: 300, y: 200, width: 40, height: 300 },
+          text: 'Level on a turned page',
+          fontSize: 14,
+          fontFamily: 'sans',
+          rotation: 90,
+        },
+      ],
+    }).model;
+    for (const flatten of [false, true]) {
+      const { bytes } = await exportPdf({
+        model: edited,
+        sources,
+        assets: new Map(),
+        flatten,
+        now: NOW,
+      });
+      const task = getDocument({ data: bytes.slice() });
+      const doc = await task.promise;
+      const page = await doc.getPage(1);
+      expect(page.rotate).toBe(90);
+      if (flatten) {
+        const content = await page.getTextContent();
+        const item = content.items.find(
+          (entry) => 'str' in entry && entry.str.includes('Level on a turned page'),
+        );
+        // Baseline along the page's +y axis, which shows as left to right,
+        // and glyphs rotated rather than mirrored.
+        const [a, b, c, d] = (item as { transform: number[] }).transform;
+        expect(a).toBeCloseTo(0);
+        expect(b).toBeGreaterThan(0);
+        expect(c).toBeLessThan(0);
+        expect(d).toBeCloseTo(0);
+      } else {
+        const [annotation] = await page.getAnnotations();
+        expect(annotation?.rotation).toBe(90);
+      }
+      await task.destroy();
+    }
+  });
+
   it('reports added text that the standard fonts cannot show', async () => {
     const { model, sources } = await fixtureModel('basic-3-pages.pdf');
     const edited = applyOperation(model, {
@@ -735,6 +791,7 @@ describe('exportPdf: annotations', () => {
           text: 'Café 你好',
           fontSize: 12,
           fontFamily: 'sans',
+          rotation: 0,
         },
       ],
     }).model;

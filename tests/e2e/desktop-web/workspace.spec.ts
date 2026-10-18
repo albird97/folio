@@ -87,9 +87,9 @@ test.describe('desktop workspace (web adapter)', () => {
     await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
       'basic-3-pages.pdf',
     ]);
-    await page.getByRole('button', { name: 'Copy title' }).click();
-    await expect(page.getByRole('button', { name: 'Copied title' })).toBeVisible();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Folio Basic Fixture');
+    await page.getByRole('button', { name: 'Copy name' }).click();
+    await expect(page.getByRole('button', { name: 'Copied name' })).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('basic-3-pages.pdf');
   });
 
   test('opens dropped PDFs and shows a drop target while dragging', async ({ page }) => {
@@ -110,9 +110,9 @@ test.describe('desktop workspace (web adapter)', () => {
     await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
       'basic-3-pages.pdf',
     ]);
-    const pages = page.getByRole('list', { name: 'Pages' });
+    const pages = page.getByRole('listbox', { name: 'Pages' });
     for (const number of [2, 3, 1]) {
-      await pages.getByRole('button', { name: `Page ${number}` }).click();
+      await pages.getByRole('option', { name: `Page ${number}` }).click();
       await pageRendered(page, number);
       await expect(page.getByRole('contentinfo')).toContainText(`Page ${number} of 3 · PDF 1.7`);
     }

@@ -2,11 +2,26 @@ import {
   addRotation,
   createDocumentModel,
   createEditorState,
+  createSourceDocument,
   createViewState,
+  execute,
+  markSaved as markEditorSaved,
+  movePagesOperation,
+  newAssetId,
+  OperationError,
+  redo as redoHistory,
+  undo as undoHistory,
+  type Annotation,
+  type AnnotationId,
+  type AssetId,
+  type AssetRef,
+  type DocumentMetadata,
   type DocumentModel,
   type DocumentViewState,
   type EditorDocumentState,
+  type Operation,
   type PageId,
+  type SourceId,
   type ZoomMode,
 } from '@folio/document-model';
 import {
@@ -20,11 +35,23 @@ import {
   type PdfEngine,
   type PdfErrorCode,
 } from '@folio/pdf-core';
+import type { ExportResult } from '@folio/pdf-core/export';
 import type { IncomingFile } from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { DEFAULT_SEARCH_OPTIONS, type SearchOptions, type TextMatch } from '../search/match';
 import { searchDocument, type SearchableRun } from '../search/run';
 import { clampZoom, stepZoom } from '../viewer/zoom';
+import {
+  ALL_PERMISSIONS,
+  applyPageInfo,
+  blankPageLike,
+  duplicatePagesOperation,
+  editPermissions,
+  inDocumentOrder,
+  pagesLabel,
+  PERMISSION_MESSAGES,
+  type EditPermissions,
+} from './editing';
 
 export type DocumentStatus = 'loading' | 'needs-password' | 'ready' | 'error';
 
@@ -33,6 +60,8 @@ export interface NavigationTarget {
   /** Position of the page in the document. */
   pageIndex: number;
   point?: { x: number | null; y: number | null };
+  /** A point in page space (annotations), which needs no engine to place. */
+  pagePoint?: { x: number; y: number };
   /** A search match to bring into view (the viewer locates its text). */
   match?: TextMatch;
   /** Put the target at the top of the window (outline, page field) or centre it (search). */
@@ -63,6 +92,16 @@ export const IDLE_SEARCH: SearchState = {
   truncated: false,
 };
 
+/** Selected pages (pages panel) and annotations (page view). */
+export interface Selection {
+  pages: PageId[];
+  /** Where a Shift-click range in the pages panel starts. */
+  anchor: PageId | null;
+  annotations: AnnotationId[];
+}
+
+export const EMPTY_SELECTION: Selection = { pages: [], anchor: null, annotations: [] };
+
 /** One tab. Plain data only: engine handles and bytes live in `resources`. */
 export interface WorkspaceDocument {
   key: string;
@@ -74,12 +113,30 @@ export interface WorkspaceDocument {
   passwordRejected: boolean;
   editor: EditorDocumentState | null;
   view: DocumentViewState | null;
+  /** The opened file as the engine read it. */
   info: PdfDocumentInfo | null;
+  /** What the document's author allows. */
+  permissions: EditPermissions;
   /** False while the sizes of a large document's later pages are still being read. */
   pagesComplete: boolean;
   /** A pending scroll request for the viewer; it clears it once handled. */
   navigation: { seq: number; target: NavigationTarget } | null;
   search: SearchState;
+  selection: Selection;
+  /** A long-running task (saving, inserting pages), for progress display. */
+  busy: string | null;
+}
+
+export type InsertOutcome =
+  | { status: 'inserted'; count: number }
+  | { status: 'needs-password'; rejected: boolean }
+  | { status: 'failed'; message: string };
+
+export interface ExportRequest {
+  /** Only these pages, as a new document (extract). */
+  pageIds?: PageId[];
+  /** Burn annotations into the pages. */
+  flatten?: boolean;
 }
 
 export interface WorkspaceState {
@@ -110,26 +167,96 @@ export interface WorkspaceState {
   selectMatch(key: string, index: number): void;
   showNotice(message: string): void;
   dismissNotice(): void;
+
+  // ── Editing ──
+  /** Applies an operation through the history. Returns false when it did not apply. */
+  apply(
+    key: string,
+    operation: Operation,
+    options: { label: string; coalesceKey?: string },
+  ): boolean;
+  undo(key: string): void;
+  redo(key: string): void;
+  selectPages(key: string, pageIds: PageId[], anchor?: PageId | null): void;
+  selectAnnotations(key: string, ids: AnnotationId[]): void;
+  rotatePages(key: string, pageIds: PageId[], delta: 90 | -90): void;
+  deletePages(key: string, pageIds: PageId[]): void;
+  duplicatePages(key: string, pageIds: PageId[]): void;
+  movePages(key: string, pageIds: PageId[], toIndex: number): void;
+  insertBlankPage(key: string, index: number): void;
+  insertPagesFromFile(
+    key: string,
+    file: IncomingFile,
+    index: number,
+    password?: string,
+  ): Promise<InsertOutcome>;
+  addAnnotations(
+    key: string,
+    annotations: Annotation[],
+    options: { label: string; assets?: AssetRef[] },
+  ): boolean;
+  updateAnnotations(
+    key: string,
+    annotations: Annotation[],
+    options: { label: string; coalesceKey?: string },
+  ): boolean;
+  deleteAnnotations(key: string, ids: AnnotationId[]): void;
+  updateMetadata(key: string, patch: Partial<DocumentMetadata>): void;
+  /**
+   * Keeps image bytes for annotations (PNG or JPEG, already decoded and
+   * re-encoded by the caller). The returned asset goes into the model with
+   * the annotations that use it.
+   */
+  registerImage(
+    key: string,
+    bytes: Uint8Array,
+    mimeType: AssetRef['mimeType'],
+  ): Promise<AssetRef | null>;
+  /** Writes the document (or some of its pages) as a new PDF. */
+  exportDocument(key: string, request?: ExportRequest): Promise<ExportResult>;
+  /** Opens each group of pages as a new document. */
+  splitDocument(key: string, parts: PageId[][]): Promise<number>;
+  /** Records that the document's current state was saved. */
+  markSaved(key: string): void;
+}
+
+interface SourceEntry {
+  bytes: Uint8Array;
+  handle: PdfDocumentHandle;
+  /** What the file was opened with ('' for permission-only encryption); needed to export it. */
+  password: string | undefined;
+  unsubscribe: () => void;
 }
 
 interface Resources {
   file: IncomingFile;
+  /** Password to try first (documents split off a protected one). */
+  initialPassword: string | undefined;
   bytes: Uint8Array | null;
   handle: PdfDocumentHandle | null;
+  /** The file the document was opened from, and files pages were inserted from. */
+  sources: Map<SourceId, SourceEntry>;
+  /** Image bytes by asset, including images added and then undone (for redo). */
+  assets: Map<AssetId, Uint8Array>;
+  assetUrls: Map<AssetId, string>;
   /** Page sizes read after opening, applied to the model in batches. */
-  pendingPageInfo: PageInfoUpdate[];
+  pendingPageInfo: Map<SourceId, PageInfoUpdate[]>;
   flushTimer: ReturnType<typeof setTimeout> | null;
   search: AbortController | null;
-  /** Text runs of pages already searched, so repeated searches skip extraction. */
-  searchText: Map<number, SearchableRun[]>;
+  /** Text runs of pages already searched (by source page), so repeated searches skip extraction. */
+  searchText: Map<string, SearchableRun[]>;
   searchTextChars: number;
 }
 
 export interface WorkspaceStore extends StoreApi<WorkspaceState> {
-  /** The engine handle for a ready document, for rendering. */
+  /** The engine handle of the file a ready document was opened from. */
   getHandle(key: string): PdfDocumentHandle | null;
+  /** The engine handle for pages of a source (the opened file or an inserted one). */
+  getSourceHandle(key: string, sourceId: SourceId): PdfDocumentHandle | null;
   /** The original bytes of a ready document (for "Save a copy"). */
   getBytes(key: string): Uint8Array | null;
+  /** An object URL showing an image asset of the document. */
+  getAssetUrl(key: string, assetId: AssetId): string | null;
   destroy(): Promise<void>;
 }
 
@@ -137,31 +264,6 @@ export interface WorkspaceStore extends StoreApi<WorkspaceState> {
 const PAGE_INFO_FLUSH_MS = 120;
 /** Searched text kept per document; beyond this, later searches extract again. */
 const SEARCH_TEXT_BUDGET = 20_000_000;
-
-/** Applies exact page sizes to pages from the document's primary source. */
-export function applyPageInfo(
-  model: DocumentModel,
-  updates: readonly PageInfoUpdate[],
-): DocumentModel {
-  if (updates.length === 0) return model;
-  const bySourceIndex = new Map(updates.map((update) => [update.index, update.info]));
-  const sourceId = model.pages.find((page) => page.source.kind === 'source')?.source;
-  if (!sourceId || sourceId.kind !== 'source') return model;
-  let changed = false;
-  const pages = model.pages.map((page) => {
-    if (page.source.kind !== 'source' || page.source.sourceId !== sourceId.sourceId) return page;
-    const info = bySourceIndex.get(page.source.pageIndex);
-    if (!info) return page;
-    changed = true;
-    return {
-      ...page,
-      size: { width: info.size.width, height: info.size.height },
-      sourceRotation: info.rotation,
-      userUnit: info.userUnit,
-    };
-  });
-  return changed ? { ...model, pages } : model;
-}
 
 /**
  * Drops are often accidental and mixed (images, documents). Skip files whose
@@ -172,14 +274,48 @@ export function isLikelyPdfName(name: string): boolean {
   return /\.pdf$/i.test(name) || !/\.[a-z0-9]{1,8}$/i.test(name);
 }
 
+/** "report.pdf" → "report". */
+export const baseName = (fileName: string) => fileName.replace(/\.pdf$/i, '') || 'document';
+
 let tabCounter = 0;
 const nextKey = () => `tab-${Date.now().toString(36)}-${(tabCounter += 1)}`;
+
+/** Same pages, in the same order, from the same sources: search results stay valid. */
+function samePageSequence(a: DocumentModel['pages'], b: DocumentModel['pages']): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((page, index) => page.id === b[index]?.id);
+}
+
+const textKey = (sourceId: SourceId, pageIndex: number) => `${sourceId}:${pageIndex}`;
+
+function newDocument(key: string, file: IncomingFile): WorkspaceDocument {
+  return {
+    key,
+    fileName: file.name,
+    byteLength: file.size,
+    status: 'loading',
+    error: null,
+    passwordRejected: false,
+    editor: null,
+    view: null,
+    info: null,
+    permissions: ALL_PERMISSIONS,
+    pagesComplete: false,
+    navigation: null,
+    search: IDLE_SEARCH,
+    selection: EMPTY_SELECTION,
+    busy: null,
+  };
+}
 
 export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
   const resources = new Map<string, Resources>();
   let noticeId = 0;
 
   const store = createStore<WorkspaceState>()((set, get) => {
+    const find = (key: string) => get().documents.find((doc) => doc.key === key);
+
     const patch = (key: string, changes: Partial<WorkspaceDocument>) =>
       set((state) => ({
         documents: state.documents.map((doc) => (doc.key === key ? { ...doc, ...changes } : doc)),
@@ -201,7 +337,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         return touched ? { documents } : state;
       });
 
-    const viewOf = (key: string) => get().documents.find((doc) => doc.key === key)?.view ?? null;
+    const viewOf = (key: string) => find(key)?.view ?? null;
 
     const updateView = (
       key: string,
@@ -222,18 +358,40 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         return changes ? { search: { ...doc.search, ...changes } } : null;
       });
 
+    const notify = (message: string) => get().showNotice(message);
+
     function flushPageInfo(key: string) {
       const entry = resources.get(key);
       if (!entry) return;
       if (entry.flushTimer) clearTimeout(entry.flushTimer);
       entry.flushTimer = null;
-      const updates = entry.pendingPageInfo.splice(0);
-      if (updates.length === 0) return;
-      update(key, (doc) =>
-        doc.editor
-          ? { editor: { ...doc.editor, model: applyPageInfo(doc.editor.model, updates) } }
-          : null,
-      );
+      const batches = [...entry.pendingPageInfo];
+      entry.pendingPageInfo.clear();
+      if (batches.length === 0) return;
+      update(key, (doc) => {
+        if (!doc.editor) return null;
+        let editor = doc.editor;
+        for (const [sourceId, updates] of batches)
+          editor = applyPageInfo(editor, sourceId, updates);
+        return { editor };
+      });
+    }
+
+    /** Keeps an engine handle for a source and feeds its late page sizes into the model. */
+    function addSource(
+      key: string,
+      sourceId: SourceId,
+      source: Omit<SourceEntry, 'unsubscribe'>,
+    ): void {
+      const entry = resources.get(key);
+      if (!entry) return;
+      const unsubscribe = source.handle.onPageInfo((updates) => {
+        const pending = entry.pendingPageInfo.get(sourceId);
+        if (pending) pending.push(...updates);
+        else entry.pendingPageInfo.set(sourceId, [...updates]);
+        entry.flushTimer ??= setTimeout(() => flushPageInfo(key), PAGE_INFO_FLUSH_MS);
+      });
+      entry.sources.set(sourceId, { ...source, unsubscribe });
     }
 
     let navigationSeq = 0;
@@ -249,21 +407,20 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       });
 
     const navigateToMatch = (key: string, index: number) => {
-      const doc = get().documents.find((entry) => entry.key === key);
-      const match = doc?.search.matches[index];
+      const match = find(key)?.search.matches[index];
       if (!match) return;
       navigateTo(key, { pageIndex: match.pageIndex, match, align: 'center' });
     };
 
     function runSearch(key: string) {
       const entry = resources.get(key);
-      const doc = get().documents.find((item) => item.key === key);
+      const doc = find(key);
       if (!entry || !doc) return;
       entry.search?.abort();
       entry.search = null;
       const { query, options } = doc.search;
-      const handle = entry.handle;
-      if (!handle || query.trim().length === 0) {
+      const pages = doc.editor?.model.pages;
+      if (!pages || query.trim().length === 0) {
         updateSearch(key, () => ({
           status: 'idle',
           matches: [],
@@ -283,15 +440,21 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         truncated: false,
       }));
       const source = {
-        pageCount: handle.info.pageCount,
-        async getPageText(pageIndex: number) {
-          const cached = entry.searchText.get(pageIndex);
+        pageCount: pages.length,
+        async getPageText(position: number) {
+          const page = pages[position];
+          if (!page || page.source.kind !== 'source') return { items: [] };
+          const { sourceId, pageIndex } = page.source;
+          const id = textKey(sourceId, pageIndex);
+          const cached = entry.searchText.get(id);
           if (cached) return { items: cached };
+          const handle = entry.sources.get(sourceId)?.handle;
+          if (!handle) return { items: [] };
           const text = await handle.getPageText(pageIndex);
           const items = text.items.map(({ str, hasEOL }) => ({ str, hasEOL }));
           const chars = items.reduce((total, item) => total + item.str.length, 0);
           if (entry.searchTextChars + chars <= SEARCH_TEXT_BUDGET) {
-            entry.searchText.set(pageIndex, items);
+            entry.searchText.set(id, items);
             entry.searchTextChars += chars;
           }
           return { items };
@@ -361,18 +524,21 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
             origin: entry.file.origin,
           }),
         );
+        const sourceId = Object.keys(model.sources)[0] as SourceId;
+        addSource(key, sourceId, {
+          bytes,
+          handle,
+          password: handle.info.encryption === 'none' ? undefined : (password ?? ''),
+        });
         patch(key, {
           status: 'ready',
           error: null,
           passwordRejected: false,
           info: handle.info,
+          permissions: editPermissions(handle.info),
           editor: createEditorState(model),
           view: createViewState(model),
           pagesComplete: handle.pagesComplete,
-        });
-        handle.onPageInfo((updates) => {
-          entry.pendingPageInfo.push(...updates);
-          entry.flushTimer ??= setTimeout(() => flushPageInfo(key), PAGE_INFO_FLUSH_MS);
         });
         void handle.pagesReady.then(() => {
           if (!resources.has(key)) return;
@@ -394,6 +560,145 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       }
     }
 
+    async function openAll(files: Array<{ file: IncomingFile; password?: string }>) {
+      const added = files.map(({ file, password }) => {
+        const key = nextKey();
+        resources.set(key, {
+          file,
+          initialPassword: password,
+          bytes: null,
+          handle: null,
+          sources: new Map(),
+          assets: new Map(),
+          assetUrls: new Map(),
+          pendingPageInfo: new Map(),
+          flushTimer: null,
+          search: null,
+          searchText: new Map(),
+          searchTextChars: 0,
+        });
+        return newDocument(key, file);
+      });
+      set((state) => ({
+        documents: [...state.documents, ...added],
+        activeKey: added[0]?.key ?? state.activeKey,
+      }));
+      await Promise.all(added.map((doc) => load(doc.key, resources.get(doc.key)?.initialPassword)));
+    }
+
+    // ── Editing ──────────────────────────────────────────────────────────
+
+    /** Keeps the view and selection pointing at things that still exist. */
+    function reconcile(doc: WorkspaceDocument, model: DocumentModel): Partial<WorkspaceDocument> {
+      const changes: Partial<WorkspaceDocument> = {};
+      const pageIds = new Set(model.pages.map((page) => page.id));
+      if (doc.view && doc.view.currentPageId && !pageIds.has(doc.view.currentPageId)) {
+        const previous = doc.editor?.model.pages.findIndex(
+          (page) => page.id === doc.view?.currentPageId,
+        );
+        const nearest = model.pages[Math.min(Math.max(0, previous ?? 0), model.pages.length - 1)];
+        changes.view = { ...doc.view, currentPageId: nearest?.id ?? null, pageOffset: 0 };
+      }
+      const pages = doc.selection.pages.filter((id) => pageIds.has(id));
+      const annotations = doc.selection.annotations.filter((id) => id in model.annotations);
+      if (
+        pages.length !== doc.selection.pages.length ||
+        annotations.length !== doc.selection.annotations.length
+      ) {
+        changes.selection = {
+          pages,
+          anchor:
+            doc.selection.anchor && pageIds.has(doc.selection.anchor) ? doc.selection.anchor : null,
+          annotations,
+        };
+      }
+      return changes;
+    }
+
+    /** Runs a change of the editor state; reports operations that do not fit the document. */
+    function commit(
+      key: string,
+      change: (editor: EditorDocumentState) => EditorDocumentState,
+    ): boolean {
+      let applied = false;
+      let pagesChanged = false;
+      let failure: OperationError | null = null;
+      update(key, (doc) => {
+        if (!doc.editor) return null;
+        let editor: EditorDocumentState;
+        try {
+          editor = change(doc.editor);
+        } catch (error) {
+          if (error instanceof OperationError) {
+            failure = error;
+            return null;
+          }
+          throw error;
+        }
+        if (editor === doc.editor) return null;
+        applied = true;
+        pagesChanged = !samePageSequence(doc.editor.model.pages, editor.model.pages);
+        return { editor, ...reconcile(doc, editor.model) };
+      });
+      if (failure) {
+        notify(
+          (failure as OperationError).code === 'empty-document'
+            ? 'A document needs at least one page.'
+            : 'That change does not fit the document any more.',
+        );
+      }
+      if (pagesChanged) {
+        const doc = find(key);
+        if (doc?.search.open && doc.search.query.trim()) runSearch(key);
+      }
+      return applied;
+    }
+
+    /** Checks a permission, telling the user when it is missing. */
+    function allowed(key: string, permission: keyof EditPermissions): boolean {
+      const doc = find(key);
+      if (!doc || doc.status !== 'ready') return false;
+      if (doc.permissions[permission]) return true;
+      notify(PERMISSION_MESSAGES[permission]);
+      return false;
+    }
+
+    function apply(
+      key: string,
+      operation: Operation,
+      options: { label: string; coalesceKey?: string },
+    ): boolean {
+      return commit(key, (editor) => execute(editor, operation, options));
+    }
+
+    async function exportDocument(key: string, request: ExportRequest = {}) {
+      const doc = find(key);
+      const entry = resources.get(key);
+      if (!doc?.editor || !doc.info || !entry) throw new Error('The document is not open.');
+      const { exportPdf } = await import('@folio/pdf-core/export');
+      const sources = new Map(
+        [...entry.sources].map(([id, source]) => [
+          id,
+          source.password === undefined
+            ? { bytes: source.bytes }
+            : { bytes: source.bytes, password: source.password },
+        ]),
+      );
+      const primary = [...entry.sources.values()][0];
+      return exportPdf({
+        model: doc.editor.model,
+        sources,
+        assets: entry.assets,
+        ...(request.pageIds ? { pageIds: request.pageIds } : {}),
+        ...(request.flatten === undefined ? {} : { flatten: request.flatten }),
+        // Saved copies stay as protected as the opened file.
+        protection:
+          doc.info.encryption === 'none'
+            ? null
+            : { userPassword: primary?.password ?? '', permissions: doc.info.permissions },
+      });
+    }
+
     return {
       documents: [],
       activeKey: null,
@@ -403,7 +708,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         const pdfs = files.filter((file) => isLikelyPdfName(file.name));
         const skipped = files.length - pdfs.length;
         if (skipped > 0) {
-          get().showNotice(
+          notify(
             skipped === 1
               ? 'Skipped 1 file that is not a PDF.'
               : `Skipped ${skipped} files that are not PDFs.`,
@@ -411,43 +716,11 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         }
         for (const file of files) if (!pdfs.includes(file)) file.release?.();
         if (pdfs.length === 0) return;
-
-        const added: WorkspaceDocument[] = pdfs.map((file) => {
-          const key = nextKey();
-          resources.set(key, {
-            file,
-            bytes: null,
-            handle: null,
-            pendingPageInfo: [],
-            flushTimer: null,
-            search: null,
-            searchText: new Map(),
-            searchTextChars: 0,
-          });
-          return {
-            key,
-            fileName: file.name,
-            byteLength: file.size,
-            status: 'loading',
-            error: null,
-            passwordRejected: false,
-            editor: null,
-            view: null,
-            info: null,
-            pagesComplete: false,
-            navigation: null,
-            search: IDLE_SEARCH,
-          };
-        });
-        set((state) => ({
-          documents: [...state.documents, ...added],
-          activeKey: added[0]?.key ?? state.activeKey,
-        }));
-        await Promise.all(added.map((doc) => load(doc.key)));
+        await openAll(pdfs.map((file) => ({ file })));
       },
 
       async submitPassword(key, password) {
-        const doc = get().documents.find((entry) => entry.key === key);
+        const doc = find(key);
         if (!doc || doc.status !== 'needs-password') return;
         patch(key, { status: 'loading' });
         await load(key, password);
@@ -465,10 +738,8 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         });
         const entry = resources.get(key);
         resources.delete(key);
-        if (entry?.flushTimer) clearTimeout(entry.flushTimer);
-        entry?.search?.abort();
-        entry?.file.release?.();
-        await entry?.handle?.destroy();
+        if (!entry) return;
+        await releaseResources(entry);
       },
 
       activate(key) {
@@ -484,8 +755,8 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       },
 
       setCurrentPage(key, pageId) {
-        const doc = get().documents.find((entry) => entry.key === key);
-        const pageIndex = doc?.editor?.model.pages.findIndex((page) => page.id === pageId) ?? -1;
+        const pageIndex =
+          find(key)?.editor?.model.pages.findIndex((page) => page.id === pageId) ?? -1;
         if (pageIndex === -1) return;
         navigateTo(key, { pageIndex, align: 'top' });
       },
@@ -543,7 +814,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       },
 
       setSearch(key, changes) {
-        const current = get().documents.find((doc) => doc.key === key)?.search;
+        const current = find(key)?.search;
         if (!current) return;
         const query = changes.query ?? current.query;
         const options = { ...current.options, ...changes.options };
@@ -558,7 +829,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       },
 
       stepSearch(key, direction) {
-        const doc = get().documents.find((entry) => entry.key === key);
+        const doc = find(key);
         const count = doc?.search.matches.length ?? 0;
         if (!doc || count === 0) return;
         const next =
@@ -585,30 +856,345 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       dismissNotice() {
         set({ notice: null });
       },
+
+      // ── Editing ──
+
+      apply,
+
+      undo(key) {
+        commit(key, undoHistory);
+      },
+
+      redo(key) {
+        commit(key, redoHistory);
+      },
+
+      selectPages(key, pageIds, anchor) {
+        update(key, (doc) => {
+          if (!doc.editor) return null;
+          const pages = inDocumentOrder(doc.editor.model, pageIds);
+          return {
+            selection: {
+              ...doc.selection,
+              pages,
+              anchor: anchor === undefined ? doc.selection.anchor : anchor,
+            },
+          };
+        });
+      },
+
+      selectAnnotations(key, ids) {
+        update(key, (doc) => {
+          if (!doc.editor) return null;
+          const annotations = ids.filter((id) => id in doc.editor!.model.annotations);
+          const same =
+            annotations.length === doc.selection.annotations.length &&
+            annotations.every((id, index) => doc.selection.annotations[index] === id);
+          return same ? null : { selection: { ...doc.selection, annotations } };
+        });
+      },
+
+      rotatePages(key, pageIds, delta) {
+        if (pageIds.length === 0 || !allowed(key, 'assemble')) return;
+        apply(
+          key,
+          { type: 'pages/rotate', pageIds, delta: delta === 90 ? 90 : 270 },
+          { label: `Rotate ${pagesLabel(pageIds.length)}` },
+        );
+      },
+
+      deletePages(key, pageIds) {
+        if (pageIds.length === 0 || !allowed(key, 'assemble')) return;
+        apply(
+          key,
+          { type: 'pages/remove', pageIds },
+          { label: `Delete ${pagesLabel(pageIds.length)}` },
+        );
+      },
+
+      duplicatePages(key, pageIds) {
+        const doc = find(key);
+        if (!doc?.editor || pageIds.length === 0 || !allowed(key, 'assemble')) return;
+        const operation = duplicatePagesOperation(
+          doc.editor.model,
+          pageIds,
+          new Date().toISOString(),
+        );
+        if (apply(key, operation, { label: `Duplicate ${pagesLabel(pageIds.length)}` })) {
+          if (operation.type === 'pages/insert') {
+            get().selectPages(
+              key,
+              operation.entries.map((entry) => entry.page.id),
+              operation.entries[0]?.page.id ?? null,
+            );
+          }
+        }
+      },
+
+      movePages(key, pageIds, toIndex) {
+        const doc = find(key);
+        if (!doc?.editor || pageIds.length === 0 || !allowed(key, 'assemble')) return;
+        let operation: Operation;
+        try {
+          operation = movePagesOperation(doc.editor.model, pageIds, toIndex);
+        } catch {
+          return;
+        }
+        if (operation.type !== 'pages/reorder') return;
+        const unchanged = operation.order.every(
+          (id, index) => doc.editor!.model.pages[index]?.id === id,
+        );
+        if (unchanged) return;
+        apply(key, operation, { label: `Move ${pagesLabel(pageIds.length)}` });
+      },
+
+      insertBlankPage(key, index) {
+        const doc = find(key);
+        if (!doc?.editor || !allowed(key, 'assemble')) return;
+        const pages = doc.editor.model.pages;
+        const at = Math.min(Math.max(0, index), pages.length);
+        const page = blankPageLike(pages[Math.max(0, at - 1)]);
+        if (
+          apply(
+            key,
+            { type: 'pages/insert', entries: [{ index: at, page }], annotations: [], sources: [] },
+            { label: 'Insert a blank page' },
+          )
+        ) {
+          get().selectPages(key, [page.id], page.id);
+          navigateTo(key, { pageIndex: at, align: 'top' });
+        }
+      },
+
+      async insertPagesFromFile(key, file, index, password) {
+        if (!allowed(key, 'assemble')) {
+          return { status: 'failed', message: PERMISSION_MESSAGES.assemble };
+        }
+        const entry = resources.get(key);
+        if (!entry) return { status: 'failed', message: 'The document is closed.' };
+        patch(key, { busy: `Reading ${file.name}…` });
+        let handle: PdfDocumentHandle | null = null;
+        try {
+          const bytes = await file.read();
+          const sha256 = await sha256Hex(bytes);
+          const doc = find(key);
+          const model = doc?.editor?.model;
+          if (!model || !resources.has(key))
+            return { status: 'failed', message: 'The document is closed.' };
+          // The same file inserted again shares its source (and engine handle).
+          const known = Object.values(model.sources).find(
+            (source) => source.sha256 === sha256 && entry.sources.has(source.id),
+          );
+          let sourceRecord = known ?? null;
+          let sourceHandle = known ? entry.sources.get(known.id)!.handle : null;
+          if (!sourceHandle) {
+            handle = await engine.open(bytes, password === undefined ? {} : { password });
+            sourceHandle = handle;
+          }
+          const info = sourceHandle.info;
+          const descriptor = toSourceDescriptor(info, {
+            fileName: file.name,
+            byteLength: bytes.byteLength,
+            sha256,
+            origin: file.origin,
+          });
+          const created = createSourceDocument(descriptor, sourceRecord?.id);
+          sourceRecord ??= created.source;
+          const at = Math.min(Math.max(0, index), model.pages.length);
+          const applied = apply(
+            key,
+            {
+              type: 'pages/insert',
+              entries: created.pages.map((page, offset) => ({ index: at + offset, page })),
+              annotations: [],
+              sources: known ? [] : [created.source],
+            },
+            { label: `Insert ${pagesLabel(created.pages.length)} from ${file.name}` },
+          );
+          if (!applied) return { status: 'failed', message: 'The pages could not be inserted.' };
+          if (handle) {
+            addSource(key, sourceRecord.id, {
+              bytes,
+              handle,
+              password: info.encryption === 'none' ? undefined : (password ?? ''),
+            });
+            handle = null;
+          }
+          get().selectPages(
+            key,
+            created.pages.map((page) => page.id),
+            created.pages[0]?.id ?? null,
+          );
+          navigateTo(key, { pageIndex: at, align: 'top' });
+          if (info.encryption !== 'none' && find(key)?.info?.encryption === 'none') {
+            notify(
+              `The pages from ${file.name} will be saved without its password protection, like the rest of this document.`,
+            );
+          }
+          return { status: 'inserted', count: created.pages.length };
+        } catch (error) {
+          if (isPdfError(error, 'password-required') || isPdfError(error, 'incorrect-password')) {
+            return { status: 'needs-password', rejected: isPdfError(error, 'incorrect-password') };
+          }
+          const message = isPdfError(error) ? error.message : 'The file could not be read.';
+          return { status: 'failed', message };
+        } finally {
+          await handle?.destroy();
+          file.release?.();
+          if (resources.has(key)) patch(key, { busy: null });
+        }
+      },
+
+      addAnnotations(key, annotations, options) {
+        if (annotations.length === 0 || !allowed(key, 'annotate')) return false;
+        const applied = apply(
+          key,
+          {
+            type: 'annotations/add',
+            annotations,
+            ...(options.assets?.length ? { assets: options.assets } : {}),
+          },
+          { label: options.label },
+        );
+        if (applied)
+          get().selectAnnotations(
+            key,
+            annotations.map((annotation) => annotation.id),
+          );
+        return applied;
+      },
+
+      updateAnnotations(key, annotations, options) {
+        if (annotations.length === 0 || !allowed(key, 'annotate')) return false;
+        const now = new Date().toISOString();
+        return apply(
+          key,
+          {
+            type: 'annotations/replace',
+            annotations: annotations.map((annotation) => ({ ...annotation, modifiedAt: now })),
+          },
+          options,
+        );
+      },
+
+      deleteAnnotations(key, ids) {
+        if (ids.length === 0 || !allowed(key, 'annotate')) return;
+        apply(
+          key,
+          { type: 'annotations/remove', ids },
+          { label: ids.length === 1 ? 'Delete comment' : `Delete ${ids.length} comments` },
+        );
+      },
+
+      updateMetadata(key, patchValues) {
+        if (Object.keys(patchValues).length === 0 || !allowed(key, 'modify')) return;
+        apply(
+          key,
+          { type: 'metadata/update', patch: patchValues },
+          { label: 'Edit document properties', coalesceKey: 'metadata' },
+        );
+      },
+
+      async registerImage(key, bytes, mimeType) {
+        const entry = resources.get(key);
+        const model = find(key)?.editor?.model;
+        if (!entry || !model) return null;
+        const sha256 = await sha256Hex(bytes);
+        for (const [id, existing] of entry.assets) {
+          const ref = model.assets[id];
+          if (ref?.sha256 === sha256 && existing.byteLength === bytes.byteLength) return ref;
+        }
+        const ref: AssetRef = { id: newAssetId(), mimeType, byteLength: bytes.byteLength, sha256 };
+        entry.assets.set(ref.id, bytes);
+        return ref;
+      },
+
+      async exportDocument(key, request) {
+        patch(key, { busy: 'Saving…' });
+        try {
+          return await exportDocument(key, request);
+        } finally {
+          if (resources.has(key)) patch(key, { busy: null });
+        }
+      },
+
+      markSaved(key) {
+        update(key, (doc) => (doc.editor ? { editor: markEditorSaved(doc.editor) } : null));
+      },
+
+      async splitDocument(key, parts) {
+        const doc = find(key);
+        const entry = resources.get(key);
+        if (!doc || !entry || parts.length === 0 || !allowed(key, 'extract')) return 0;
+        const password = [...entry.sources.values()][0]?.password;
+        const files: Array<{ file: IncomingFile; password?: string }> = [];
+        patch(key, { busy: 'Splitting…' });
+        try {
+          for (const [index, pageIds] of parts.entries()) {
+            const { bytes } = await exportDocument(key, { pageIds });
+            const name = `${baseName(doc.fileName)} (part ${index + 1}).pdf`;
+            files.push({
+              file: {
+                name,
+                size: bytes.byteLength,
+                origin: { kind: 'generated' },
+                read: async () => bytes,
+              },
+              // Parts of a protected document stay protected; Folio knows the password.
+              ...(password ? { password } : {}),
+            });
+          }
+        } finally {
+          if (resources.has(key)) patch(key, { busy: null });
+        }
+        await openAll(files);
+        return files.length;
+      },
     };
   });
+
+  async function releaseResources(entry: Resources) {
+    if (entry.flushTimer) clearTimeout(entry.flushTimer);
+    entry.search?.abort();
+    entry.file.release?.();
+    for (const url of entry.assetUrls.values()) URL.revokeObjectURL(url);
+    entry.assetUrls.clear();
+    const handles = new Set<PdfDocumentHandle>();
+    if (entry.handle) handles.add(entry.handle);
+    for (const source of entry.sources.values()) {
+      source.unsubscribe();
+      handles.add(source.handle);
+    }
+    await Promise.all([...handles].map((handle) => handle.destroy()));
+  }
 
   return {
     ...store,
     getHandle: (key) => resources.get(key)?.handle ?? null,
+    getSourceHandle: (key, sourceId) => resources.get(key)?.sources.get(sourceId)?.handle ?? null,
     getBytes: (key) => {
       const entry = resources.get(key);
       return entry?.handle ? entry.bytes : null;
     },
+    getAssetUrl: (key, assetId) => {
+      const entry = resources.get(key);
+      if (!entry) return null;
+      const known = entry.assetUrls.get(assetId);
+      if (known) return known;
+      const bytes = entry.assets.get(assetId);
+      const ref = store.getState().documents.find((doc) => doc.key === key)?.editor?.model.assets[
+        assetId
+      ];
+      if (!bytes || !ref) return null;
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: ref.mimeType }));
+      entry.assetUrls.set(assetId, url);
+      return url;
+    },
     async destroy() {
       const entries = [...resources.values()];
       resources.clear();
-      for (const entry of entries) {
-        if (entry.flushTimer) clearTimeout(entry.flushTimer);
-        entry.search?.abort();
-      }
       store.setState({ documents: [], activeKey: null });
-      await Promise.all(
-        entries.map(async (entry) => {
-          entry.file.release?.();
-          await entry.handle?.destroy();
-        }),
-      );
+      await Promise.all(entries.map((entry) => releaseResources(entry)));
     },
   };
 }

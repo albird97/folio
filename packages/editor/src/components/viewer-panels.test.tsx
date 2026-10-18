@@ -1,3 +1,4 @@
+import type { SourceId } from '@folio/document-model';
 import type { OutlineItem, PdfEngine } from '@folio/pdf-core';
 import { fakeDocumentHandle } from '@folio/pdf-core/testing';
 import { createMemoryPlatformAdapter, memoryFile } from '@folio/platform-adapters';
@@ -90,7 +91,17 @@ async function searchFinished(workspace: WorkspaceStore) {
 describe('bookmarks', () => {
   it('works as a tree with the keyboard and follows destinations', async () => {
     const { workspace, key, doc, wrap, handle } = await setup();
-    render(wrap(<OutlinePanel docKey={key} handle={handle} />));
+    const model = doc().editor!.model;
+    render(
+      wrap(
+        <OutlinePanel
+          docKey={key}
+          handle={handle}
+          pages={model.pages}
+          sourceId={Object.keys(model.sources)[0] as SourceId}
+        />,
+      ),
+    );
     const tree = await screen.findByRole('tree', { name: 'Bookmarks' });
     expect(screen.getAllByRole('treeitem')).toHaveLength(3);
     const intro = screen.getByRole('treeitem', { name: /Introduction/ });
@@ -129,9 +140,37 @@ describe('bookmarks', () => {
     await workspace.destroy();
   });
 
+  it('follows pages that moved and disables bookmarks of deleted pages', async () => {
+    const { workspace, key, doc, wrap, handle } = await setup();
+    const pages = doc().editor!.model.pages;
+    // Move page 3 to the front, then delete page 2.
+    workspace.getState().movePages(key, [pages[2]!.id], 0);
+    workspace.getState().deletePages(key, [pages[1]!.id]);
+    const model = doc().editor!.model;
+    render(
+      wrap(
+        <OutlinePanel
+          docKey={key}
+          handle={handle}
+          pages={model.pages}
+          sourceId={Object.keys(model.sources)[0] as SourceId}
+        />,
+      ),
+    );
+    const chapter = await screen.findByRole('treeitem', { name: /Chapter 1/ });
+    expect(chapter.getAttribute('aria-disabled')).toBe('true');
+    const intro = screen.getByRole('treeitem', { name: /Introduction/ });
+    expect(intro.textContent).toContain('2');
+    fireEvent.click(intro);
+    expect(doc().navigation?.target.pageIndex).toBe(1);
+    await workspace.destroy();
+  });
+
   it('says when a document has no bookmarks', async () => {
     const { key, wrap, workspace } = await setup();
-    render(wrap(<OutlinePanel docKey={key} handle={fakeDocumentHandle()} />));
+    render(
+      wrap(<OutlinePanel docKey={key} handle={fakeDocumentHandle()} pages={[]} sourceId={null} />),
+    );
     expect(await screen.findByText('This PDF has no bookmarks.')).toBeTruthy();
     await workspace.destroy();
   });

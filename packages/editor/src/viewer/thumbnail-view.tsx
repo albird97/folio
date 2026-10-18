@@ -5,8 +5,10 @@ import type { SchedulableJob } from './render-scheduler';
 import { pageCache, scheduler, thumbnailCache } from './resources';
 
 export interface ThumbnailViewProps {
-  docKey: string;
-  handle: PdfDocumentHandle;
+  /** Identifies the document and source file in the render caches. */
+  cacheKey: string;
+  /** The engine document of the page's file, or null for a blank page. */
+  handle: PdfDocumentHandle | null;
   sourceIndex: number;
   /** Added to the page's own /Rotate. */
   rotation: Rotation;
@@ -38,7 +40,7 @@ function downscale(
 
 /** A low-resolution page image for the pages panel. */
 export const ThumbnailView = memo(function ThumbnailView({
-  docKey,
+  cacheKey,
   handle,
   sourceIndex,
   rotation,
@@ -51,11 +53,11 @@ export const ThumbnailView = memo(function ThumbnailView({
   const hostRef = useRef<HTMLDivElement>(null);
   const job = useRef<{ id: string; start: () => SchedulableJob } | null>(null);
   const currentPriority = useEffectEvent(() => priority);
-  const variant = `${docKey}|thumb-r${rotation}-${width}x${height}@${ratio.toFixed(2)}`;
+  const variant = `${cacheKey}|thumb-r${rotation}-${width}x${height}@${ratio.toFixed(2)}`;
 
   useLayoutEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    if (!host || !handle) return;
     let unpin: (() => void) | null = null;
     const show = (canvas: HTMLCanvasElement) => {
       canvas.className = 'block size-full';
@@ -73,7 +75,7 @@ export const ThumbnailView = memo(function ThumbnailView({
       show(cached);
       return release;
     }
-    const rendered = pageCache.fallback(sourceIndex, `${docKey}|r${rotation}@`);
+    const rendered = pageCache.fallback(sourceIndex, `${cacheKey}|r${rotation}@`);
     const copy = rendered ? downscale(rendered.canvas, width * ratio, height * ratio) : null;
     if (copy) {
       show(copy);
@@ -81,7 +83,7 @@ export const ThumbnailView = memo(function ThumbnailView({
     }
 
     let cancelled = false;
-    const id = `${docKey}|thumb|${sourceIndex}`;
+    const id = `${cacheKey}|thumb|${sourceIndex}`;
     const start = (): SchedulableJob => {
       const canvas = host.ownerDocument.createElement('canvas');
       const render = handle.renderPage(sourceIndex, canvas, {
@@ -114,7 +116,7 @@ export const ThumbnailView = memo(function ThumbnailView({
       scheduler.cancel(id);
       release();
     };
-  }, [docKey, handle, sourceIndex, variant, rotation, width, height, scale, ratio]);
+  }, [cacheKey, handle, sourceIndex, variant, rotation, width, height, scale, ratio]);
 
   useEffect(() => {
     if (job.current) scheduler.schedule(job.current.id, priority, job.current.start);

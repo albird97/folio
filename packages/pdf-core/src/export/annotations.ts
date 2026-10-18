@@ -214,6 +214,8 @@ export class AnnotationWriter {
       }
       case 'added-text': {
         dict.set(PDFName.of('Contents'), PDFHexString.fromText(annotation.text));
+        if (annotation.rotation !== 0)
+          dict.set(PDFName.of('Rotate'), context.obj(annotation.rotation));
         const font = { sans: 'Helv', serif: 'TiRo', mono: 'Cour' }[annotation.fontFamily];
         const [r, g, b] = rgb(annotation.color);
         dict.set(
@@ -224,6 +226,8 @@ export class AnnotationWriter {
       }
       case 'added-image':
       case 'signature':
+        if (annotation.rotation !== 0)
+          dict.set(PDFName.of('Rotate'), context.obj(annotation.rotation));
         dict.set(
           PDFName.of('Name'),
           PDFName.of(annotation.kind === 'signature' ? 'FolioSignature' : 'FolioImage'),

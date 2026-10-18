@@ -1,6 +1,6 @@
 import { createMemoryStorage } from '@folio/platform-adapters';
 import { describe, expect, it } from 'vitest';
-import { createUiStore, UI_STORAGE_KEY } from './ui';
+import { createUiStore, DEFAULT_STYLE, UI_STORAGE_KEY } from './ui';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -92,7 +92,35 @@ describe('ui store', () => {
       leftPanelOpen: false,
       rightPanelOpen: true,
       sidebarTab: 'pages',
+      style: DEFAULT_STYLE,
+      authorName: '',
     });
+  });
+
+  it('remembers annotation styles, keeping only valid values', async () => {
+    const storage = createMemoryStorage({
+      [UI_STORAGE_KEY]: {
+        style: { colors: { ink: '#123456', note: 'red' }, strokeWidth: 400, fontFamily: 'comic' },
+        authorName: 'Ada',
+      },
+    });
+    const store = createUiStore(storage);
+    await settle();
+    expect(store.getState().style).toMatchObject({
+      colors: { ink: '#123456', note: DEFAULT_STYLE.colors.note },
+      strokeWidth: 24,
+      fontFamily: 'sans',
+    });
+    expect(store.getState().authorName).toBe('Ada');
+    store.getState().setToolColor('highlight', '#0ca678');
+    store.getState().setStyle({ fontSize: 18 });
+    // The tool itself is not remembered: every session starts with Select.
+    store.getState().setTool('ink');
+    await settle();
+    expect(storage.data.get(UI_STORAGE_KEY)).toMatchObject({
+      style: { colors: { highlight: '#0ca678' }, fontSize: 18 },
+    });
+    expect(storage.data.get(UI_STORAGE_KEY)).not.toHaveProperty('tool');
   });
 
   it('opens the sidebar on a tab and remembers the tab', async () => {

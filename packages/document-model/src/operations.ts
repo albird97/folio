@@ -2,6 +2,7 @@ import { addRotation, normalizeRotation, type Rotation } from './geometry';
 import type { AnnotationId, PageId } from './ids';
 import type {
   Annotation,
+  AssetRef,
   DocumentMetadata,
   DocumentModel,
   PageModel,
@@ -27,7 +28,16 @@ export type Operation =
     }
   | { type: 'pages/remove'; pageIds: PageId[] }
   | { type: 'metadata/update'; patch: Partial<DocumentMetadata> }
-  | { type: 'annotations/add'; annotations: Annotation[] }
+  | {
+      type: 'annotations/add';
+      annotations: Annotation[];
+      /**
+       * Images the annotations use that the document does not know yet. Like
+       * sources, they stay registered after an undo (their bytes are needed
+       * for redo); assets nothing uses are never exported.
+       */
+      assets?: AssetRef[];
+    }
   | { type: 'annotations/replace'; annotations: Annotation[] }
   | { type: 'annotations/remove'; ids: AnnotationId[] }
   | { type: 'batch'; operations: Operation[] };
@@ -38,6 +48,7 @@ export type OperationErrorCode =
   | 'unknown-page'
   | 'unknown-annotation'
   | 'unknown-source'
+  | 'unknown-asset'
   | 'duplicate-id'
   | 'invalid-order'
   | 'invalid-index'
@@ -186,9 +197,15 @@ function updateMetadata(model: DocumentModel, patch: Partial<DocumentMetadata>):
   };
 }
 
-function addAnnotations(model: DocumentModel, added: Annotation[]): OperationResult {
+function addAnnotations(
+  model: DocumentModel,
+  added: Annotation[],
+  newAssets: readonly AssetRef[] = [],
+): OperationResult {
   if (added.length === 0) throw new OperationError('empty-operation', 'No annotations given.');
   const pages = pageIndexMap(model);
+  const assets = { ...model.assets };
+  for (const asset of newAssets) assets[asset.id] ??= asset;
   const annotations = { ...model.annotations };
   for (const annotation of added) {
     if (!pages.has(annotation.pageId)) {
@@ -197,10 +214,13 @@ function addAnnotations(model: DocumentModel, added: Annotation[]): OperationRes
     if (annotations[annotation.id]) {
       throw new OperationError('duplicate-id', `Annotation ${annotation.id} already exists.`);
     }
+    if ('assetId' in annotation && !assets[annotation.assetId]) {
+      throw new OperationError('unknown-asset', `Unknown image ${annotation.assetId}.`);
+    }
     annotations[annotation.id] = annotation;
   }
   return {
-    model: { ...model, annotations },
+    model: { ...model, annotations, assets },
     inverse: { type: 'annotations/remove', ids: added.map((annotation) => annotation.id) },
   };
 }
@@ -219,6 +239,9 @@ function replaceAnnotations(model: DocumentModel, replacements: Annotation[]): O
     }
     if (!pages.has(annotation.pageId)) {
       throw new OperationError('unknown-page', `Unknown page ${annotation.pageId}.`);
+    }
+    if ('assetId' in annotation && !model.assets[annotation.assetId]) {
+      throw new OperationError('unknown-asset', `Unknown image ${annotation.assetId}.`);
     }
     previous.push(current);
     annotations[annotation.id] = annotation;
@@ -275,7 +298,7 @@ export function applyOperation(model: DocumentModel, operation: Operation): Oper
     case 'metadata/update':
       return updateMetadata(model, operation.patch);
     case 'annotations/add':
-      return addAnnotations(model, operation.annotations);
+      return addAnnotations(model, operation.annotations, operation.assets);
     case 'annotations/replace':
       return replaceAnnotations(model, operation.annotations);
     case 'annotations/remove':

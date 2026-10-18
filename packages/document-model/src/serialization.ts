@@ -124,9 +124,22 @@ const annotation = z.discriminatedUnion('kind', [
     text: z.string(),
     fontSize: finite.positive(),
     fontFamily: z.enum(['sans', 'serif', 'mono']),
+    rotation,
   }),
-  z.object({ ...annotationBase, kind: z.literal('added-image'), rect, assetId: id('asset') }),
-  z.object({ ...annotationBase, kind: z.literal('signature'), rect, assetId: id('asset') }),
+  z.object({
+    ...annotationBase,
+    kind: z.literal('added-image'),
+    rect,
+    assetId: id('asset'),
+    rotation,
+  }),
+  z.object({
+    ...annotationBase,
+    kind: z.literal('signature'),
+    rect,
+    assetId: id('asset'),
+    rotation,
+  }),
 ]);
 
 const formField = z.object({
@@ -169,7 +182,11 @@ const operation: z.ZodType = z.lazy(() =>
     }),
     z.object({ type: z.literal('pages/remove'), pageIds: z.array(id('page')) }),
     z.object({ type: z.literal('metadata/update'), patch: metadata.partial() }),
-    z.object({ type: z.literal('annotations/add'), annotations: z.array(annotation) }),
+    z.object({
+      type: z.literal('annotations/add'),
+      annotations: z.array(annotation),
+      assets: z.array(asset).optional(),
+    }),
     z.object({ type: z.literal('annotations/replace'), annotations: z.array(annotation) }),
     z.object({ type: z.literal('annotations/remove'), ids: z.array(id('annotation')) }),
     z.object({ type: z.literal('batch'), operations: z.array(operation) }),

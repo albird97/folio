@@ -1,9 +1,102 @@
 import { isThemePreference, type ThemePreference } from '@folio/shared-ui';
-import type { KeyValueStorage } from '@folio/platform-adapters';
+import type { FontFamily, HexColor } from '@folio/document-model';
+import type { IncomingFile, KeyValueStorage } from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
-export type SidebarTab = 'pages' | 'outline' | 'results';
-export const SIDEBAR_TABS: readonly SidebarTab[] = ['pages', 'outline', 'results'];
+export type SidebarTab = 'pages' | 'outline' | 'comments' | 'results';
+export const SIDEBAR_TABS: readonly SidebarTab[] = ['pages', 'outline', 'comments', 'results'];
+
+/** What a pointer does on the pages. */
+export type Tool =
+  | 'select'
+  | 'highlight'
+  | 'underline'
+  | 'strikeout'
+  | 'note'
+  | 'ink'
+  | 'rectangle'
+  | 'ellipse'
+  | 'line'
+  | 'arrow'
+  | 'text'
+  | 'image';
+
+export const TOOLS: readonly Tool[] = [
+  'select',
+  'highlight',
+  'underline',
+  'strikeout',
+  'note',
+  'ink',
+  'rectangle',
+  'ellipse',
+  'line',
+  'arrow',
+  'text',
+  'image',
+];
+
+/** Tools that mark text selected in the page's text layer. */
+export const MARKUP_TOOLS: ReadonlySet<Tool> = new Set(['highlight', 'underline', 'strikeout']);
+
+/** Colours and sizes new annotations get; remembered between sessions. */
+export interface AnnotationStyle {
+  colors: Record<Exclude<Tool, 'select' | 'image'>, HexColor>;
+  /** Pen and outline width, in points. */
+  strokeWidth: number;
+  fontSize: number;
+  fontFamily: FontFamily;
+  /** Fill of new rectangles and ellipses, or null for none. */
+  fill: HexColor | null;
+}
+
+export const DEFAULT_STYLE: AnnotationStyle = {
+  colors: {
+    highlight: '#ffd43b',
+    underline: '#1c7ed6',
+    strikeout: '#e03131',
+    note: '#ffd43b',
+    ink: '#e03131',
+    rectangle: '#e03131',
+    ellipse: '#e03131',
+    line: '#e03131',
+    arrow: '#e03131',
+    text: '#1f2328',
+  },
+  strokeWidth: 2,
+  fontSize: 14,
+  fontFamily: 'sans',
+  fill: null,
+};
+
+/** Swatches offered for annotation colours. */
+export const SWATCHES: readonly HexColor[] = [
+  '#ffd43b',
+  '#ff922b',
+  '#e03131',
+  '#e64980',
+  '#7048e8',
+  '#1c7ed6',
+  '#0ca678',
+  '#1f2328',
+  '#868e96',
+  '#ffffff',
+];
+
+/** A dialog the workspace shows (one at a time). */
+export type DialogRequest =
+  | {
+      kind: 'insert-password';
+      docKey: string;
+      file: IncomingFile;
+      /** Where the pages go. */
+      index: number;
+      rejected: boolean;
+      /** Files still to insert after this one. */
+      rest: IncomingFile[];
+    }
+  | { kind: 'split'; docKey: string }
+  | { kind: 'close-document'; docKey: string };
 
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {
@@ -11,6 +104,11 @@ export interface UiState {
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
   sidebarTab: SidebarTab;
+  tool: Tool;
+  style: AnnotationStyle;
+  /** Written into new annotations as their author; empty leaves it out. */
+  authorName: string;
+  dialog: DialogRequest | null;
   hydrated: boolean;
   setTheme(theme: ThemePreference): void;
   toggleLeftPanel(): void;
@@ -18,11 +116,49 @@ export interface UiState {
   /** Shows the sidebar on the given tab. */
   showSidebar(tab: SidebarTab): void;
   setSidebarTab(tab: SidebarTab): void;
+  setTool(tool: Tool): void;
+  setStyle(changes: Partial<Omit<AnnotationStyle, 'colors'>>): void;
+  setToolColor(tool: keyof AnnotationStyle['colors'], color: HexColor): void;
+  setAuthorName(name: string): void;
+  openDialog(dialog: DialogRequest): void;
+  closeDialog(): void;
 }
 
-type Persisted = Pick<UiState, 'theme' | 'leftPanelOpen' | 'rightPanelOpen' | 'sidebarTab'>;
+type Persisted = Pick<
+  UiState,
+  'theme' | 'leftPanelOpen' | 'rightPanelOpen' | 'sidebarTab' | 'style' | 'authorName'
+>;
 
 export const UI_STORAGE_KEY = 'workspace-ui';
+
+const isColor = (value: unknown): value is HexColor =>
+  typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+
+function sanitizeStyle(value: unknown): AnnotationStyle | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  const colors = { ...DEFAULT_STYLE.colors };
+  if (typeof raw.colors === 'object' && raw.colors !== null) {
+    for (const key of Object.keys(colors) as Array<keyof AnnotationStyle['colors']>) {
+      const color = (raw.colors as Record<string, unknown>)[key];
+      if (isColor(color)) colors[key] = color;
+    }
+  }
+  const number = (input: unknown, min: number, max: number, fallback: number) =>
+    typeof input === 'number' && Number.isFinite(input)
+      ? Math.min(max, Math.max(min, input))
+      : fallback;
+  return {
+    colors,
+    strokeWidth: number(raw.strokeWidth, 0.5, 24, DEFAULT_STYLE.strokeWidth),
+    fontSize: number(raw.fontSize, 4, 144, DEFAULT_STYLE.fontSize),
+    fontFamily:
+      raw.fontFamily === 'serif' || raw.fontFamily === 'mono' || raw.fontFamily === 'sans'
+        ? raw.fontFamily
+        : DEFAULT_STYLE.fontFamily,
+    fill: isColor(raw.fill) ? raw.fill : null,
+  };
+}
 
 function sanitize(value: unknown): Partial<Persisted> {
   if (typeof value !== 'object' || value === null) return {};
@@ -33,8 +169,20 @@ function sanitize(value: unknown): Partial<Persisted> {
   if (typeof raw.rightPanelOpen === 'boolean') out.rightPanelOpen = raw.rightPanelOpen;
   if (SIDEBAR_TABS.includes(raw.sidebarTab as SidebarTab))
     out.sidebarTab = raw.sidebarTab as SidebarTab;
+  const style = sanitizeStyle(raw.style);
+  if (style) out.style = style;
+  if (typeof raw.authorName === 'string') out.authorName = raw.authorName.slice(0, 200);
   return out;
 }
+
+const persistedOf = (state: UiState): Persisted => ({
+  theme: state.theme,
+  leftPanelOpen: state.leftPanelOpen,
+  rightPanelOpen: state.rightPanelOpen,
+  sidebarTab: state.sidebarTab,
+  style: state.style,
+  authorName: state.authorName,
+});
 
 export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
   const store = createStore<UiState>()((set) => ({
@@ -42,12 +190,25 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     leftPanelOpen: true,
     rightPanelOpen: true,
     sidebarTab: 'pages',
+    tool: 'select',
+    style: DEFAULT_STYLE,
+    authorName: '',
+    dialog: null,
     hydrated: false,
     setTheme: (theme) => set({ theme }),
     toggleLeftPanel: () => set((state) => ({ leftPanelOpen: !state.leftPanelOpen })),
     toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
     showSidebar: (tab) => set({ leftPanelOpen: true, sidebarTab: tab }),
     setSidebarTab: (tab) => set({ sidebarTab: tab }),
+    setTool: (tool) => set({ tool }),
+    setStyle: (changes) => set((state) => ({ style: { ...state.style, ...changes } })),
+    setToolColor: (tool, color) =>
+      set((state) => ({
+        style: { ...state.style, colors: { ...state.style.colors, [tool]: color } },
+      })),
+    setAuthorName: (authorName) => set({ authorName: authorName.slice(0, 200) }),
+    openDialog: (dialog) => set({ dialog }),
+    closeDialog: () => set({ dialog: null }),
   }));
 
   void storage.get<unknown>(UI_STORAGE_KEY).then((stored) => {
@@ -66,8 +227,12 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
         return;
       }
       const next = sanitize(value);
-      const current = store.getState();
-      if ((Object.keys(next) as Array<keyof Persisted>).some((key) => next[key] !== current[key])) {
+      const current = persistedOf(store.getState());
+      if (
+        (Object.keys(next) as Array<keyof Persisted>).some(
+          (key) => JSON.stringify(next[key]) !== JSON.stringify(current[key]),
+        )
+      ) {
         applyingStored = true;
         try {
           store.setState(next);
@@ -78,25 +243,21 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     });
     store.subscribe((state, previous) => {
       if (applyingStored) return;
+      const persisted = persistedOf(state);
+      const before = persistedOf(previous);
       if (
-        state.theme !== previous.theme ||
-        state.leftPanelOpen !== previous.leftPanelOpen ||
-        state.rightPanelOpen !== previous.rightPanelOpen ||
-        state.sidebarTab !== previous.sidebarTab
+        (Object.keys(persisted) as Array<keyof Persisted>).every(
+          (key) => persisted[key] === before[key],
+        )
       ) {
-        const persisted: Persisted = {
-          theme: state.theme,
-          leftPanelOpen: state.leftPanelOpen,
-          rightPanelOpen: state.rightPanelOpen,
-          sidebarTab: state.sidebarTab,
-        };
-        if (storage.watch) {
-          unechoedWrites.push(JSON.stringify(persisted));
-          // Storage only echoes real changes, so drop entries that never come back.
-          if (unechoedWrites.length > 20) unechoedWrites.shift();
-        }
-        void storage.set<Persisted>(UI_STORAGE_KEY, persisted);
+        return;
       }
+      if (storage.watch) {
+        unechoedWrites.push(JSON.stringify(persisted));
+        // Storage only echoes real changes, so drop entries that never come back.
+        if (unechoedWrites.length > 20) unechoedWrites.shift();
+      }
+      void storage.set<Persisted>(UI_STORAGE_KEY, persisted);
     });
   });
 

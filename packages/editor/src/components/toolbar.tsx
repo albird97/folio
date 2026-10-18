@@ -1,6 +1,10 @@
 import { primarySource } from '@folio/document-model';
 import {
   Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   ICON,
   IconButton,
   Kbd,
@@ -8,7 +12,8 @@ import {
   type ThemePreference,
 } from '@folio/shared-ui';
 import {
-  FileDown,
+  ChevronDown,
+  Download,
   FolderOpen,
   Monitor,
   Moon,
@@ -16,6 +21,7 @@ import {
   PanelRight,
   RotateCcw,
   RotateCw,
+  Save,
   Search,
   Sun,
 } from 'lucide-react';
@@ -24,6 +30,7 @@ import type { AppCommand } from '@folio/platform-adapters';
 import { COMMAND_SHORTCUTS } from '../commands';
 import { useActiveDocument, useUi, useWorkspaceContext } from '../context';
 import { formatBytes } from '../format';
+import { useSaveAs } from '../hooks/use-save-as';
 import { PageControls, ZoomControls } from './viewer-controls';
 
 const THEME_META: Record<ThemePreference, { label: string; Icon: typeof Sun }> = {
@@ -54,7 +61,8 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
   const source = doc?.editor ? primarySource(doc.editor.model) : null;
   const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];
   const nextTheme = THEME_META[nextThemePreference(theme)].label.replace('Theme: ', '');
-  const saveLabel = adapter.platform === 'desktop' ? 'Save a copy…' : 'Download a copy';
+  const desktop = adapter.platform === 'desktop';
+  const saveAs = useSaveAs();
 
   return (
     <ToolbarPrimitive.Root
@@ -85,15 +93,49 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
         </Button>
       </ToolbarPrimitive.Button>
       {adapter.features.saveCopy ? (
-        <ToolbarPrimitive.Button asChild>
-          <IconButton
-            label={saveLabel}
-            icon={<FileDown size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
-            disabled={!ready}
-            onClick={() => onCommand('save-copy')}
-            shortcut={shortcut('save-copy')}
-          />
-        </ToolbarPrimitive.Button>
+        <>
+          <ToolbarPrimitive.Button asChild>
+            <IconButton
+              label={desktop ? 'Save as…' : 'Download PDF'}
+              icon={
+                desktop ? (
+                  <Save size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
+                ) : (
+                  <Download size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
+                )
+              }
+              disabled={!ready}
+              onClick={() => onCommand('save-as')}
+              shortcut={shortcut('save-as')}
+            />
+          </ToolbarPrimitive.Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild disabled={!ready}>
+              <ToolbarPrimitive.Button asChild>
+                <IconButton
+                  label="More ways to save"
+                  size="icon-sm"
+                  className="-ml-1 w-5"
+                  icon={<ChevronDown size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />}
+                />
+              </ToolbarPrimitive.Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onSelect={() => doc && void saveAs(doc.key)}>
+                {desktop ? 'Save as…' : 'Download PDF'}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!doc?.permissions.modify}
+                onSelect={() => doc && void saveAs(doc.key, { flatten: true })}
+              >
+                {desktop ? 'Save with comments flattened…' : 'Download with comments flattened'}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onCommand('save-copy')}>
+                {desktop ? 'Save a copy of the original…' : 'Download the original'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
       ) : null}
 
       <div className="mx-2 flex min-w-0 flex-1 items-baseline gap-2">
@@ -102,9 +144,9 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
             <h1 className="truncate text-sm font-semibold" title={doc.fileName}>
               {doc.editor?.model.metadata.title || doc.fileName}
             </h1>
-            {source ? (
+            {source && pages ? (
               <span className="hidden shrink-0 text-xs text-ink-muted tabular 2xl:inline">
-                {source.pageCount} {source.pageCount === 1 ? 'page' : 'pages'} ·{' '}
+                {pages.length} {pages.length === 1 ? 'page' : 'pages'} ·{' '}
                 {formatBytes(source.byteLength)}
               </span>
             ) : null}

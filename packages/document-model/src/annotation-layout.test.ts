@@ -3,6 +3,7 @@ import {
   annotationBounds,
   annotationFrame,
   canShowCharacter,
+  contentFrame,
   isMovable,
   isResizable,
   layoutAddedText,
@@ -78,15 +79,57 @@ describe('layoutAddedText', () => {
       text: 'iiii iiii iiii iiii iiii iiii iiii iiii',
       fontSize: 10,
       fontFamily: 'mono',
+      rotation: 0,
     });
     expect(lossy).toBe(false);
     // Each "iiii" is 24pt wide in Courier 10, so two fit in 56pt. The third
     // line is partly visible (clipped); the fourth starts below the box.
-    const top = 100 + 30 - 2 - 6.29;
+    const top = 30 - 2 - 6.29;
     expect(lines.map((line) => line.text)).toEqual(['iiii iiii', 'iiii iiii', 'iiii iiii']);
-    expect(lines[0]!.x).toBe(12);
+    expect(lines[0]!.x).toBe(2);
     expect(lines[0]!.y).toBeCloseTo(top);
     expect(lines[1]!.y).toBeCloseTo(top - 10 * LINE_HEIGHT);
+  });
+
+  it('lays text out along the long edge of boxes added to turned pages', () => {
+    const { frame, lines } = layoutAddedText({
+      rect: { x: 10, y: 100, width: 30, height: 60 },
+      text: 'iiii iiii',
+      fontSize: 10,
+      fontFamily: 'mono',
+      rotation: 90,
+    });
+    expect(frame).toMatchObject({ width: 60, height: 30 });
+    expect(lines.map((line) => line.text)).toEqual(['iiii iiii']);
+  });
+});
+
+describe('contentFrame', () => {
+  const rect = { x: 10, y: 20, width: 30, height: 60 };
+  const apply = ([a, b, c, d, e, f]: number[], x: number, y: number) => [
+    a! * x + c! * y + e!,
+    b! * x + d! * y + f!,
+  ];
+
+  it('maps the content box onto the page box for every rotation', () => {
+    for (const rotation of [0, 90, 180, 270] as const) {
+      const frame = contentFrame(rect, rotation);
+      const corners = [apply(frame.matrix, 0, 0), apply(frame.matrix, frame.width, frame.height)];
+      const xs = corners.map(([x]) => x!).sort((a, b) => a - b);
+      const ys = corners.map(([, y]) => y!).sort((a, b) => a - b);
+      expect([xs, ys]).toEqual([
+        [10, 40],
+        [20, 80],
+      ]);
+    }
+  });
+
+  it('keeps content level when the page is shown turned', () => {
+    // On a page shown turned 90° clockwise, "right" on screen is page +y.
+    const [a, b] = contentFrame(rect, 90).matrix;
+    expect([a, b]).toEqual([0, 1]);
+    const [a2, b2] = contentFrame(rect, 270).matrix;
+    expect([a2, b2]).toEqual([0, -1]);
   });
 });
 

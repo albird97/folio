@@ -1,10 +1,11 @@
-import { primarySource } from '@folio/document-model';
+import { primarySource, type DocumentMetadata } from '@folio/document-model';
 import { ICON, IconButton } from '@folio/shared-ui';
 import { Check, Copy } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
-import { useWorkspaceContext } from '../context';
+import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useUi, useWorkspaceContext } from '../context';
 import { formatBytes, formatDate } from '../format';
 import type { WorkspaceDocument } from '../store/workspace';
+import { AnnotationInspector } from './annotation-inspector';
 
 function CopyButton({ label, value }: { label: string; value: string }) {
   const { adapter } = useWorkspaceContext();
@@ -71,10 +72,79 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 const empty = <span className="text-ink-subtle">—</span>;
 const textValue = (value: string) => (value ? value : empty);
 
+const FIELD =
+  'w-full min-w-0 rounded-sm bg-transparent px-1.5 py-0.5 text-xs text-ink outline-none hover:bg-hover focus-visible:bg-raised focus-visible:shadow-[inset_0_0_0_1px_var(--folio-focus)]';
+
+/** A document property that can be changed in place. */
+function EditableRow({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange(value: string): void;
+  placeholder?: string;
+}) {
+  const id = useId();
+  return (
+    <div className="grid grid-cols-[5.75rem_1fr] items-center gap-x-2 py-0.5">
+      <dt className="text-xs text-ink-muted">
+        <label htmlFor={id}>{label}</label>
+      </dt>
+      <dd className="-ml-1.5 min-w-0">
+        <input
+          id={id}
+          className={FIELD}
+          value={value}
+          placeholder={placeholder ?? 'Add…'}
+          spellCheck={false}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        />
+      </dd>
+    </div>
+  );
+}
+
+/** Keywords are edited as text and stored as a list once typing pauses at a comma. */
+function KeywordsRow({
+  keywords,
+  onChange,
+}: {
+  keywords: readonly string[];
+  onChange(keywords: string[]): void;
+}) {
+  const joined = keywords.join(', ');
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <EditableRow
+      label="Keywords"
+      value={draft ?? joined}
+      placeholder="Add, separated by commas"
+      onChange={(value) => {
+        setDraft(value);
+        onChange(
+          value
+            .split(/[,;]/)
+            .map((keyword) => keyword.trim())
+            .filter((keyword) => keyword.length > 0),
+        );
+      }}
+    />
+  );
+}
+
 export function PropertiesPanel({ doc }: { doc: WorkspaceDocument }) {
+  const { workspace } = useWorkspaceContext();
+  const authorName = useUi((state) => state.authorName);
+  const setAuthorName = useUi((state) => state.setAuthorName);
   const model = doc.editor?.model;
   const info = doc.info;
   const source = model ? primarySource(model) : null;
+  const editable = doc.permissions.modify;
+  const set = (patch: Partial<DocumentMetadata>) =>
+    workspace.getState().updateMetadata(doc.key, patch);
 
   return (
     <aside
@@ -94,22 +164,52 @@ export function PropertiesPanel({ doc }: { doc: WorkspaceDocument }) {
         </p>
       ) : (
         <>
+          <AnnotationInspector doc={doc} />
           <Section title="Description">
-            <Row
-              label="Title"
-              value={textValue(model.metadata.title)}
-              copy={model.metadata.title || undefined}
-            />
-            <Row
-              label="Author"
-              value={textValue(model.metadata.author)}
-              copy={model.metadata.author || undefined}
-            />
-            <Row label="Subject" value={textValue(model.metadata.subject)} />
-            <Row
-              label="Keywords"
-              value={model.metadata.keywords.length ? model.metadata.keywords.join(', ') : empty}
-            />
+            {editable ? (
+              <>
+                <EditableRow
+                  label="Title"
+                  value={model.metadata.title}
+                  onChange={(title) => set({ title })}
+                />
+                <EditableRow
+                  label="Author"
+                  value={model.metadata.author}
+                  onChange={(author) => set({ author })}
+                />
+                <EditableRow
+                  label="Subject"
+                  value={model.metadata.subject}
+                  onChange={(subject) => set({ subject })}
+                />
+                <KeywordsRow
+                  key={doc.key}
+                  keywords={model.metadata.keywords}
+                  onChange={(keywords) => set({ keywords })}
+                />
+              </>
+            ) : (
+              <>
+                <Row
+                  label="Title"
+                  value={textValue(model.metadata.title)}
+                  copy={model.metadata.title || undefined}
+                />
+                <Row
+                  label="Author"
+                  value={textValue(model.metadata.author)}
+                  copy={model.metadata.author || undefined}
+                />
+                <Row label="Subject" value={textValue(model.metadata.subject)} />
+                <Row
+                  label="Keywords"
+                  value={
+                    model.metadata.keywords.length ? model.metadata.keywords.join(', ') : empty
+                  }
+                />
+              </>
+            )}
             <Row label="Created" value={formatDate(model.metadata.creationDate)} />
             <Row label="Modified" value={formatDate(model.metadata.modificationDate)} />
             <Row label="Application" value={textValue(model.metadata.creator)} />
@@ -167,6 +267,14 @@ export function PropertiesPanel({ doc }: { doc: WorkspaceDocument }) {
               }
             />
             <Row label="Signatures" value={info.hasSignatures ? 'Present' : 'None'} />
+          </Section>
+          <Section title="Commenting">
+            <EditableRow
+              label="Your name"
+              value={authorName}
+              placeholder="Shown on your comments"
+              onChange={setAuthorName}
+            />
           </Section>
         </>
       )}

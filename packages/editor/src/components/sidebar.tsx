@@ -1,10 +1,11 @@
-import type { DocumentViewState, PageModel } from '@folio/document-model';
+import type { DocumentViewState, PageModel, SourceId } from '@folio/document-model';
 import type { PdfDocumentHandle } from '@folio/pdf-core';
 import { cn } from '@folio/shared-ui';
 import { Tabs } from 'radix-ui';
 import { useUi } from '../context';
 import { SIDEBAR_TABS, type SidebarTab } from '../store/ui';
 import type { WorkspaceDocument } from '../store/workspace';
+import { CommentsPanel } from './comments-panel';
 import { OutlinePanel } from './outline-panel';
 import { ResultsPanel } from './results-panel';
 import { ThumbnailsPanel } from './thumbnails-panel';
@@ -12,6 +13,7 @@ import { ThumbnailsPanel } from './thumbnails-panel';
 const LABELS: Record<SidebarTab, string> = {
   pages: 'Pages',
   outline: 'Bookmarks',
+  comments: 'Comments',
   results: 'Results',
 };
 
@@ -20,17 +22,23 @@ export function Sidebar({
   pages,
   view,
   handle,
+  sourceId,
+  sourceHandle,
   onFind,
 }: {
   doc: WorkspaceDocument;
   pages: readonly PageModel[];
   view: DocumentViewState;
+  /** The opened file (its bookmarks). */
   handle: PdfDocumentHandle;
+  sourceId: SourceId | null;
+  sourceHandle(sourceId: SourceId): PdfDocumentHandle | null;
   onFind(): void;
 }) {
   const tab = useUi((state) => state.sidebarTab);
   const setTab = useUi((state) => state.setSidebarTab);
   const resultCount = doc.search.query.trim() ? doc.search.matches.length : null;
+  const commentCount = Object.keys(doc.editor?.model.annotations ?? {}).length;
 
   return (
     <aside
@@ -46,7 +54,10 @@ export function Sidebar({
           aria-label="Sidebar views"
           className="flex h-10 shrink-0 items-center gap-1 border-b border-line px-2"
         >
-          {SIDEBAR_TABS.map((value) => (
+          {SIDEBAR_TABS.filter(
+            // Search results get a tab while there is a search.
+            (value) => value !== 'results' || resultCount !== null || tab === 'results',
+          ).map((value) => (
             <Tabs.Trigger
               key={value}
               value={value}
@@ -62,6 +73,11 @@ export function Sidebar({
                   {pages.length.toLocaleString()}
                 </span>
               ) : null}
+              {value === 'comments' && commentCount > 0 ? (
+                <span className="text-2xs font-normal text-ink-muted tabular">
+                  {commentCount.toLocaleString()}
+                </span>
+              ) : null}
               {value === 'results' && resultCount !== null ? (
                 <span className="text-2xs font-normal text-ink-muted tabular">
                   {resultCount.toLocaleString()}
@@ -71,10 +87,19 @@ export function Sidebar({
           ))}
         </Tabs.List>
         <Tabs.Content value="pages" className="min-h-0 flex-1 outline-none">
-          <ThumbnailsPanel docKey={doc.key} pages={pages} view={view} handle={handle} />
+          <ThumbnailsPanel doc={doc} pages={pages} view={view} sourceHandle={sourceHandle} />
         </Tabs.Content>
         <Tabs.Content value="outline" className="min-h-0 flex-1 outline-none">
-          <OutlinePanel key={doc.key} docKey={doc.key} handle={handle} />
+          <OutlinePanel
+            key={doc.key}
+            docKey={doc.key}
+            handle={handle}
+            pages={pages}
+            sourceId={sourceId}
+          />
+        </Tabs.Content>
+        <Tabs.Content value="comments" className="min-h-0 flex-1 outline-none">
+          <CommentsPanel doc={doc} />
         </Tabs.Content>
         <Tabs.Content value="results" className="min-h-0 flex-1 pt-2 outline-none">
           <ResultsPanel doc={doc} onFind={onFind} />

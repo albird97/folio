@@ -1,4 +1,9 @@
-import { createDocumentModel } from '@folio/document-model';
+import {
+  createDocumentModel,
+  createEditorState,
+  execute,
+  type SourceId,
+} from '@folio/document-model';
 import { createPdfEngine } from '@folio/pdf-core';
 import { memoryFile } from '@folio/platform-adapters';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -8,7 +13,8 @@ import {
   readFixture,
   type FixtureName,
 } from '../../../../tests/setup/fixtures';
-import { applyPageInfo, createWorkspaceStore, type WorkspaceStore } from './workspace';
+import { applyPageInfo } from './editing';
+import { createWorkspaceStore, type WorkspaceStore } from './workspace';
 
 const engine = createPdfEngine({ workerSrc: nodeWorkerSrc(), assetBaseUrl: null });
 afterAll(() => engine.destroy());
@@ -165,7 +171,7 @@ describe('workspace store: viewing', () => {
 });
 
 describe('applyPageInfo', () => {
-  it('patches pages of the primary source by their source index', () => {
+  it('patches pages of a source by their source index, in the model and the history', () => {
     const model = createDocumentModel({
       fileName: 'a.pdf',
       byteLength: 10,
@@ -177,18 +183,38 @@ describe('applyPageInfo', () => {
       pages: [
         { size: { width: 612, height: 792 }, rotation: 0 },
         { size: { width: 612, height: 792 }, rotation: 0 },
+        { size: { width: 612, height: 792 }, rotation: 0 },
       ],
     });
-    expect(applyPageInfo(model, [])).toBe(model);
-    const updated = applyPageInfo(model, [
+    const sourceId = Object.keys(model.sources)[0] as SourceId;
+    // Page 2 is deleted before its exact size arrives; undo must bring back the exact size.
+    const state = execute(
+      createEditorState(model),
+      { type: 'pages/remove', pageIds: [model.pages[2]!.id] },
+      { label: 'Delete' },
+    );
+    expect(applyPageInfo(state, sourceId, [])).toBe(state);
+    const updated = applyPageInfo(state, sourceId, [
       { index: 1, info: { size: { width: 100, height: 200 }, rotation: 90, userUnit: 2 } },
+      { index: 2, info: { size: { width: 300, height: 400 }, rotation: 0, userUnit: 1 } },
       { index: 7, info: { size: { width: 1, height: 1 }, rotation: 0, userUnit: 1 } },
     ]);
-    expect(updated.pages[0]).toBe(model.pages[0]);
-    expect(updated.pages[1]).toMatchObject({
+    expect(updated.model.pages[0]).toBe(state.model.pages[0]);
+    expect(updated.model.pages[1]).toMatchObject({
       size: { width: 100, height: 200 },
       sourceRotation: 90,
       userUnit: 2,
     });
+    const inverse = updated.history.past[0]!.inverse;
+    expect(inverse.type === 'pages/insert' && inverse.entries[0]!.page.size).toEqual({
+      width: 300,
+      height: 400,
+    });
+    // Other sources are left alone.
+    expect(
+      applyPageInfo(state, 'src_000000000000000000000000' as SourceId, [
+        { index: 1, info: { size: { width: 1, height: 1 }, rotation: 0, userUnit: 1 } },
+      ]).model.pages[1],
+    ).toEqual(state.model.pages[1]);
   });
 });

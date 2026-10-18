@@ -24,8 +24,10 @@ export interface PageHits {
 }
 
 export interface PageViewProps {
-  docKey: string;
-  handle: PdfDocumentHandle;
+  /** Identifies the document and source file in the render caches. */
+  cacheKey: string;
+  /** The engine document of the page's file, or null for a blank page. */
+  handle: PdfDocumentHandle | null;
   /** Position in the document, from 0. */
   position: number;
   pageCount: number;
@@ -61,7 +63,7 @@ const RERENDER_DELAY_MS = 120;
 /** Text layers follow the canvases of pages at a similar distance. */
 const TEXT_PRIORITY_OFFSET = 50;
 
-const rotationPrefix = (docKey: string, rotation: Rotation) => `${docKey}|r${rotation}@`;
+const rotationPrefix = (cacheKey: string, rotation: Rotation) => `${cacheKey}|r${rotation}@`;
 
 function mark(canvas: HTMLCanvasElement, state: 'rendering' | 'done'): void {
   canvas.className = 'absolute inset-0 block size-full';
@@ -121,7 +123,7 @@ function drawHits(
  * (stretched) while the page re-renders at a new zoom.
  */
 export const PageView = memo(function PageView({
-  docKey,
+  cacheKey,
   handle,
   position,
   pageCount,
@@ -147,14 +149,15 @@ export const PageView = memo(function PageView({
     divs: readonly HTMLElement[];
   } | null>(null);
 
-  const variant = pageVariant(docKey, rotation, scale, ratio);
+  const variant = pageVariant(cacheKey, rotation, scale, ratio);
   const failed = failedVariant === variant;
   const currentPriority = useEffectEvent(() => priority);
   const currentScale = useEffectEvent(() => scale);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    // Blank pages have nothing to draw.
+    if (!host || !handle) return;
     const cached = pageCache.get(sourceIndex, variant);
     if (cached) {
       mark(cached, 'done');
@@ -162,7 +165,7 @@ export const PageView = memo(function PageView({
       return;
     }
     // Keep an older rendering with the same orientation on screen meanwhile.
-    const prefix = rotationPrefix(docKey, rotation);
+    const prefix = rotationPrefix(cacheKey, rotation);
     if (!shown.current?.variant.startsWith(prefix)) {
       const fallback = pageCache.fallback(sourceIndex, prefix);
       swap(
@@ -180,7 +183,7 @@ export const PageView = memo(function PageView({
     if (shown.current) mark(shown.current.canvas, 'rendering');
 
     let cancelled = false;
-    const id = `${docKey}|page|${sourceIndex}`;
+    const id = `${cacheKey}|page|${sourceIndex}`;
     const start = (): SchedulableJob => {
       const canvas = host.ownerDocument.createElement('canvas');
       const job = handle.renderPage(sourceIndex, canvas, {
@@ -227,14 +230,14 @@ export const PageView = memo(function PageView({
       if (timer) clearTimeout(timer);
       scheduler.cancel(id);
     };
-  }, [docKey, handle, sourceIndex, variant, scale, rotation, ratio]);
+  }, [cacheKey, handle, sourceIndex, variant, scale, rotation, ratio]);
 
   // The text layer scales with CSS variables, so only a new orientation redraws it.
   useEffect(() => {
     const container = textRef.current;
-    if (!container) return;
+    if (!container || !handle) return;
     let cancelled = false;
-    const id = `${docKey}|text|${sourceIndex}`;
+    const id = `${cacheKey}|text|${sourceIndex}`;
     const start = () => {
       const job = handle.renderTextLayer(sourceIndex, container, {
         scale: currentScale(),
@@ -261,7 +264,7 @@ export const PageView = memo(function PageView({
       scheduler.cancel(id);
       container.replaceChildren();
     };
-  }, [docKey, handle, sourceIndex, rotation]);
+  }, [cacheKey, handle, sourceIndex, rotation]);
 
   useEffect(() => {
     // Jobs still waiting in the queue move up or down as the page scrolls.
@@ -284,7 +287,7 @@ export const PageView = memo(function PageView({
     const host = hostRef.current;
     return () => {
       if (host) swap(host, shown, null);
-      handle.releasePage(sourceIndex);
+      handle?.releasePage(sourceIndex);
     };
   }, [handle, sourceIndex]);
 
@@ -306,7 +309,7 @@ export const PageView = memo(function PageView({
       }
     >
       <div ref={hostRef} role="img" aria-label={label} className="peer absolute inset-0" />
-      {failed ? null : (
+      {failed || !handle ? null : (
         <div className="pointer-events-none absolute inset-0 hidden items-center justify-center text-[oklch(0.45_0.01_230)] peer-empty:flex">
           <Spinner />
         </div>

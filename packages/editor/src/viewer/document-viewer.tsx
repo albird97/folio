@@ -1,6 +1,16 @@
-import type { DocumentViewState, PageModel } from '@folio/document-model';
+import {
+  moveAnnotation,
+  newAnnotationId,
+  type Annotation,
+  type AnnotationId,
+  type DocumentViewState,
+  type PageId,
+  type PageModel,
+  type SourceId,
+} from '@folio/document-model';
 import { applyTransform, type PdfDocumentHandle } from '@folio/pdf-core';
 import {
+  Fragment,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -10,10 +20,20 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react';
-import { useWorkspaceContext } from '../context';
+import { useUi, useWorkspaceContext } from '../context';
 import type { TextMatch } from '../search/match';
+import { MARKUP_TOOLS } from '../store/ui';
 import type { NavigationTarget, WorkspaceDocument } from '../store/workspace';
-import { displaySize, invertTransform, sourcePageIndex, userRotation } from './geometry';
+import { AnnotationLayer } from './annotation-layer';
+import {
+  applyMatrix,
+  displaySize,
+  invertMatrix,
+  invertTransform,
+  pageSource,
+  pageToDisplay,
+  userRotation,
+} from './geometry';
 import {
   anchorAt,
   computeLayout,
@@ -26,7 +46,8 @@ import {
   type PageLayout,
 } from './layout';
 import { PageView, type PageHits } from './page-view';
-import { PRIORITY } from './resources';
+import { PRIORITY, renderCacheKey } from './resources';
+import { selectedText } from './text-markup';
 import { useDevicePixelRatio } from './use-device-pixel-ratio';
 import { clampZoom, fitZoom, stepZoom } from './zoom';
 
@@ -77,7 +98,48 @@ export interface DocumentViewerProps {
   doc: WorkspaceDocument;
   pages: readonly PageModel[];
   view: DocumentViewState;
-  handle: PdfDocumentHandle;
+  /** The engine document showing pages of a source file. */
+  sourceHandle(sourceId: SourceId): PdfDocumentHandle | null;
+}
+
+const NO_ANNOTATIONS: readonly Annotation[] = [];
+const NO_IDS: readonly AnnotationId[] = [];
+
+/** Annotations grouped by page, reusing `previous` arrays whose contents did not change. */
+function groupByPage(
+  annotations: Readonly<Record<string, Annotation>>,
+  previous: ReadonlyMap<PageId, Annotation[]> | null,
+): Map<PageId, Annotation[]> {
+  const next = new Map<PageId, Annotation[]>();
+  for (const annotation of Object.values(annotations)) {
+    const list = next.get(annotation.pageId);
+    if (list) list.push(annotation);
+    else next.set(annotation.pageId, [annotation]);
+  }
+  for (const [pageId, list] of next) {
+    const before = previous?.get(pageId);
+    if (before && before.length === list.length && before.every((item, i) => item === list[i])) {
+      next.set(pageId, before);
+    }
+  }
+  return next;
+}
+
+/**
+ * Annotations by page. A page's array keeps its identity while its
+ * annotations are unchanged, so editing one page re-renders only that page.
+ */
+function useAnnotationsByPage(annotations: Readonly<Record<string, Annotation>>) {
+  const [grouped, setGrouped] = useState(() => ({
+    annotations,
+    byPage: groupByPage(annotations, null),
+  }));
+  if (grouped.annotations !== annotations) {
+    const next = { annotations, byPage: groupByPage(annotations, grouped.byPage) };
+    setGrouped(next);
+    return next.byPage;
+  }
+  return grouped.byPage;
 }
 
 /**
@@ -85,8 +147,9 @@ export interface DocumentViewerProps {
  * near the window are mounted, so documents with thousands of pages scroll
  * smoothly; rendering is queued by distance from the window.
  */
-export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps) {
-  const { workspace } = useWorkspaceContext();
+export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewerProps) {
+  const { workspace, ui } = useWorkspaceContext();
+  const tool = useUi((state) => state.tool);
   const key = doc.key;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState<Area | null>(null);
@@ -265,7 +328,15 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
           : top
             ? { anchor: top, x: element.clientWidth / 2, y: 0 }
             : null);
-      if (target) element.scrollTo(scrollForAnchor(layout, target.anchor, target.x, target.y));
+      if (target) {
+        const position = scrollForAnchor(layout, target.anchor, target.x, target.y);
+        // Pages that changed shape (turned, resized window) are centred again.
+        const box = layout.boxes[target.anchor.pageIndex];
+        if (!pending && !zoomOnly && box) {
+          position.left = Math.max(0, box.left + box.width / 2 - element.clientWidth / 2);
+        }
+        element.scrollTo(position);
+      }
     }
     track();
   }, [layout, sizes, area]);
@@ -284,7 +355,7 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
       element.scrollTo(position);
       track();
     };
-    if (!match && (!point || (point.x === null && point.y === null))) {
+    if (!match && !target.pagePoint && (!point || (point.x === null && point.y === null))) {
       scrollTo({ top: pageTop(initial, target.pageIndex) });
       return;
     }
@@ -292,34 +363,47 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
     // Where the target is on the page, in CSS pixels at the initial scale.
     let x: number | null = null;
     let y: number | null = null;
-    try {
-      const sourceIndex = sourcePageIndex(page, target.pageIndex);
-      const viewport = await handle.getViewport(sourceIndex, {
-        scale: initial.scale,
-        rotation: userRotation(page, view.rotation),
-      });
-      if (match) {
-        const item = (await handle.getPageText(sourceIndex)).items[match.start.item];
-        if (item) {
-          const [a = 1, b = 0, , , e = 0, f = 0] = item.transform;
-          const length = Math.hypot(a, b) || 1;
-          const along =
-            item.str.length > 0 ? (match.start.offset / item.str.length) * item.width : 0;
-          [x, y] = applyTransform(
+    if (target.pagePoint) {
+      const shown = applyMatrix(pageToDisplay(page, view.rotation), target.pagePoint);
+      x = shown.x * initial.scale * page.userUnit;
+      y = shown.y * initial.scale * page.userUnit;
+    } else {
+      try {
+        const source = pageSource(page);
+        const handle = source ? sourceHandle(source.sourceId) : null;
+        if (!source || !handle) throw new Error('Blank page');
+        const sourceIndex = source.pageIndex;
+        const viewport = await handle.getViewport(sourceIndex, {
+          scale: initial.scale,
+          rotation: userRotation(page, view.rotation),
+        });
+        if (match) {
+          const item = (await handle.getPageText(sourceIndex)).items[match.start.item];
+          if (item) {
+            const [a = 1, b = 0, , , e = 0, f = 0] = item.transform;
+            const length = Math.hypot(a, b) || 1;
+            const along =
+              item.str.length > 0 ? (match.start.offset / item.str.length) * item.width : 0;
+            [x, y] = applyTransform(
+              viewport.transform,
+              e + (along * a) / length,
+              f + (along * b) / length,
+            );
+          }
+        } else if (point) {
+          // Missing coordinates mean "the page edge", as in PDF viewers generally.
+          const [cornerX, cornerY] = applyTransform(invertTransform(viewport.transform), 0, 0);
+          const [vx, vy] = applyTransform(
             viewport.transform,
-            e + (along * a) / length,
-            f + (along * b) / length,
+            point.x ?? cornerX,
+            point.y ?? cornerY,
           );
+          x = point.x === null ? null : vx;
+          y = vy;
         }
-      } else if (point) {
-        // Missing coordinates mean "the page edge", as in PDF viewers generally.
-        const [cornerX, cornerY] = applyTransform(invertTransform(viewport.transform), 0, 0);
-        const [vx, vy] = applyTransform(viewport.transform, point.x ?? cornerX, point.y ?? cornerY);
-        x = point.x === null ? null : vx;
-        y = vy;
+      } catch {
+        // Fall back to the top of the page.
       }
-    } catch {
-      // Fall back to the top of the page.
     }
     if (seq !== navigationSeq.current) return;
     const current = layoutRef.current ?? initial;
@@ -492,12 +576,117 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
       window.removeEventListener('blur', stop);
     };
   }, []);
+  const selection = doc.selection.annotations;
+  const editable = doc.permissions.annotate;
+
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !(event.target instanceof Element)) return;
     event.target.closest('.textLayer')?.classList.add('selecting');
+    // A press away from every annotation clears the annotation selection.
+    if (selection.length > 0 && !event.target.closest('[data-annotation-id], [data-handle]')) {
+      workspace.getState().selectAnnotations(key, []);
+    }
   };
 
+  // Highlight, underline and strikethrough mark the text selected while they are active.
+  const markSelection = useEffectEvent(() => {
+    const element = scrollRef.current;
+    const textSelection = window.getSelection();
+    if (!element || !textSelection || textSelection.isCollapsed || !MARKUP_TOOLS.has(tool)) return;
+    if (tool !== 'highlight' && tool !== 'underline' && tool !== 'strikeout') return;
+    const found = selectedText(element, textSelection, pages, view.rotation);
+    if (found.length === 0) return;
+    const now = new Date().toISOString();
+    const { style, authorName } = ui.getState();
+    const annotations: Annotation[] = found.map((entry) => ({
+      id: newAnnotationId(),
+      pageId: pages[entry.position]!.id,
+      author: authorName,
+      createdAt: now,
+      modifiedAt: now,
+      color: style.colors[tool],
+      opacity: 1,
+      kind: tool,
+      rects: entry.rects,
+      text: entry.text,
+    }));
+    const label = { highlight: 'Highlight', underline: 'Underline', strikeout: 'Strike through' }[
+      tool
+    ];
+    if (workspace.getState().addAnnotations(key, annotations, { label })) {
+      textSelection.removeAllRanges();
+    }
+  });
+  useEffect(() => {
+    if (!MARKUP_TOOLS.has(tool)) return;
+    const onUp = (event: globalThis.PointerEvent) => {
+      if (event.button !== 0) return;
+      // Let the selection settle (double and triple clicks select words and lines).
+      setTimeout(() => markSelection(), 0);
+    };
+    const onKeyUp = (event: globalThis.KeyboardEvent) => {
+      if (event.shiftKey || event.key === 'Shift') markSelection();
+    };
+    const element = scrollRef.current;
+    element?.addEventListener('pointerup', onUp);
+    element?.addEventListener('keyup', onKeyUp);
+    return () => {
+      element?.removeEventListener('pointerup', onUp);
+      element?.removeEventListener('keyup', onKeyUp);
+    };
+  }, [tool]);
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const state = workspace.getState();
+    if (event.key === 'Escape') {
+      if (tool !== 'select') {
+        event.preventDefault();
+        ui.getState().setTool('select');
+      } else if (selection.length > 0) {
+        event.preventDefault();
+        state.selectAnnotations(key, []);
+      }
+      return;
+    }
+    if (selection.length > 0 && editable && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        state.deleteAnnotations(key, [...selection]);
+        return;
+      }
+      const steps: Record<string, [number, number]> = {
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1],
+      };
+      const step = steps[event.key];
+      if (step) {
+        event.preventDefault();
+        // Nudge on screen: one point, or ten with Shift, mapped into each page's space.
+        const distance = event.shiftKey ? 10 : 1;
+        const model = doc.editor?.model;
+        if (!model) return;
+        const moved: Annotation[] = [];
+        for (const id of selection) {
+          const annotation = model.annotations[id];
+          const page = annotation ? pages.find((entry) => entry.id === annotation.pageId) : null;
+          if (!annotation || !page || annotation.kind === 'highlight') continue;
+          if (annotation.kind === 'underline' || annotation.kind === 'strikeout') continue;
+          const [a, b, c, d] = invertMatrix(pageToDisplay(page, view.rotation));
+          const dx = step[0] * distance;
+          const dy = step[1] * distance;
+          moved.push(moveAnnotation(annotation, a * dx + c * dy, b * dx + d * dy));
+        }
+        if (moved.length > 0) {
+          state.updateAnnotations(key, moved, {
+            label: moved.length === 1 ? 'Move comment' : `Move ${moved.length} comments`,
+            coalesceKey: `nudge:${selection.join(',')}`,
+          });
+        }
+        return;
+      }
+    }
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     // Without horizontal scrolling, left and right turn pages.
@@ -506,9 +695,23 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
     event.preventDefault();
     const target = currentIndex + (event.key === 'ArrowRight' ? 1 : -1);
     if (target >= 0 && target < pages.length) {
-      workspace.getState().navigate(key, { pageIndex: target, align: 'top' });
+      state.navigate(key, { pageIndex: target, align: 'top' });
     }
   };
+
+  const annotationsByPage = useAnnotationsByPage(doc.editor?.model.annotations ?? {});
+  const selectedByPage = useMemo(() => {
+    const map = new Map<PageId, AnnotationId[]>();
+    const annotations = doc.editor?.model.annotations;
+    for (const id of selection) {
+      const pageId = annotations?.[id]?.pageId;
+      if (!pageId) continue;
+      const list = map.get(pageId);
+      if (list) list.push(id);
+      else map.set(pageId, [id]);
+    }
+    return map;
+  }, [selection, doc.editor?.model.annotations]);
 
   const groups = useMemo(() => groupMatches(doc.search.matches), [doc.search.matches]);
   const activeMatch = doc.search.matches[doc.search.active];
@@ -557,22 +760,35 @@ export function DocumentViewer({ doc, pages, view, handle }: DocumentViewerProps
             const distance = Math.min(99, Math.abs(index - currentIndex));
             const hits =
               activeMatch?.pageIndex === index ? activeHits : (groups.get(index)?.hits ?? null);
+            const source = pageSource(page);
             return (
-              <PageView
-                key={page.id}
-                docKey={key}
-                handle={handle}
-                position={index}
-                pageCount={pages.length}
-                sourceIndex={sourcePageIndex(page, index)}
-                box={box}
-                scale={layout.scale}
-                rotation={userRotation(page, view.rotation)}
-                userUnit={page.userUnit}
-                ratio={ratio}
-                priority={(visible ? PRIORITY.visiblePage : PRIORITY.nearbyPage) + distance}
-                hits={hits}
-              />
+              <Fragment key={page.id}>
+                <PageView
+                  cacheKey={renderCacheKey(key, source?.sourceId ?? 'blank')}
+                  handle={source ? sourceHandle(source.sourceId) : null}
+                  position={index}
+                  pageCount={pages.length}
+                  sourceIndex={source?.pageIndex ?? 0}
+                  box={box}
+                  scale={layout.scale}
+                  rotation={userRotation(page, view.rotation)}
+                  userUnit={page.userUnit}
+                  ratio={ratio}
+                  priority={(visible ? PRIORITY.visiblePage : PRIORITY.nearbyPage) + distance}
+                  hits={hits}
+                />
+                <AnnotationLayer
+                  docKey={key}
+                  page={page}
+                  position={index}
+                  box={box}
+                  viewRotation={view.rotation}
+                  annotations={annotationsByPage.get(page.id) ?? NO_ANNOTATIONS}
+                  selected={selectedByPage.get(page.id) ?? NO_IDS}
+                  tool={tool}
+                  editable={editable}
+                />
+              </Fragment>
             );
           })}
         </div>

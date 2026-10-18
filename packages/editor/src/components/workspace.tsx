@@ -1,3 +1,4 @@
+import type { SourceId } from '@folio/document-model';
 import { useTheme } from '@folio/shared-ui';
 import { useCallback, useEffect } from 'react';
 import { useCommands } from '../hooks/use-commands';
@@ -6,6 +7,8 @@ import { useActiveDocument, useUi, useWorkspace, useWorkspaceContext } from '../
 import type { WorkspaceDocument } from '../store/workspace';
 import { DocumentViewer } from '../viewer/document-viewer';
 import { forgetDocuments } from '../viewer/resources';
+import { AnnotationToolbar } from './annotation-toolbar';
+import { Dialogs } from './dialogs';
 import { ErrorState, LoadingState, PasswordState } from './document-states';
 import { FindBar } from './find-bar';
 import { DropOverlay, NoticeToast } from './overlays';
@@ -30,13 +33,24 @@ function focusViewer() {
   document.querySelector<HTMLElement>('[role="region"][aria-label="Page view"]')?.focus();
 }
 
+/** Engine documents of a tab's source files, for its pages. */
+function useSourceHandles(docKey: string) {
+  const { workspace } = useWorkspaceContext();
+  return useCallback(
+    (sourceId: SourceId) => workspace.getSourceHandle(docKey, sourceId),
+    [workspace, docKey],
+  );
+}
+
 function ReadyDocument({ doc }: { doc: WorkspaceDocument }) {
   const { workspace } = useWorkspaceContext();
   const handle = workspace.getHandle(doc.key);
+  const sourceHandle = useSourceHandles(doc.key);
   const model = doc.editor?.model;
   if (!handle || !model || !doc.view) return null;
   return (
     <div className="flex h-full flex-col">
+      <AnnotationToolbar doc={doc} />
       {doc.search.open ? (
         <FindBar
           key={doc.key}
@@ -53,7 +67,7 @@ function ReadyDocument({ doc }: { doc: WorkspaceDocument }) {
           doc={doc}
           pages={model.pages}
           view={doc.view}
-          handle={handle}
+          sourceHandle={sourceHandle}
         />
       </div>
     </div>
@@ -105,9 +119,13 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
     adapter.setWindowTitle(activeFileName ? `${activeFileName} — Folio` : 'Folio');
   }, [adapter, activeFileName]);
 
+  const sourceHandle = useSourceHandles(doc?.key ?? '');
+
   if (!hydrated) return <div className="h-full bg-bg" />;
 
   const handle = doc?.status === 'ready' ? workspace.getHandle(doc.key) : null;
+  const primarySourceId =
+    (doc?.editor && (Object.keys(doc.editor.model.sources)[0] as SourceId | undefined)) ?? null;
   return (
     <div className="folio-chrome flex h-full flex-col bg-bg text-ink" {...handlers}>
       <TabStrip
@@ -124,6 +142,8 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
             pages={doc.editor.model.pages}
             view={doc.view}
             handle={handle}
+            sourceId={primarySourceId}
+            sourceHandle={sourceHandle}
             onFind={() => dispatch('find')}
           />
         ) : null}
@@ -139,6 +159,7 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
       <StatusBar />
       <DropOverlay visible={hovering && hasDocuments} />
       <NoticeToast />
+      <Dialogs />
     </div>
   );
 }

@@ -112,18 +112,27 @@ export interface AddedTextAnnotation extends AnnotationBase {
   text: string;
   fontSize: number;
   fontFamily: 'sans' | 'serif' | 'mono';
+  /**
+   * Clockwise page rotation the content reads upright at: the page's own
+   * rotation when it was added, so text added to a turned page is level.
+   */
+  rotation: Rotation;
 }
 
 export interface AddedImageAnnotation extends AnnotationBase {
   kind: 'added-image';
   rect: Rect;
   assetId: AssetId;
+  /** See {@link AddedTextAnnotation.rotation}. */
+  rotation: Rotation;
 }
 
 export interface SignatureAnnotation extends AnnotationBase {
   kind: 'signature';
   rect: Rect;
   assetId: AssetId;
+  /** See {@link AddedTextAnnotation.rotation}. */
+  rotation: Rotation;
 }
 
 export type Annotation =

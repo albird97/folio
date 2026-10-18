@@ -1,4 +1,4 @@
-import type { Point, Rect } from './geometry';
+import type { Point, Rect, Rotation } from './geometry';
 import { STANDARD_FONT_METRICS } from './standard-font-metrics';
 import type { AddedTextAnnotation, Annotation } from './types';
 
@@ -82,6 +82,55 @@ export function markupStroke(
 
 /** Length of an arrow's head for a stroke width. */
 export const arrowHeadSize = (strokeWidth: number) => Math.max(6, strokeWidth * 4);
+
+/** The open arrow head at `to`: its two barbs and the tip, as a polyline. */
+export function arrowHeadPoints(from: Point, to: Point, size: number): [Point, Point, Point] {
+  const angle = Math.atan2(to.y - from.y, to.x - from.x);
+  const spread = Math.PI / 7;
+  return [
+    { x: to.x - size * Math.cos(angle - spread), y: to.y - size * Math.sin(angle - spread) },
+    to,
+    { x: to.x - size * Math.cos(angle + spread), y: to.y - size * Math.sin(angle + spread) },
+  ];
+}
+
+/**
+ * The note icon (a speech bubble) in page space, as a closed outline and the
+ * three text lines inside it. The icon's top-left corner is at `position`.
+ */
+export function noteIconGeometry(position: Point): {
+  outline: Point[];
+  lines: Array<[Point, Point]>;
+} {
+  const s = NOTE_ICON_SIZE;
+  const x = position.x;
+  const y = position.y - s;
+  return {
+    outline: [
+      { x: x + 2, y: y + 6 },
+      { x: x + 2, y: y + s - 2 },
+      { x: x + s - 2, y: y + s - 2 },
+      { x: x + s - 2, y: y + 6 },
+      { x: x + 9, y: y + 6 },
+      { x: x + 4, y: y + 1.5 },
+      { x: x + 5, y: y + 6 },
+    ],
+    lines: [
+      [
+        { x: x + 5, y: y + s - 6 },
+        { x: x + s - 5, y: y + s - 6 },
+      ],
+      [
+        { x: x + 5, y: y + s - 10 },
+        { x: x + s - 5, y: y + s - 10 },
+      ],
+      [
+        { x: x + 5, y: y + s - 14 },
+        { x: x + s - 9, y: y + s - 14 },
+      ],
+    ],
+  };
+}
 
 // ── Text ────────────────────────────────────────────────────────────────────
 
@@ -173,9 +222,39 @@ export function wrapText(text: string, width: number, measure: (line: string) =>
   return lines;
 }
 
+/** An affine transform [a b c d e f], as in PDF: x' = ax + cy + e, y' = bx + dy + f. */
+export type Matrix = [number, number, number, number, number, number];
+
+/** A box as its content sees it: upright, with `matrix` placing it on the page. */
+export interface ContentFrame {
+  width: number;
+  height: number;
+  /** Maps the content's coordinates (origin at its lower-left corner) into page space. */
+  matrix: Matrix;
+}
+
+/**
+ * The box of added text or an image, upright for the page rotation it was
+ * added at: on a page turned 90°, content runs along the page's long edge so
+ * it reads level when the page is shown turned.
+ */
+export function contentFrame(rect: Rect, rotation: Rotation): ContentFrame {
+  const { x, y, width, height } = normalizeRect(rect);
+  switch (rotation) {
+    case 90:
+      return { width: height, height: width, matrix: [0, 1, -1, 0, x + width, y] };
+    case 180:
+      return { width, height, matrix: [-1, 0, 0, -1, x + width, y + height] };
+    case 270:
+      return { width: height, height: width, matrix: [0, -1, 1, 0, x, y + height] };
+    default:
+      return { width, height, matrix: [1, 0, 0, 1, x, y] };
+  }
+}
+
 export interface TextLine {
   text: string;
-  /** Start of the baseline, in page space. */
+  /** Start of the baseline, in the content frame's coordinates. */
   x: number;
   y: number;
 }
@@ -183,25 +262,26 @@ export interface TextLine {
 /**
  * The lines of an added text box as Folio draws them: wrapped to the box with
  * the standard font's widths, baselines from the top, and lines that would
- * start below the box left out (the rest is clipped to the box).
+ * start below the box left out (the rest is clipped to the box). Positions
+ * are in the box's content frame.
  */
 export function layoutAddedText(
-  annotation: Pick<AddedTextAnnotation, 'rect' | 'text' | 'fontSize' | 'fontFamily'>,
-): { lines: TextLine[]; lossy: boolean } {
-  const rect = normalizeRect(annotation.rect);
+  annotation: Pick<AddedTextAnnotation, 'rect' | 'text' | 'fontSize' | 'fontFamily' | 'rotation'>,
+): { lines: TextLine[]; lossy: boolean; frame: ContentFrame } {
+  const frame = contentFrame(annotation.rect, annotation.rotation);
   const { fontFamily: family, fontSize: size } = annotation;
   const safe = toStandardFontText(annotation.text);
-  const wrapped = wrapText(safe.text, Math.max(1, rect.width - TEXT_PADDING * 2), (line) =>
+  const wrapped = wrapText(safe.text, Math.max(1, frame.width - TEXT_PADDING * 2), (line) =>
     textWidth(line, family, size),
   );
-  const top = rect.y + rect.height - TEXT_PADDING - fontAscent(family, size);
+  const top = frame.height - TEXT_PADDING - fontAscent(family, size);
   const lines: TextLine[] = [];
   for (const [index, text] of wrapped.entries()) {
     const y = top - index * size * LINE_HEIGHT;
-    if (y < rect.y - size) break;
-    lines.push({ text, x: rect.x + TEXT_PADDING, y });
+    if (y < -size) break;
+    lines.push({ text, x: TEXT_PADDING, y });
   }
-  return { lines, lossy: safe.lossy };
+  return { lines, lossy: safe.lossy, frame };
 }
 
 // ── Bounds, moving and resizing ─────────────────────────────────────────────

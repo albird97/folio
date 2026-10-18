@@ -1,15 +1,18 @@
 import {
   annotationBounds,
   annotationFrame,
+  arrowHeadPoints,
   arrowHeadSize,
+  contentFrame,
   growRect,
   layoutAddedText,
   lineEnds,
   markupStroke,
+  noteIconGeometry,
   normalizeRect,
-  NOTE_ICON_SIZE,
   translateRect,
   type Annotation,
+  type ContentFrame,
   type FontFamily,
   type HexColor,
   type Point,
@@ -72,21 +75,18 @@ function ellipsePath(rect: Rect): string[] {
 }
 
 function arrowHead(from: Point, to: Point, size: number): string[] {
-  const angle = Math.atan2(to.y - from.y, to.x - from.x);
-  const spread = Math.PI / 7;
-  const left = {
-    x: to.x - size * Math.cos(angle - spread),
-    y: to.y - size * Math.sin(angle - spread),
-  };
-  const right = {
-    x: to.x - size * Math.cos(angle + spread),
-    y: to.y - size * Math.sin(angle + spread),
-  };
+  const [left, tip, right] = arrowHeadPoints(from, to, size);
   return [
     `${num(left.x)} ${num(left.y)} m`,
-    `${num(to.x)} ${num(to.y)} l`,
+    `${num(tip.x)} ${num(tip.y)} l`,
     `${num(right.x)} ${num(right.y)} l S`,
   ];
+}
+
+/** A `cm` operator placing a content frame on the page, in user space. */
+function placeFrame(frame: ContentFrame, dx: number, dy: number): string {
+  const [a, b, c, d, e, f] = frame.matrix;
+  return `${[a, b, c, d, e + dx, f + dy].map(num).join(' ')} cm`;
 }
 
 /**
@@ -141,25 +141,16 @@ export function drawAnnotation(
       break;
     }
     case 'note': {
-      const box = drawing.bounds;
-      const s = NOTE_ICON_SIZE;
-      // A speech bubble: rounded body and a tail at the lower left.
+      const { outline, lines } = noteIconGeometry(annotation.position);
       ops.push('q');
       state(annotation.opacity);
       ops.push(
         colorOps(annotation.color, 'rg'),
         '0.25 0.25 0.25 RG 0.8 w 1 j',
-        `${num(box.x + 2)} ${num(box.y + 6)} m`,
-        `${num(box.x + 2)} ${num(box.y + s - 2)} l`,
-        `${num(box.x + s - 2)} ${num(box.y + s - 2)} l`,
-        `${num(box.x + s - 2)} ${num(box.y + 6)} l`,
-        `${num(box.x + 9)} ${num(box.y + 6)} l`,
-        `${num(box.x + 4)} ${num(box.y + 1.5)} l`,
-        `${num(box.x + 5)} ${num(box.y + 6)} l h B`,
-        '0.25 0.25 0.25 RG 1 w',
-        `${num(box.x + 5)} ${num(box.y + s - 6)} m ${num(box.x + s - 5)} ${num(box.y + s - 6)} l S`,
-        `${num(box.x + 5)} ${num(box.y + s - 10)} m ${num(box.x + s - 5)} ${num(box.y + s - 10)} l S`,
-        `${num(box.x + 5)} ${num(box.y + s - 14)} m ${num(box.x + s - 9)} ${num(box.y + s - 14)} l S`,
+        ...outline.map((point, index) => `${at(point)} ${index === 0 ? 'm' : 'l'}`),
+        'h B',
+        '1 w',
+        ...lines.map(([from, to]) => `${at(from)} m ${at(to)} l S`),
         'Q',
       );
       break;
@@ -209,35 +200,36 @@ export function drawAnnotation(
       break;
     }
     case 'added-text': {
-      const rect = drawing.bounds;
       const family = annotation.fontFamily;
       const font = 'F0';
       drawing.fonts.set(font, family);
-      const { lines, lossy } = layoutAddedText(annotation);
+      const { lines, lossy, frame } = layoutAddedText(annotation);
       drawing.lossyText = lossy;
       ops.push('q');
       state(annotation.opacity);
       // Clip to the box: text never spills over the page content around it.
       ops.push(
-        `${num(rect.x)} ${num(rect.y)} ${num(rect.width)} ${num(rect.height)} re W n`,
+        placeFrame(frame, dx, dy),
+        `0 0 ${num(frame.width)} ${num(frame.height)} re W n`,
         'BT',
         `/${font} ${num(annotation.fontSize)} Tf`,
         colorOps(annotation.color, 'rg'),
       );
       for (const line of lines) {
-        ops.push(`1 0 0 1 ${at(line)} Tm <${encodeText(line.text, family)}> Tj`);
+        ops.push(`1 0 0 1 ${num(line.x)} ${num(line.y)} Tm <${encodeText(line.text, family)}> Tj`);
       }
       ops.push('ET', 'Q');
       break;
     }
     case 'added-image':
     case 'signature': {
-      const rect = drawing.bounds;
+      const frame = contentFrame(annotation.rect, annotation.rotation);
       drawing.images.set('Im0', annotation.assetId);
       ops.push('q');
       state(annotation.opacity);
       ops.push(
-        `${num(rect.width)} 0 0 ${num(rect.height)} ${num(rect.x)} ${num(rect.y)} cm`,
+        placeFrame(frame, dx, dy),
+        `${num(frame.width)} 0 0 ${num(frame.height)} 0 0 cm`,
         '/Im0 Do',
         'Q',
       );

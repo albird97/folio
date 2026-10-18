@@ -1,3 +1,4 @@
+import type { PageModel, SourceId } from '@folio/document-model';
 import type { OutlineItem, PdfDocumentHandle } from '@folio/pdf-core';
 import { cn, ICON, Spinner } from '@folio/shared-ui';
 import { ChevronRight, Globe } from 'lucide-react';
@@ -47,9 +48,38 @@ function linkHost(url: string): string {
   }
 }
 
+/**
+ * Where each page of the opened file is now: bookmarks point at the file's
+ * pages, which may have moved, been duplicated (the first copy counts) or
+ * been deleted (null).
+ */
+function usePagePositions(pages: readonly PageModel[], sourceId: SourceId | null) {
+  return useMemo(() => {
+    const positions = new Map<number, number>();
+    pages.forEach((page, position) => {
+      if (page.source.kind !== 'source' || page.source.sourceId !== sourceId) return;
+      if (!positions.has(page.source.pageIndex)) positions.set(page.source.pageIndex, position);
+    });
+    return (pageIndex: number | null) =>
+      pageIndex === null ? null : (positions.get(pageIndex) ?? null);
+  }, [pages, sourceId]);
+}
+
 /** The document's bookmarks, as a tree (WAI-ARIA tree view pattern). */
-export function OutlinePanel({ docKey, handle }: { docKey: string; handle: PdfDocumentHandle }) {
+export function OutlinePanel({
+  docKey,
+  handle,
+  pages,
+  sourceId,
+}: {
+  docKey: string;
+  /** The opened file, whose bookmarks these are. */
+  handle: PdfDocumentHandle;
+  pages: readonly PageModel[];
+  sourceId: SourceId | null;
+}) {
   const navigate = useWorkspace((state) => state.navigate);
+  const positionOf = usePagePositions(pages, sourceId);
   const [loaded, setLoaded] = useState<{ handle: PdfDocumentHandle; items: OutlineItem[] } | null>(
     null,
   );
@@ -101,9 +131,10 @@ export function OutlinePanel({ docKey, handle }: { docKey: string; handle: PdfDo
     });
 
   const activate = (row: Row) => {
-    if (row.item.pageIndex === null) return;
+    const pageIndex = positionOf(row.item.pageIndex);
+    if (pageIndex === null) return;
     navigate(docKey, {
-      pageIndex: row.item.pageIndex,
+      pageIndex,
       point: { x: row.item.left, y: row.item.top },
       align: 'top',
     });
@@ -162,7 +193,8 @@ export function OutlinePanel({ docKey, handle }: { docKey: string; handle: PdfDo
         const { item } = row;
         const hasChildren = item.children.length > 0;
         const open = expanded.has(row.id);
-        const disabled = item.pageIndex === null;
+        const position = positionOf(item.pageIndex);
+        const disabled = position === null;
         return (
           <div
             key={row.id}
@@ -219,9 +251,9 @@ export function OutlinePanel({ docKey, handle }: { docKey: string; handle: PdfDo
               {item.title || 'Untitled'}
               {item.url ? <span className="sr-only">, link to {linkHost(item.url)}</span> : null}
             </span>
-            {item.pageIndex !== null ? (
+            {position !== null ? (
               <span aria-hidden className="shrink-0 text-2xs text-ink-muted tabular">
-                {item.pageIndex + 1}
+                {position + 1}
               </span>
             ) : null}
           </div>

@@ -29,9 +29,11 @@ test.describe('extension editor', () => {
     await pageRendered(page);
     await expect(page.getByRole('toolbar').getByRole('heading')).toHaveText('Folio Basic Fixture');
     const properties = page.getByRole('complementary', { name: 'Properties' });
-    await expect(properties).toContainText('Folio Test Suite');
+    await expect(properties.getByRole('textbox', { name: 'Author' })).toHaveValue(
+      'Folio Test Suite',
+    );
     await expect(properties).toContainText('1.7');
-    await expect(page.getByRole('list', { name: 'Pages' }).getByRole('button')).toHaveCount(3);
+    await expect(page.getByRole('listbox', { name: 'Pages' }).getByRole('option')).toHaveCount(3);
     await expectAccessible(page, 'editor with document');
     await page.emulateMedia({ colorScheme: 'dark' });
     await expectAccessible(page, 'editor with document (dark)');
@@ -42,17 +44,17 @@ test.describe('extension editor', () => {
       'basic-3-pages.pdf',
     ]);
     await pageRendered(page);
-    const pages = page.getByRole('list', { name: 'Pages' });
+    const pages = page.getByRole('listbox', { name: 'Pages' });
     const pageField = page.getByRole('textbox', { name: /^Page number/ });
-    await pages.getByRole('button', { name: 'Page 3' }).click();
+    await pages.getByRole('option', { name: 'Page 3' }).click();
     await expect(pageField).toHaveValue('3');
-    await expect(pages.getByRole('button', { name: 'Page 3' })).toHaveAttribute(
+    await expect(pages.getByRole('option', { name: 'Page 3' })).toHaveAttribute(
       'aria-current',
       'page',
     );
     await page.keyboard.press('ArrowUp');
     await expect(pageField).toHaveValue('2');
-    await expect(pages.getByRole('button', { name: 'Page 2' })).toBeFocused();
+    await expect(pages.getByRole('option', { name: 'Page 2' })).toBeFocused();
     await pageRendered(page, 2);
   });
 
@@ -70,7 +72,8 @@ test.describe('extension editor', () => {
     await expect(page.locator('[data-page="1"] .textLayer span').first()).toBeAttached();
 
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Download a copy' }).click();
+    await page.getByRole('button', { name: 'More ways to save' }).click();
+    await page.getByRole('menuitem', { name: 'Download the original' }).click();
     const file = await download;
     expect(file.suggestedFilename()).toBe('outline-and-text.pdf');
     expect(readFileSync((await file.path())!)).toEqual(

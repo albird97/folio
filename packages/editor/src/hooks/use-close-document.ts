@@ -1,3 +1,4 @@
+import { isDirty } from '@folio/document-model';
 import { useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { useWorkspaceContext } from '../context';
@@ -10,9 +11,15 @@ import { useWorkspaceContext } from '../context';
  * left, instead of dropping to <body>.
  */
 export function useCloseDocument(): (key: string) => void {
-  const { workspace } = useWorkspaceContext();
+  const { workspace, ui } = useWorkspaceContext();
   return useCallback(
     (key: string) => {
+      // Unsaved changes are never dropped silently.
+      const doc = workspace.getState().documents.find((entry) => entry.key === key);
+      if (doc?.editor && isDirty(doc.editor)) {
+        ui.getState().openDialog({ kind: 'close-document', docKey: key });
+        return;
+      }
       // Render the removal now so the element to focus exists.
       flushSync(() => void workspace.getState().close(key));
       if (document.activeElement && document.activeElement !== document.body) return;
@@ -24,6 +31,6 @@ export function useCloseDocument(): (key: string) => void {
         : document.querySelector<HTMLElement>('[data-start-action]');
       target?.focus();
     },
-    [workspace],
+    [workspace, ui],
   );
 }

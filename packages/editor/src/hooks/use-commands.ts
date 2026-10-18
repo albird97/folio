@@ -5,8 +5,10 @@ import { flushSync } from 'react-dom';
 import { COMMAND_DEDUPE_MS, COMMAND_SHORTCUTS } from '../commands';
 import { FIND_INPUT_ID } from '../components/find-bar';
 import { PAGE_INPUT_ID } from '../components/viewer-controls';
-import { useWorkspaceContext } from '../context';
+import { useActiveDocument, useWorkspaceContext } from '../context';
 import { useCloseDocument } from './use-close-document';
+import { usePageCommands } from './use-page-commands';
+import { useSaveAs } from './use-save-as';
 import { useSaveCopy } from './use-save-copy';
 
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
@@ -16,12 +18,18 @@ function isEditable(target: EventTarget | null): boolean {
   return (target instanceof HTMLElement && target.isContentEditable) || !!target.closest(EDITABLE);
 }
 
+/** Commands a text field handles itself (its own undo history) when it has focus. */
+const FIELD_COMMANDS: ReadonlySet<AppCommand> = new Set(['undo', 'redo']);
+
 /** Runs app commands from native menus and the keyboard. Returns the dispatcher. */
 export function useCommands(): (command: AppCommand) => void {
   const { adapter, workspace, ui, profile, shortcutPlatform } = useWorkspaceContext();
   const last = useRef<{ command: AppCommand; at: number } | null>(null);
   const closeDocument = useCloseDocument();
   const saveCopy = useSaveCopy();
+  const saveAs = useSaveAs();
+  const activeDoc = useActiveDocument();
+  const pageCommands = usePageCommands(activeDoc?.status === 'ready' ? activeDoc : null);
 
   const dispatch = useCallback(
     (command: AppCommand) => {
@@ -39,7 +47,40 @@ export function useCommands(): (command: AppCommand) => void {
           field.select();
         }
       };
+      // A native Edit menu's Undo while typing undoes the typing.
+      if (FIELD_COMMANDS.has(command) && isEditable(document.activeElement)) {
+        document.execCommand(command);
+        return;
+      }
       switch (command) {
+        case 'undo':
+          if (key) state.undo(key);
+          break;
+        case 'redo':
+          if (key) state.redo(key);
+          break;
+        case 'save':
+        case 'save-as':
+          if (key) void saveAs(key);
+          break;
+        case 'insert-pages':
+          pageCommands.insertFromFile();
+          break;
+        case 'insert-blank-page':
+          pageCommands.insertBlank();
+          break;
+        case 'rotate-pages-clockwise':
+          pageCommands.rotate(90);
+          break;
+        case 'rotate-pages-counterclockwise':
+          pageCommands.rotate(-90);
+          break;
+        case 'delete-pages':
+          pageCommands.deletePages();
+          break;
+        case 'extract-pages':
+          pageCommands.extract();
+          break;
         case 'open':
           void adapter.pickPdfFiles({ multiple: true }).then(
             (files) => state.openFiles(files),
@@ -109,7 +150,7 @@ export function useCommands(): (command: AppCommand) => void {
           break;
       }
     },
-    [adapter, workspace, ui, closeDocument, saveCopy],
+    [adapter, workspace, ui, closeDocument, saveCopy, saveAs, pageCommands],
   );
 
   useEffect(() => adapter.onCommand(dispatch), [adapter, dispatch]);
@@ -132,6 +173,8 @@ export function useCommands(): (command: AppCommand) => void {
       for (const [command, keys] of Object.entries(shortcuts) as Array<
         [AppCommand, readonly string[]]
       >) {
+        // Undo and redo in a text field undo the typing, as everywhere else.
+        if (editable && FIELD_COMMANDS.has(command)) continue;
         if (
           keys.some(
             (keyCombo) =>
