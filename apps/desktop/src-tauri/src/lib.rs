@@ -1,7 +1,10 @@
 mod commands;
 pub mod files;
 pub mod menu;
+pub mod paths;
+pub mod recovery;
 pub mod save;
+pub mod time;
 
 use files::{FileGrants, LaunchQueue};
 use std::path::PathBuf;

@@ -28,6 +28,7 @@ percent-encoding = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
 uuid = { version = "1", features = ["v4"] }
+dirs = "7"
 
 [dev-dependencies]
 tempfile = "3"
