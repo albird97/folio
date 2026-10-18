@@ -408,6 +408,14 @@ pub fn confirm_close(app: AppHandle, guard: State<'_, CloseGuard>) -> bool {
     }
 }
 
+/// The user chose to keep the window open: forgets the request, so a later
+/// close is asked about (and carried out) on its own. Returns whether there
+/// was a request.
+#[tauri::command]
+pub fn cancel_close(guard: State<'_, CloseGuard>) -> bool {
+    guard.cancel()
+}
+
 /// Hands over transfer requests that arrived before the UI was listening and
 /// switches to `folio://transfer-request` events.
 #[tauri::command]

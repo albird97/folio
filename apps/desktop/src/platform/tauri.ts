@@ -304,15 +304,23 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
     if (all.length > 0) incoming.emit(all);
   };
 
-  /** Runs the UI's check, then lets the window close or Folio quit. */
+  /**
+   * Runs the UI's check, then lets the window close or Folio quit, or tells
+   * the native side the request was declined (so it does not linger).
+   */
   const onCloseRequested = async () => {
     if (closing) return;
     closing = true;
+    let allowed = false;
     try {
-      const allowed = closeHandler ? await closeHandler() : true;
-      if (allowed) await invoke('confirm_close');
+      allowed = closeHandler ? await closeHandler() : true;
     } catch {
       // Keeping the window open is the safe outcome for unsaved work.
+    }
+    try {
+      await invoke(allowed ? 'confirm_close' : 'cancel_close');
+    } catch {
+      // Nothing else to do: the window stays open.
     } finally {
       closing = false;
     }

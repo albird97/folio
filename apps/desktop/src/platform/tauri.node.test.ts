@@ -396,10 +396,13 @@ describe('desktop platform adapter', () => {
       await settle();
       expect(handler).toHaveBeenCalledTimes(1);
       expect(callsTo('confirm_close')).toHaveLength(0);
+      // Declining is reported, so the request does not linger natively.
+      expect(callsTo('cancel_close')).toHaveLength(1);
 
       fire('folio://close-requested', null);
       await settle();
       expect(callsTo('confirm_close')).toHaveLength(1);
+      expect(callsTo('cancel_close')).toHaveLength(1);
 
       // Without a handler there is nothing to ask about.
       unsubscribe?.();
@@ -431,6 +434,7 @@ describe('desktop platform adapter', () => {
       fire('folio://close-requested', null);
       await settle();
       expect(callsTo('confirm_close')).toHaveLength(1);
+      expect(callsTo('cancel_close')).toHaveLength(1);
     });
   });
 

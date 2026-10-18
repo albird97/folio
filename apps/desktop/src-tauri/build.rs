@@ -26,6 +26,7 @@ fn main() {
             "recent_clear",
             "set_close_guard",
             "confirm_close",
+            "cancel_close",
             "take_pending_transfers",
             "answer_transfer",
             "native_messaging_status",

@@ -333,6 +333,7 @@ pub fn run() {
             commands::recent_clear,
             commands::set_close_guard,
             commands::confirm_close,
+            commands::cancel_close,
             commands::take_pending_transfers,
             commands::answer_transfer,
             commands::native_messaging_status,

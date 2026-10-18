@@ -47,17 +47,15 @@ impl CloseGuard {
     }
 
     /// A close or quit was requested. Returns `true` when it must be held
-    /// back while the UI asks the user; the newest request is the one a
-    /// confirmation carries out.
+    /// back while the UI asks the user. The newest request is the one a
+    /// confirmation carries out, so closing the window never turns into
+    /// quitting because of an earlier request.
     pub fn intercept(&self, intent: CloseIntent) -> bool {
         let mut state = self.lock();
         if !state.enabled {
             return false;
         }
-        // Quitting covers closing the window, not the other way around.
-        if state.pending != Some(CloseIntent::Quit) {
-            state.pending = Some(intent);
-        }
+        state.pending = Some(intent);
         true
     }
 
@@ -69,6 +67,12 @@ impl CloseGuard {
         // The work is saved or discarded; nothing holds the window any more.
         state.enabled = false;
         Some(intent)
+    }
+
+    /// The user kept the window open: forgets the request. Returns whether
+    /// there was one.
+    pub fn cancel(&self) -> bool {
+        self.lock().pending.take().is_some()
     }
 }
 
@@ -106,13 +110,31 @@ mod tests {
     }
 
     #[test]
-    fn quitting_wins_over_closing_the_window() {
+    fn the_newest_request_is_carried_out() {
         let guard = CloseGuard::default();
+        guard.set_enabled(true);
+        assert!(guard.intercept(CloseIntent::Quit));
+        assert!(guard.intercept(CloseIntent::Window));
+        assert_eq!(guard.confirm(), Some(CloseIntent::Window));
         guard.set_enabled(true);
         assert!(guard.intercept(CloseIntent::Window));
         assert!(guard.intercept(CloseIntent::Quit));
-        assert!(guard.intercept(CloseIntent::Window));
         assert_eq!(guard.confirm(), Some(CloseIntent::Quit));
+    }
+
+    #[test]
+    fn a_declined_quit_does_not_return_with_the_next_close() {
+        let guard = CloseGuard::default();
+        guard.set_enabled(true);
+        assert!(guard.intercept(CloseIntent::Quit));
+        // The user chose to keep working.
+        assert!(guard.cancel());
+        assert!(!guard.cancel());
+        assert!(guard.is_enabled());
+        assert_eq!(guard.confirm(), None);
+        // Later they close the window and confirm: only the window closes.
+        assert!(guard.intercept(CloseIntent::Window));
+        assert_eq!(guard.confirm(), Some(CloseIntent::Window));
     }
 
     #[test]
