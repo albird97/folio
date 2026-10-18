@@ -4,9 +4,12 @@
   "private": true,
   "description": "Folio's platform-neutral document model, operations and undo/redo history.",
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./src/zod.ts"
+  ],
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./zod": "./src/zod.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from './zod';
 import { ID_PREFIXES, type IdKind } from './ids';
 import type { EditorDocumentState } from './history';
 import type { DocumentViewState } from './types';

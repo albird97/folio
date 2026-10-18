@@ -1,5 +1,5 @@
 import { OpenUrlError, type OpenUrlErrorCode } from '@folio/platform-adapters';
-import { z } from 'zod';
+import { z } from './zod';
 import { takeHandoff } from './handoff';
 
 /**

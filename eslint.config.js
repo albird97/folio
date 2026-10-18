@@ -33,7 +33,23 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
       // Logging must never include document content; route diagnostics through explicit code.
       'no-console': ['error', { allow: ['warn', 'error'] }],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'zod',
+              message:
+                "Import z from '@folio/document-model/zod' (or the extension's shared/zod): it turns off Zod's eval probe, which strict CSPs report as a violation.",
+            },
+          ],
+        },
+      ],
     },
+  },
+  {
+    files: ['packages/document-model/src/zod.ts'],
+    rules: { 'no-restricted-imports': 'off' },
   },
   {
     files: ['**/*.tsx'],

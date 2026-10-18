@@ -1,6 +1,6 @@
 import { sha256Hex } from '@folio/pdf-core';
 import type { SendToDesktopResult } from '@folio/platform-adapters';
-import { z } from 'zod';
+import { z } from './zod';
 
 /**
  * Hands documents to the Folio desktop app through Chrome native messaging.

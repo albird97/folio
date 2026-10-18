@@ -1,4 +1,4 @@
-import { pageRendered } from '../helpers';
+import { chooseFiles, pageRendered } from '../helpers';
 import { expect, test } from './fixtures';
 
 test.describe('extension security', () => {
@@ -40,6 +40,33 @@ test.describe('extension security', () => {
     expect(responses.oversized).toEqual({ ok: false, error: 'invalid-message' });
     expect(responses.badHandoff).toEqual({ ok: false, error: 'invalid-message' });
     expect(responses.status).toMatchObject({ ok: true, status: { version: expect.any(String) } });
+  });
+
+  test('no page reports a content security policy violation', async ({
+    page,
+    context,
+    extensionUrl,
+  }) => {
+    // Listening from the first script on: violations at startup count too.
+    await context.addInitScript(() => {
+      const seen: string[] = [];
+      Object.assign(window, { folioViolations: seen });
+      document.addEventListener('securitypolicyviolation', (event) =>
+        seen.push(`${event.effectiveDirective} ${event.blockedURI}`),
+      );
+    });
+    const violations = () =>
+      page.evaluate(() => (window as unknown as { folioViolations: string[] }).folioViolations);
+    for (const path of ['popup.html', 'sidepanel.html', 'options.html', 'editor.html']) {
+      await page.goto(extensionUrl(path));
+      await expect(page.locator('#root')).not.toBeEmpty();
+      expect(await violations(), path).toEqual([]);
+    }
+    await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
+      'basic-3-pages.pdf',
+    ]);
+    await pageRendered(page);
+    expect(await violations(), 'editor with a document').toEqual([]);
   });
 
   test('the content security policy blocks sending data to other servers', async ({

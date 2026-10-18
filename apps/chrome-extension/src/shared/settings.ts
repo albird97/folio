@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from './zod';
 import type { PrivacySettings } from './activity';
 
 export const SETTINGS_KEY = 'settings';
