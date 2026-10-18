@@ -304,16 +304,29 @@ impl FileGrants {
     }
 }
 
-/// Reads a granted file, enforcing the size limit on the current file size.
+/// Reads a granted file, enforcing the size limit on what is actually read
+/// (the file may grow after its size was checked).
 pub fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, FileError> {
-    let metadata = std::fs::metadata(path).map_err(|_| FileError::NotFound)?;
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => FileError::NotFound,
+        _ => FileError::Unreadable,
+    })?;
+    let metadata = file.metadata().map_err(|_| FileError::Unreadable)?;
     if !metadata.is_file() {
         return Err(FileError::NotFound);
     }
     if metadata.len() > limit {
         return Err(FileError::TooLarge);
     }
-    std::fs::read(path).map_err(|_| FileError::Unreadable)
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| FileError::Unreadable)?;
+    if bytes.len() as u64 > limit {
+        return Err(FileError::TooLarge);
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug, Default)]
