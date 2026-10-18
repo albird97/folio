@@ -1,9 +1,11 @@
 //! Recently used files, kept in `recent.json` in the app data directory.
 //! Only ids, names and dates reach the webview; the paths stay here and are
 //! granted again (as new tokens) when a recent file is reopened. Folio's own
-//! files and spooled documents are never listed (`files::is_reserved_path`).
+//! files and spooled documents are never listed (`files::is_reserved_path`
+//! when a file is recorded or reopened; loading the list only looks at the
+//! stored paths and never touches the files).
 
-use crate::{files, paths};
+use crate::{files, incoming, paths};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -61,11 +63,21 @@ impl RecentFiles {
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
         let data_dir = file.as_deref().and_then(Path::parent);
+        // Judged by the stored path alone: this runs at startup, before any
+        // window, and touching each file could stall on a network share
+        // that is offline. `record` stored canonical paths and refused
+        // reserved ones; reopening a file checks where it really leads.
+        let data_dirs: Vec<PathBuf> = data_dir
+            .into_iter()
+            .flat_map(|dir| [Some(dir.to_path_buf()), std::fs::canonicalize(dir).ok()])
+            .flatten()
+            .collect();
         entries.retain(|entry| {
             is_valid_id(&entry.id)
                 && entry.path.is_absolute()
                 && !entry.name.is_empty()
-                && !files::is_reserved_path(&entry.path, data_dir)
+                && !incoming::looks_like_spool_document(&entry.path)
+                && !data_dirs.iter().any(|dir| entry.path.starts_with(dir))
         });
         let mut seen = Vec::new();
         entries.retain(|entry| {
@@ -346,6 +358,37 @@ mod tests {
         ]);
         fs::write(&file, serde_json::to_vec(&entries).unwrap()).unwrap();
         assert_eq!(names(&RecentFiles::load(Some(file))), ["c.pdf"]);
+    }
+
+    /// Loading never touches the listed files (an offline network share
+    /// would stall startup), so it only goes by the stored paths; where a
+    /// path really leads is checked when the file is reopened.
+    #[cfg(unix)]
+    #[test]
+    fn loading_goes_by_the_stored_paths_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let own = pdf(&data, "own.pdf");
+        // Someone edits the list to name a link into Folio's data folder.
+        let link = dir.path().join("link.pdf");
+        std::os::unix::fs::symlink(&own, &link).unwrap();
+        let file = data.join("recent.json");
+        let entries = serde_json::json!([
+            { "id": "0123456789abcdef0123456789abcde0", "name": "link.pdf", "path": link, "openedAt": "x" },
+            { "id": "0123456789abcdef0123456789abcde1", "name": "gone.pdf", "path": "/folio-offline-share/gone.pdf", "openedAt": "x" },
+            { "id": "0123456789abcdef0123456789abcde2", "name": "own.pdf", "path": fs::canonicalize(&own).unwrap(), "openedAt": "x" }
+        ]);
+        fs::write(&file, serde_json::to_vec(&entries).unwrap()).unwrap();
+        let recent = RecentFiles::load(Some(file));
+        assert_eq!(names(&recent), ["link.pdf", "gone.pdf"]);
+        // Reopening it is refused.
+        let (path, _) = recent.lookup("0123456789abcdef0123456789abcde0").unwrap();
+        let grants = files::FileGrants::new(Some(data));
+        assert!(matches!(
+            grants.grant(&path),
+            Err(files::FileError::Reserved)
+        ));
     }
 
     #[test]

@@ -70,13 +70,19 @@ impl Storage {
     }
 }
 
+/// Takes this copy's instance lock (see [`paths::lock_instance`]) and opens
+/// Folio's storage accordingly. Both are managed until Folio quits.
+fn start_instance(data_dir: Option<PathBuf>) -> (paths::Instance, Storage) {
+    let instance = match &data_dir {
+        Some(dir) => paths::lock_instance(dir, paths::INSTANCE_LOCK_WAIT),
+        None => paths::Instance::without_data_dir(),
+    };
+    let storage = Storage::new(data_dir, instance.alone);
+    (instance, storage)
+}
+
 /// The File ▸ Open Recent submenu, refilled when the recent files change.
 struct RecentMenu(Mutex<Option<Submenu<Wry>>>);
-
-/// Keeps the instance lock (see [`paths::lock_instance`]) until Folio quits.
-struct InstanceLock {
-    _file: Option<std::fs::File>,
-}
 
 pub(crate) fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(MAIN_WINDOW)
@@ -301,18 +307,25 @@ pub fn run() {
         // Only the user may enter Folio's data folder, also an older one.
         let _ = paths::prepare_data_dir(dir);
     }
-    // Another copy may run next to this one, notably on macOS, which has no
-    // single-instance plugin. Only a copy that runs alone deletes what the
-    // other could still be using (accepted transfers, abandoned recovery
-    // records) and offers waiting transfers at startup.
-    let instance = data_dir.as_deref().and_then(paths::lock_instance);
-    let alone = data_dir.is_none() || instance.is_some();
     let builder = tauri::Builder::default();
     // First: a second launch hands over its arguments and exits before
     // anything else starts. macOS needs no plugin: LaunchServices routes
     // files opened later to the running app (`RunEvent::Opened`).
     #[cfg(not(target_os = "macos"))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(on_second_instance));
+    // Another copy may run next to this one, notably on macOS, where several
+    // copies can run. Only a copy that runs alone deletes what another could
+    // still be using (accepted transfers, abandoned recovery records) and
+    // offers waiting transfers at startup (see `paths::lock_instance`).
+    // Elsewhere the single-instance plugin decides which process runs while
+    // the app is built, so only that one takes the lock, in `setup`. macOS
+    // takes it now: files opened at launch may arrive before `setup` and
+    // need the storage.
+    #[cfg(target_os = "macos")]
+    let builder = {
+        let (instance, storage) = start_instance(data_dir.clone());
+        builder.manage(instance).manage(storage)
+    };
     builder
         .plugin(window_state_plugin(data_dir.as_deref()))
         .plugin(tauri_plugin_dialog::init())
@@ -321,9 +334,15 @@ pub fn run() {
         .manage(TransferQueue::default())
         .manage(CloseGuard::default())
         .manage(RecentMenu(Mutex::new(None)))
-        .manage(InstanceLock { _file: instance })
-        .manage(Storage::new(data_dir, alone))
         .setup(move |app| {
+            // Only the process the single-instance plugin kept gets here.
+            #[cfg(not(target_os = "macos"))]
+            {
+                let (instance, storage) = start_instance(data_dir);
+                app.manage(instance);
+                app.manage(storage);
+            }
+            let alone = app.state::<paths::Instance>().alone;
             let handle = app.handle();
             let entries = handle.state::<Storage>().recent.menu_entries();
             let (menu, recent) = menu::build(handle, &entries)?;

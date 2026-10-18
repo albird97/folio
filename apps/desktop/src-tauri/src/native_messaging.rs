@@ -114,7 +114,7 @@ pub enum RegistrationError {
     Unavailable,
     #[error("Move Folio to the Applications folder, open it from there and try again.")]
     Translocated,
-    #[error("Folio is in a place other users or apps could change. Install it, open it from there and try again.")]
+    #[error("Folio is in a place other users or apps could change, or that may go away. Move it to Applications, Program Files or a folder only you can change, open it from there and try again.")]
     UnsafeLocation,
     #[error("Chrome or Chromium was not found for this user. Open it once, then try again.")]
     BrowserNotFound,
@@ -243,26 +243,25 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Refuses registrations that could not work or would not be safe (see
-/// [`paths::is_unsafe_location`]), before the user is asked.
+/// [`paths::safe_location`]), before the user is asked.
 pub fn check_can_register(locations: &Locations, exe: &Path) -> Result<(), RegistrationError> {
-    check(locations, exe, paths::is_unsafe_location)
+    check(locations, exe, paths::safe_location).map(drop)
 }
 
+/// The path to register for `exe`: the one `safe_location` checked.
 fn check(
     locations: &Locations,
     exe: &Path,
-    is_unsafe_location: fn(&Path) -> bool,
-) -> Result<(), RegistrationError> {
+    safe_location: fn(&Path) -> Option<PathBuf>,
+) -> Result<PathBuf, RegistrationError> {
     if paths::is_translocated(exe) {
         return Err(RegistrationError::Translocated);
     }
-    if is_unsafe_location(exe) {
-        return Err(RegistrationError::UnsafeLocation);
-    }
+    let checked = safe_location(exe).ok_or(RegistrationError::UnsafeLocation)?;
     if installed(locations).is_empty() {
         return Err(RegistrationError::BrowserNotFound);
     }
-    Ok(())
+    Ok(checked)
 }
 
 /// Whether Chrome would start `exe`, from which browsers and for which
@@ -296,19 +295,21 @@ pub fn status(locations: &Locations, exe: &Path) -> Status {
 }
 
 /// Writes the manifests (for installed browsers) and on Windows the registry
-/// value, so Chrome starts `exe` for the official extension. Returns the
-/// browsers it was registered with. Call only after the user agreed.
+/// value, so Chrome starts `exe` for the official extension. The manifests
+/// name the canonical path that was checked, not `exe` as given, so a link
+/// on the way cannot be changed afterwards to point somewhere else. Returns
+/// the browsers it was registered with. Call only after the user agreed.
 pub fn register(locations: &Locations, exe: &Path) -> Result<Vec<&'static str>, RegistrationError> {
-    register_checked(locations, exe, paths::is_unsafe_location)
+    register_checked(locations, exe, paths::safe_location)
 }
 
 fn register_checked(
     locations: &Locations,
     exe: &Path,
-    is_unsafe_location: fn(&Path) -> bool,
+    safe_location: fn(&Path) -> Option<PathBuf>,
 ) -> Result<Vec<&'static str>, RegistrationError> {
-    check(locations, exe, is_unsafe_location)?;
-    let manifest = serde_json::to_vec_pretty(&Manifest::new(exe, OFFICIAL_EXTENSION_IDS))
+    let checked = check(locations, exe, safe_location)?;
+    let manifest = serde_json::to_vec_pretty(&Manifest::new(&checked, OFFICIAL_EXTENSION_IDS))
         .map_err(|_| RegistrationError::Failed)?;
     let mut browsers = Vec::new();
     for browser in installed(locations) {
@@ -449,7 +450,7 @@ mod tests {
     /// The test executables live in a temporary folder, which is not a safe
     /// location; these tests are about the manifests.
     fn register(locations: &Locations, exe: &Path) -> Result<Vec<&'static str>, RegistrationError> {
-        register_checked(locations, exe, |_| false)
+        register_checked(locations, exe, |exe| Some(exe.to_path_buf()))
     }
 
     #[test]
@@ -562,6 +563,26 @@ mod tests {
     }
 
     #[test]
+    fn registers_the_path_that_was_checked() {
+        let setup = setup();
+        let (locations, exe) = (&setup.locations, &setup.exe);
+        // Started through a link; the check resolved it.
+        let link = setup.dir.path().join("folio-link");
+        register_checked(locations, &link, |_| {
+            Some(PathBuf::from("/opt/Folio/folio-desktop"))
+        })
+        .unwrap();
+        assert_eq!(
+            read_manifest(setup.manifest(0)).unwrap().path,
+            Path::new("/opt/Folio/folio-desktop")
+        );
+        assert_eq!(
+            register_checked(locations, exe, |_| None),
+            Err(RegistrationError::UnsafeLocation)
+        );
+    }
+
+    #[test]
     fn leaves_other_copies_registrations_alone() {
         let setup = setup();
         let locations = &setup.locations;
@@ -598,13 +619,13 @@ mod tests {
             Err(RegistrationError::UnsafeLocation)
         );
         assert_eq!(
-            check(locations, exe, |_| true),
+            check(locations, exe, |_| None),
             Err(RegistrationError::UnsafeLocation)
         );
         assert!(!setup.manifest(0).exists());
         std::fs::remove_dir(setup.dir.path().join("google-chrome")).unwrap();
         assert_eq!(
-            check(locations, exe, |_| false),
+            check(locations, exe, |exe| Some(exe.to_path_buf())),
             Err(RegistrationError::BrowserNotFound)
         );
         assert_eq!(

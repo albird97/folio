@@ -120,6 +120,26 @@ pub fn disconnected_notice() -> Notice {
     }
 }
 
+/// Why Folio will not connect from where it is, and where to put it (see
+/// `paths::safe_location`).
+#[cfg(target_os = "macos")]
+const UNSAFE_LOCATION_TEXT: &str = "Chrome would start Folio from where it is now, and \
+     other users or apps could change or replace it there, or it may go away (a shared \
+     or temporary folder, a disk image or an external drive). Move Folio to the \
+     Applications folder, open it from there and try again.";
+#[cfg(windows)]
+const UNSAFE_LOCATION_TEXT: &str = "Chrome would start Folio from where it is now, and \
+     other users or apps could change or replace it there, or it may go away (a folder \
+     other users can write to, such as one created directly on C:\\, a temporary folder, \
+     a network share or a removable drive). Install Folio in Program Files or in your own \
+     user folder, open it from there and try again.";
+#[cfg(not(any(target_os = "macos", windows)))]
+const UNSAFE_LOCATION_TEXT: &str = "Chrome would start Folio from where it is now, and \
+     other users or apps could change or replace it there, or it may go away (a folder \
+     that belongs to or can be changed by other users, a temporary folder or a removable \
+     drive). Move Folio into a folder only you can change, such as ~/Applications, make \
+     sure only you can write to it, open it from there and try again.";
+
 pub fn error_notice(error: &RegistrationError, action: Action) -> Notice {
     let (level, title, text) = match error {
         RegistrationError::BrowserNotFound => (
@@ -136,11 +156,8 @@ pub fn error_notice(error: &RegistrationError, action: Action) -> Notice {
         ),
         RegistrationError::UnsafeLocation => (
             Level::Warning,
-            "Install Folio before connecting it to Chrome",
-            "Folio is running from a place that other users or apps could change, or \
-             that may go away: a shared or temporary folder, a disk image or a removable \
-             drive. Chrome would start whatever is there. Install Folio (for example in \
-             Applications or Program Files), open it from there and try again.",
+            "Move Folio to a safe place first",
+            UNSAFE_LOCATION_TEXT,
         ),
         RegistrationError::Unavailable => (
             Level::Error,
@@ -377,7 +394,7 @@ mod tests {
             (RegistrationError::Translocated, "Applications folder"),
             (
                 RegistrationError::UnsafeLocation,
-                "other users or apps could change",
+                "other users or apps could change or replace it",
             ),
             (RegistrationError::Unavailable, "cannot connect"),
         ] {

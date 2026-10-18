@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::fs::Metadata;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// Header carrying the proposed file name, percent-encoded (headers are ASCII).
 pub const NAME_HEADER: &str = "x-folio-name";
@@ -406,7 +406,7 @@ fn swap_into_place(temporary: &Path, target: &Path, replacing: bool) -> Result<(
     };
     if replaced != 0 {
         // The previous version, no longer needed.
-        let _ = std::fs::remove_file(&backup);
+        remove_backup(&backup);
         return Ok(());
     }
     if target.exists() {
@@ -424,6 +424,144 @@ fn swap_into_place(temporary: &Path, target: &Path, replacing: bool) -> Result<(
         };
     }
     Err(SwapError::TargetMissing)
+}
+
+/// Deletes the previous version once the new one took its place. Antivirus
+/// software may still hold it open for a moment, so the delete is tried a
+/// few more times; if it still fails, the file is marked as disposable
+/// (`FILE_ATTRIBUTE_TEMPORARY`, which only needs attribute access and so
+/// works on a file someone holds open) for a later save into the folder to
+/// delete (see [`remove_stale_files`]). A previous version Folio had to
+/// keep because it could not be put back is never marked.
+#[cfg(windows)]
+fn remove_backup(backup: &Path) {
+    for delay in [0, 50, 100, 200, 400] {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+        match std::fs::remove_file(backup) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => {}
+        }
+    }
+    mark_disposable(backup);
+}
+
+#[cfg(windows)]
+fn mark_disposable(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_TEMPORARY, INVALID_FILE_ATTRIBUTES,
+    };
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: `wide` is NUL-terminated.
+    let attributes = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    if attributes != INVALID_FILE_ATTRIBUTES {
+        // SAFETY: as above. Best effort: the file only stays behind longer.
+        unsafe { SetFileAttributesW(wide.as_ptr(), attributes | FILE_ATTRIBUTE_TEMPORARY) };
+    }
+}
+
+/// How old a leftover of an earlier save must be before a later save into
+/// the same folder deletes it: no save takes that long, so it cannot belong
+/// to one that is still running (in this or another copy of Folio).
+const STALE_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// What an earlier save may have left in the folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Leftover {
+    /// `.folio-<uuid>.tmp`: the new version of a save that was interrupted.
+    Temporary,
+    /// `.folio-<uuid>.bak` (Windows): a previous version.
+    Backup,
+}
+
+/// Which leftover `name` is, if it is exactly one of Folio's own names: a
+/// dot, `folio-`, 32 lowercase hex digits (a uuid) and `.tmp` or `.bak`.
+fn leftover_kind(name: &str) -> Option<Leftover> {
+    let rest = name.strip_prefix(".folio-")?;
+    let (id, extension) = rest.split_at_checked(32)?;
+    if !id
+        .bytes()
+        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return None;
+    }
+    match extension {
+        ".tmp" => Some(Leftover::Temporary),
+        ".bak" => Some(Leftover::Backup),
+        _ => None,
+    }
+}
+
+/// Deletes what earlier saves into `directory` left behind once it is an
+/// hour old: temporary files of saves that were interrupted, and on Windows
+/// previous versions that could not be deleted right after a replace (only
+/// those [`remove_backup`] marked). A previous version Folio had to keep is
+/// left alone, and so are temporary files while one is there: an
+/// interrupted replace may have left the new version only there. Only
+/// regular files with exactly Folio's names are deleted; links (and other
+/// reparse points) are never followed or deleted. Best effort.
+fn remove_stale_files(directory: &Path, now: SystemTime) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let mut stale = Vec::new();
+    let mut kept_backup = false;
+    for entry in entries.flatten() {
+        let Some(kind) = entry.file_name().to_str().and_then(leftover_kind) else {
+            continue;
+        };
+        let path = entry.path();
+        // Describes the entry itself, never what a link points to.
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.file_type().is_file() || is_reparse_point(&metadata) {
+            continue;
+        }
+        if kind == Leftover::Backup && !is_disposable_backup(&metadata) {
+            kept_backup = true;
+            continue;
+        }
+        let old = metadata
+            .modified()
+            .is_ok_and(|modified| now.duration_since(modified).unwrap_or_default() > STALE_AGE);
+        if old {
+            stale.push((kind, path));
+        }
+    }
+    for (kind, path) in stale {
+        if kind == Leftover::Temporary && kept_backup {
+            continue;
+        }
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_metadata: &Metadata) -> bool {
+    false
+}
+
+/// A backup [`remove_backup`] could not delete. Only Windows saves through
+/// backups; elsewhere a file with that name is not Folio's to delete.
+#[cfg(windows)]
+fn is_disposable_backup(metadata: &Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_TEMPORARY;
+    metadata.file_attributes() & FILE_ATTRIBUTE_TEMPORARY != 0
+}
+
+#[cfg(not(windows))]
+fn is_disposable_backup(_metadata: &Metadata) -> bool {
+    false
 }
 
 /// Moves the temporary file over the target: `rename` replaces it in one
@@ -491,6 +629,7 @@ fn replace_file(
         if let Ok(folder) = std::fs::File::open(directory) {
             let _ = folder.sync_all();
         }
+        remove_stale_files(directory, SystemTime::now());
         Ok(())
     })();
     if written.is_err() {
@@ -732,6 +871,116 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(leftovers, vec![OsString::from("copy.pdf")]);
+    }
+
+    #[test]
+    fn recognizes_only_folios_own_leftover_names() {
+        let id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            leftover_kind(&format!(".folio-{id}.tmp")),
+            Some(Leftover::Temporary)
+        );
+        assert_eq!(
+            leftover_kind(&format!(".folio-{id}.bak")),
+            Some(Leftover::Backup)
+        );
+        for name in [
+            format!(".folio-{}.tmp", id.to_uppercase()),
+            format!(".folio-{id}.tmp.pdf"),
+            format!(".folio-{id}.TMP"),
+            format!(".folio-{id}0.tmp"),
+            format!(".folio-{}.tmp", &id[1..]),
+            format!("folio-{id}.tmp"),
+            format!(".folio-{}g.tmp", &id[1..]),
+            ".folio-.tmp".to_owned(),
+            ".tmp-0123".to_owned(),
+            "Report.pdf".to_owned(),
+        ] {
+            assert_eq!(leftover_kind(&name), None, "{name}");
+        }
+    }
+
+    /// Sets a file's modification time `age` into the past.
+    fn age(path: &Path, age: Duration) {
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::now() - age).unwrap();
+    }
+
+    #[test]
+    fn later_saves_delete_only_folios_old_leftovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = |name: &str| dir.path().join(name);
+        let id = |n: u8| format!("{:032x}", u128::from(n));
+        let two_hours = Duration::from_secs(2 * 60 * 60);
+        let stale = path(&format!(".folio-{}.tmp", id(1)));
+        let fresh = path(&format!(".folio-{}.tmp", id(2)));
+        let unlike = [
+            path(&format!(".folio-{}.tmp.pdf", id(3))),
+            path(&format!(
+                ".folio-{}.tmp",
+                id(4).to_uppercase().replace('0', "A")
+            )),
+            path("Report.pdf"),
+        ];
+        for file in [&stale, &fresh].into_iter().chain(&unlike) {
+            std::fs::write(file, b"x").unwrap();
+        }
+        for file in [&stale].into_iter().chain(&unlike) {
+            age(file, two_hours);
+        }
+        // A folder with Folio's name, and a link to someone's file.
+        let folder = path(&format!(".folio-{}.tmp", id(5)));
+        std::fs::create_dir(&folder).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("important.pdf");
+        std::fs::write(&target, b"keep").unwrap();
+        age(&target, two_hours);
+        #[cfg(unix)]
+        let link = {
+            let link = path(&format!(".folio-{}.tmp", id(6)));
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            Some(link)
+        };
+        #[cfg(not(unix))]
+        let link: Option<PathBuf> = None;
+
+        // Saving something else into the folder.
+        write_atomically(&path("saved.pdf"), PDF).unwrap();
+        assert!(!stale.exists());
+        assert!(fresh.exists());
+        assert!(unlike.iter().all(|file| file.exists()));
+        assert!(folder.is_dir());
+        // Even once everything is old.
+        remove_stale_files(dir.path(), SystemTime::now() + two_hours);
+        assert!(!fresh.exists());
+        assert!(unlike.iter().all(|file| file.exists()));
+        assert!(folder.is_dir());
+        if let Some(link) = link {
+            assert!(std::fs::symlink_metadata(&link).is_ok());
+        }
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn keeps_previous_versions_folio_had_to_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        let later = SystemTime::now() + Duration::from_secs(2 * 60 * 60);
+        // Not marked as disposable: the only copy of a previous version
+        // (and on Unix not Folio's at all). An interrupted replace may have
+        // left the new version in the temporary file next to it.
+        let kept = dir.path().join(format!(".folio-{:032x}.bak", 7));
+        let temporary = dir.path().join(format!(".folio-{:032x}.tmp", 8));
+        std::fs::write(&kept, b"previous").unwrap();
+        std::fs::write(&temporary, b"new").unwrap();
+        remove_stale_files(dir.path(), later);
+        assert!(kept.exists() && temporary.exists());
+        #[cfg(windows)]
+        {
+            // A backup that could not be deleted after a replace.
+            mark_disposable(&kept);
+            remove_stale_files(dir.path(), later);
+            assert!(!kept.exists() && !temporary.exists());
+        }
     }
 
     #[test]

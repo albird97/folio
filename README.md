@@ -175,7 +175,10 @@ atomic replace, so an interrupted save never leaves a half-written file. If anot
 changed the file since Folio read it, Folio asks whether to replace it or save elsewhere; files
 that cannot be written (read-only, moved) fall back to **Save as**. If the operating system lets
 Folio move the old version aside but not put the new one in place, Folio puts the old version
-back; should even that fail, it keeps the old version next to the file and says where. **Save as** (⇧⌘S /
+back; should even that fail, it keeps the old version next to the file and says where. Folio's
+own leftovers in a folder (`.folio-<id>.tmp` from an interrupted save, and on Windows a previous
+version that could not be deleted right away, for example while antivirus software scanned it)
+are deleted by a later save into that folder once they are an hour old. **Save as** (⇧⌘S /
 Ctrl+Shift+S) writes the edited document to a new file you choose, and later saves go there; its
 menu also offers a copy with comments flattened into the pages, and **Save a copy of the
 original**, which writes the opened file unchanged. The Rust layer accepts only PDF data. The
@@ -271,9 +274,17 @@ Folio desktop binary itself, registered as `io.github.albird97.folio`.
 
 If the app is missing or not connected, the extension explains how to connect it, and
 **Settings → Folio for desktop → Check connection** tests the link. **Connect to Chrome…** refuses
-to register a copy of Folio that others could replace: one running from the temporary folder, a
-removable or RAM disk, a folder others can write to, or (on macOS) a translocated download. Move
-Folio to Applications (macOS) or install it normally (Windows), then try again.
+to register a copy of Folio that others could replace or that may go away, and says why: one
+running from the temporary folder, a removable drive, disk image or RAM disk, a network share
+(Windows), or (on macOS) a translocated download; on macOS and Linux also one where the program
+or a folder above it belongs to another user (only root and you count) or can be changed by
+others (writable by everyone, or by its group unless root owns the folder, like `/Applications`,
+or the group is your own private group; a sticky folder like `/tmp` is fine further up, but not
+as the program's own folder); on Windows also one where the program or a folder above it lets
+Everyone, Users or Authenticated Users write to it (as in a folder created directly on `C:\`).
+Move Folio to Applications (macOS), Program Files or your own user folder (Windows), or a folder
+only you can change (Linux), then try again. The registration names the program's real path,
+with links resolved.
 
 The host answers only the official extension ID, accepts only PDFs (up to 512 MB, at most three
 waiting or arriving at a time, and only with enough free disk space, even when several Chrome
