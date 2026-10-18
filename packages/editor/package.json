@@ -1,0 +1,33 @@
+{
+  "name": "@folio/editor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The shared Folio workspace: document state, tabs, panels and canvas used by the desktop app and the extension editor.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@folio/document-model": "workspace:*",
+    "@folio/pdf-core": "workspace:*",
+    "@folio/platform-adapters": "workspace:*",
+    "@folio/shared-ui": "workspace:*",
+    "lucide-react": "^1.59.0",
+    "radix-ui": "^1.8.1",
+    "zustand": "^5.0.15"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}

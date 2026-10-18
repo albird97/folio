@@ -1,0 +1,17 @@
+{
+  "name": "@folio/platform-adapters",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The platform adapter contract shared by Folio targets, plus the web reference adapter and the platform capability matrix.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@folio/document-model": "workspace:*"
+  }
+}

@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+dist/
+target/
+coverage/
+test-results/
+playwright-report/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/icons/
+tests/fixtures/
+PLATFORM_CAPABILITIES.md

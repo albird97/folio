@@ -1,0 +1,23 @@
+{
+  "name": "@folio/pdf-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PDF engine access for Folio: loading, inspection and rendering on top of PDF.js.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts",
+    "./vite-plugin": "./vite/plugin.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@folio/document-model": "workspace:*",
+    "pdfjs-dist": "6.4.299"
+  },
+  "devDependencies": {
+    "vite": "^8.3.4"
+  }
+}

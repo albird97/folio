@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Rust / Tauri
+target/
+apps/desktop/src-tauri/gen/schemas/
+
+# Test output
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Packaged extension
+*.zip
+*.crx
+*.pem
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

@@ -1,0 +1,244 @@
+/*
+ * Folio design tokens.
+ *
+ * Scene: people reviewing and marking up contracts, reports and forms at a
+ * desk for long stretches — bright offices by day, laptops late at night.
+ * Pages must read as paper; everything around them recedes. Strategy:
+ * restrained — neutrals tinted toward the brand hue, one petrol-ink accent
+ * used for primary actions, selection and focus only.
+ *
+ * All colors are OKLCH. Text tokens meet WCAG AA (≥4.5:1) on every surface
+ * token of the same theme.
+ */
+@import '@fontsource-variable/inter';
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+:root {
+  --folio-hue: 205;
+
+  /* Surfaces */
+  --folio-bg: oklch(0.972 0.004 var(--folio-hue));
+  --folio-surface: oklch(0.992 0.002 var(--folio-hue));
+  --folio-raised: oklch(1 0 0);
+  --folio-canvas: oklch(0.925 0.007 var(--folio-hue));
+  --folio-hover: oklch(0.94 0.006 var(--folio-hue));
+  --folio-pressed: oklch(0.91 0.008 var(--folio-hue));
+  --folio-page: oklch(1 0 0);
+
+  /* Lines */
+  --folio-border: oklch(0.885 0.006 var(--folio-hue));
+  --folio-border-strong: oklch(0.79 0.009 var(--folio-hue));
+
+  /* Text */
+  --folio-ink: oklch(0.23 0.014 230);
+  --folio-ink-muted: oklch(0.43 0.014 230);
+  --folio-ink-subtle: oklch(0.5 0.012 230);
+
+  /* Accent: petrol ink */
+  --folio-accent: oklch(0.5 0.092 210);
+  --folio-accent-hover: oklch(0.45 0.092 210);
+  --folio-accent-ink: oklch(0.99 0.004 210);
+  --folio-accent-soft: oklch(0.935 0.03 205);
+  --folio-accent-soft-ink: oklch(0.37 0.08 210);
+  --folio-focus: oklch(0.58 0.12 210);
+
+  /* Status */
+  --folio-danger: oklch(0.52 0.17 25);
+  --folio-danger-soft: oklch(0.955 0.025 25);
+  --folio-danger-ink: oklch(0.42 0.15 25);
+  --folio-warning-soft: oklch(0.96 0.045 85);
+  --folio-warning-ink: oklch(0.42 0.09 70);
+  --folio-success-ink: oklch(0.42 0.1 155);
+
+  /* Depth */
+  --folio-shadow-page: 0 0 0 1px oklch(0.2 0.02 230 / 0.06), 0 1px 2px oklch(0.2 0.02 230 / 0.1),
+    0 3px 8px oklch(0.2 0.02 230 / 0.08);
+  --folio-shadow-pop: 0 0 0 1px oklch(0.2 0.02 230 / 0.08), 0 4px 8px oklch(0.2 0.02 230 / 0.12);
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --folio-bg: oklch(0.2 0.009 var(--folio-hue));
+  --folio-surface: oklch(0.225 0.01 var(--folio-hue));
+  --folio-raised: oklch(0.26 0.011 var(--folio-hue));
+  --folio-canvas: oklch(0.165 0.008 var(--folio-hue));
+  --folio-hover: oklch(0.275 0.011 var(--folio-hue));
+  --folio-pressed: oklch(0.31 0.012 var(--folio-hue));
+  /* Pages stay white: a document should look like the document. */
+  --folio-page: oklch(1 0 0);
+
+  --folio-border: oklch(0.31 0.011 var(--folio-hue));
+  --folio-border-strong: oklch(0.4 0.013 var(--folio-hue));
+
+  --folio-ink: oklch(0.94 0.006 var(--folio-hue));
+  --folio-ink-muted: oklch(0.76 0.01 var(--folio-hue));
+  --folio-ink-subtle: oklch(0.68 0.01 var(--folio-hue));
+
+  --folio-accent: oklch(0.76 0.1 200);
+  --folio-accent-hover: oklch(0.81 0.09 200);
+  --folio-accent-ink: oklch(0.2 0.03 215);
+  --folio-accent-soft: oklch(0.33 0.05 210);
+  --folio-accent-soft-ink: oklch(0.9 0.06 200);
+  --folio-focus: oklch(0.76 0.11 200);
+
+  --folio-danger: oklch(0.7 0.15 25);
+  --folio-danger-soft: oklch(0.3 0.06 25);
+  --folio-danger-ink: oklch(0.86 0.08 25);
+  --folio-warning-soft: oklch(0.32 0.05 80);
+  --folio-warning-ink: oklch(0.88 0.08 85);
+  --folio-success-ink: oklch(0.82 0.1 155);
+
+  --folio-shadow-page: 0 0 0 1px oklch(0 0 0 / 0.4), 0 2px 8px oklch(0 0 0 / 0.45);
+  --folio-shadow-pop: 0 0 0 1px oklch(1 0 0 / 0.08), 0 4px 8px oklch(0 0 0 / 0.4);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--folio-bg);
+  --color-surface: var(--folio-surface);
+  --color-raised: var(--folio-raised);
+  --color-canvas: var(--folio-canvas);
+  --color-hover: var(--folio-hover);
+  --color-pressed: var(--folio-pressed);
+  --color-page: var(--folio-page);
+  --color-line: var(--folio-border);
+  --color-line-strong: var(--folio-border-strong);
+  --color-ink: var(--folio-ink);
+  --color-ink-muted: var(--folio-ink-muted);
+  --color-ink-subtle: var(--folio-ink-subtle);
+  --color-accent: var(--folio-accent);
+  --color-accent-hover: var(--folio-accent-hover);
+  --color-accent-ink: var(--folio-accent-ink);
+  --color-accent-soft: var(--folio-accent-soft);
+  --color-accent-soft-ink: var(--folio-accent-soft-ink);
+  --color-focus: var(--folio-focus);
+  --color-danger: var(--folio-danger);
+  --color-danger-soft: var(--folio-danger-soft);
+  --color-danger-ink: var(--folio-danger-ink);
+  --color-warning-soft: var(--folio-warning-soft);
+  --color-warning-ink: var(--folio-warning-ink);
+  --color-success-ink: var(--folio-success-ink);
+
+  --shadow-page: var(--folio-shadow-page);
+  --shadow-pop: var(--folio-shadow-pop);
+}
+
+@theme {
+  --font-sans:
+    'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  /* Dense desktop scale: 13px body, like native macOS/Windows apps. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.625rem;
+  --text-2xl--line-height: 2.125rem;
+
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Semantic stacking order. */
+  --z-sticky: 10;
+  --z-dropdown: 20;
+  --z-overlay: 30;
+  --z-modal: 50;
+  --z-toast: 60;
+  --z-tooltip: 70;
+
+  --animate-fade-in: fade-in 160ms var(--ease-out-quart);
+  --animate-pop-in: pop-in 180ms var(--ease-out-expo);
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.98);
+    }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--folio-bg);
+    color: var(--folio-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--folio-focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--folio-accent-soft);
+    color: var(--folio-accent-soft-ink);
+  }
+
+  /* App chrome is not selectable text; documents and fields are. */
+  .folio-chrome {
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+
+  .folio-chrome :is(input, textarea, [data-selectable]) {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

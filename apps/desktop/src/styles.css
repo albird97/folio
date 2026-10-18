@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+@import '@folio/shared-ui/theme.css';
+
+@source '../../../packages/shared-ui/src';
+@source '../../../packages/editor/src';
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Folio app icon: original artwork, sized to the macOS icon grid (824px body, 100px margin). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#158a95"/>
+      <stop offset="1" stop-color="#005b6d"/>
+    </linearGradient>
+    <linearGradient id="sheet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef6f7"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <path d="M352 236h228l156 156v378a28 28 0 0 1-28 28H352a28 28 0 0 1-28-28V264a28 28 0 0 1 28-28Z" fill="#003c48" opacity="0.18" transform="translate(0 14)"/>
+  <path d="M352 236h228l156 156v378a28 28 0 0 1-28 28H352a28 28 0 0 1-28-28V264a28 28 0 0 1 28-28Z" fill="url(#sheet)"/>
+  <path d="M580 236v124a32 32 0 0 0 32 32h124Z" fill="#99d3da"/>
+  <rect x="408" y="520" width="248" height="44" rx="22" fill="#007180"/>
+  <rect x="408" y="616" width="168" height="44" rx="22" fill="#80aeb6"/>
+</svg>
