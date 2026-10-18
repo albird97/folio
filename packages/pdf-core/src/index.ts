@@ -7,3 +7,5 @@ export * from './descriptor';
 export * from './outline';
 export * from './page-info';
 export * from './text';
+export * from './extract';
+export * from './zip';

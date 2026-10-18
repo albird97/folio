@@ -13,6 +13,7 @@ export type FixtureName =
   | 'encrypted-owner-restricted.pdf'
   | 'encrypted-rc4.pdf'
   | 'outline-and-text.pdf'
+  | 'filled-form.pdf'
   | 'not-a-pdf.pdf'
   | 'empty.pdf'
   | 'header-only.pdf';

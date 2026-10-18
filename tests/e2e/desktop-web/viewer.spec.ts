@@ -298,6 +298,32 @@ test.describe('document viewer', () => {
       .toContain('Quick brown fox opens this guide');
   });
 
+  test('shows the values of filled-in form fields', async ({ page }) => {
+    await open(page, 'filled-form.pdf');
+    // Dark pixels inside the name field (72–332 × 616–644 pt on a Letter page)
+    // and the checkbox: the field values are painted from their appearances.
+    const dark = (rect: [number, number, number, number]) =>
+      page
+        .locator('[data-page="1"] [data-testid="page-canvas"]')
+        .evaluate((canvas: HTMLCanvasElement, [x0, y0, x1, y1]) => {
+          const sx = canvas.width / 612;
+          const sy = canvas.height / 792;
+          const left = Math.round(x0 * sx);
+          const top = Math.round((792 - y1) * sy);
+          const width = Math.round((x1 - x0) * sx);
+          const height = Math.round((y1 - y0) * sy);
+          const data = canvas.getContext('2d')!.getImageData(left, top, width, height).data;
+          let count = 0;
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i]! + data[i + 1]! + data[i + 2]! < 300) count += 1;
+          }
+          return count;
+        }, rect);
+    // Inside the field's border, where only the value is drawn.
+    expect(await dark([76, 620, 328, 640])).toBeGreaterThan(50);
+    expect(await dark([74, 598, 90, 614])).toBeGreaterThan(5);
+  });
+
   test('saves an exact copy of the original file', async ({ page }) => {
     await open(page, 'outline-and-text.pdf');
     const download = page.waitForEvent('download');

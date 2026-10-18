@@ -5,6 +5,7 @@ import {
   type Rotation,
 } from '@folio/document-model';
 import {
+  AnnotationMode,
   GlobalWorkerOptions,
   InvalidPDFException,
   PDFDateString,
@@ -337,7 +338,14 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
         canvas.style.width = `${Math.floor(cssViewport.width)}px`;
         canvas.style.height = `${Math.floor(cssViewport.height)}px`;
       }
-      const task = page.render({ canvas, viewport, intent: options.intent ?? 'display' });
+      const task = page.render({
+        canvas,
+        viewport,
+        intent: options.intent ?? 'display',
+        // Form fields are drawn from their appearances like other annotations:
+        // there is no HTML form layer to show them (and their values) instead.
+        annotationMode: AnnotationMode.ENABLE,
+      });
       cancelTask = () => task.cancel();
       try {
         await task.promise;

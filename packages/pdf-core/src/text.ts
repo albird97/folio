@@ -46,3 +46,16 @@ export function applyTransform(m: readonly number[], x: number, y: number): [num
   const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = m;
   return [a * x + c * y + e, b * x + d * y + f];
 }
+
+/**
+ * The plain text of a page: its runs in order, with a line break wherever
+ * PDF.js ends a line. Trailing spaces on lines are dropped.
+ */
+export function pageTextToString(text: PageText): string {
+  let out = '';
+  for (const item of text.items) {
+    out += item.str;
+    if (item.hasEOL) out += '\n';
+  }
+  return out.replace(/[ \t]+$/gm, '').trimEnd();
+}

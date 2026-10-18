@@ -84,6 +84,28 @@ async function rotated(): Promise<Uint8Array> {
   return pdf.save({ useObjectStreams: false });
 }
 
+/** A filled-in form: a text field and a ticked checkbox with stored appearances. */
+async function filledForm(): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create({ updateMetadata: false });
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const page = pdf.addPage([612, 792]);
+  page.drawText('Folio form fixture', { x: 72, y: 720, size: 24, font });
+  page.drawText('Name', { x: 72, y: 652, size: 12, font });
+  page.drawText('I agree', { x: 104, y: 602, size: 12, font });
+  const form = pdf.getForm();
+  const name = form.createTextField('name');
+  name.setText('Ada Lovelace');
+  name.addToPage(page, { x: 72, y: 616, width: 260, height: 28, font });
+  const agree = form.createCheckBox('agree');
+  agree.addToPage(page, { x: 72, y: 596, width: 20, height: 20 });
+  agree.check();
+  form.updateFieldAppearances(font);
+  pdf.setTitle('Folio Form Fixture');
+  pdf.setCreationDate(CREATED);
+  pdf.setModificationDate(MODIFIED);
+  return pdf.save({ useObjectStreams: false });
+}
+
 interface OutlineNode {
   title: string;
   dest?: PDFObject;
@@ -216,6 +238,7 @@ async function main(): Promise<void> {
   writeFileSync(basicPath, await basic());
   writeFileSync(join(OUT, 'rotated-pages.pdf'), await rotated());
   writeFileSync(join(OUT, 'outline-and-text.pdf'), await outlineAndText());
+  writeFileSync(join(OUT, 'filled-form.pdf'), await filledForm());
 
   // AES-256, user password required to open.
   qpdf([
