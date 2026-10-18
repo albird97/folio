@@ -21,8 +21,9 @@ type State =
       kind: 'web';
       tabId: number;
       url: URL;
-      /** Null when Chrome does not let extensions read the page. */
+      /** Null when Chrome does not let extensions read the page, or before it was looked at. */
       scan: PageScan | null;
+      scanned: boolean;
     };
 
 const describeLink = (url: string) => {
@@ -57,9 +58,9 @@ export function ThisTab() {
         return setState({ kind: 'not-web', localFile: tab.url.protocol === 'file:' });
       }
       const url = tab.url;
-      setState({ kind: 'web', tabId: tab.id, url, scan: null });
+      setState({ kind: 'web', tabId: tab.id, url, scan: null, scanned: false });
       const scan = await scanTab(tab.id);
-      if (active) setState({ kind: 'web', tabId: tab.id, url, scan });
+      if (active) setState({ kind: 'web', tabId: tab.id, url, scan, scanned: true });
     })();
     return () => {
       active = false;
@@ -137,18 +138,20 @@ export function ThisTab() {
       </p>
     );
   } else {
-    const { url, scan, tabId } = state;
+    const { url, scan, scanned, tabId } = state;
     const isPdf = looksLikePdfUrl(url) || scan?.contentType === 'application/pdf';
+    // Chrome may not let Folio look at a tab showing a PDF (its viewer).
+    const unreadable = scanned && scan === null;
     body = (
       <>
         <p className="truncate text-xs text-ink-muted" title={url.href}>
           {url.hostname}
         </p>
-        {isPdf ? (
+        {isPdf || unreadable ? (
           <div className="mt-2 flex flex-wrap gap-2">
             <Button size="sm" variant="primary" onClick={() => open(url.href)}>
               <ExternalLink size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
-              Open this PDF
+              {isPdf ? 'Open this PDF' : 'Open this tab in Folio'}
             </Button>
             <Button size="sm" onClick={() => download(url.href)}>
               <Download size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
@@ -187,11 +190,13 @@ export function ThisTab() {
           </ul>
         ) : (
           <p className="mt-2 text-xs text-ink-muted">
-            {scan === null
-              ? 'Chrome doesn’t let extensions read this page.'
-              : isPdf
-                ? ''
-                : 'No links to PDFs on this page.'}
+            {!scanned
+              ? ''
+              : scan === null
+                ? 'Chrome doesn’t let Folio look at this page. If it shows a PDF, Folio can still open or download it.'
+                : isPdf
+                  ? ''
+                  : 'No links to PDFs on this page.'}
           </p>
         )}
         <div className="mt-3 flex flex-wrap gap-2">

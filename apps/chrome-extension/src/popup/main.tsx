@@ -106,7 +106,8 @@ function RecentActivity() {
 
 type TabState =
   | { kind: 'loading' }
-  | { kind: 'web'; tab: { id: number; url: URL }; pdf: boolean }
+  /** `maybe`: Chrome would not let Folio look at the page (its PDF viewer may not). */
+  | { kind: 'web'; tab: { id: number; url: URL }; pdf: 'yes' | 'maybe' | 'no' }
   | { kind: 'local-file' }
   | { kind: 'other' };
 
@@ -128,12 +129,14 @@ function ThisTab({ onSidePanel }: { onSidePanel(): void }) {
       if (tab?.url?.protocol === 'file:') return setState({ kind: 'local-file' });
       if (!tab?.url || !isWebUrl(tab.url)) return setState({ kind: 'other' });
       const web = { id: tab.id, url: tab.url };
-      setState({ kind: 'web', tab: web, pdf: looksLikePdfUrl(tab.url) });
-      // Chrome's PDF viewer reports the PDF type; other pages may not be readable.
+      const byName = looksLikePdfUrl(tab.url);
+      setState({ kind: 'web', tab: web, pdf: byName ? 'yes' : 'no' });
+      // Chrome's PDF viewer reports the PDF type, if Chrome lets Folio look;
+      // a tab it cannot look at may well be a PDF too.
       const scan = await scanTab(tab.id);
-      if (active && scan?.contentType === 'application/pdf') {
-        setState({ kind: 'web', tab: web, pdf: true });
-      }
+      if (!active) return;
+      const pdf = byName || scan?.contentType === 'application/pdf' ? 'yes' : scan ? 'no' : 'maybe';
+      setState({ kind: 'web', tab: web, pdf });
     })();
     return () => {
       active = false;
@@ -177,11 +180,18 @@ function ThisTab({ onSidePanel }: { onSidePanel(): void }) {
         This tab <span className="font-normal text-ink-muted">· {tab.url.hostname}</span>
       </h2>
       <div className="flex flex-col gap-0.5">
-        {pdf ? (
+        {pdf === 'yes' ? (
           <Action
             icon={<FileDown size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
             title="Open this PDF in Folio"
             description="Downloads it to this device and opens it in the editor"
+            onClick={openPdf}
+          />
+        ) : pdf === 'maybe' ? (
+          <Action
+            icon={<FileDown size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+            title="Open this tab in Folio"
+            description="Works when the tab shows a PDF: Folio downloads it and opens it"
             onClick={openPdf}
           />
         ) : null}

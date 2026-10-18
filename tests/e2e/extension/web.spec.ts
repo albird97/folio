@@ -152,6 +152,29 @@ test.describe('opening PDFs from the web', () => {
     expect(left.filter((key) => key.startsWith('open-url:'))).toEqual([]);
   });
 
+  test('the popup offers to open a tab it cannot look at', async ({
+    page,
+    context,
+    extensionUrl,
+    pdfServer,
+  }) => {
+    // A PDF served from an address without ".pdf", shown in Chrome's viewer,
+    // which does not let extensions run scripts.
+    await context.addInitScript(stubPermissions({ allow: true }));
+    await context.addInitScript(stubActiveTab(pdfServer.url('/download?id=7'), null));
+    await page.goto(extensionUrl('popup.html'));
+    const tab = page.getByRole('region', { name: /^This tab/ });
+    const editorPromise = context.waitForEvent('page');
+    await tab.getByRole('button', { name: /Open this tab in Folio/ }).click();
+    const editor = await editorPromise;
+    await pageRendered(editor);
+    await expect(
+      editor.getByRole('navigation', { name: 'Open documents' }).getByRole('button', {
+        name: /^Résumé\.pdf/,
+      }),
+    ).toBeVisible();
+  });
+
   test('the popup prints web pages through Chrome’s print dialog', async ({
     page,
     context,
