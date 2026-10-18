@@ -1,9 +1,14 @@
 [
   "open",
+  "save",
+  "save-as",
   "save-copy",
+  "print",
   "close-tab",
   "next-tab",
   "previous-tab",
+  "undo",
+  "redo",
   "toggle-left-panel",
   "toggle-right-panel",
   "cycle-theme",
@@ -17,5 +22,11 @@
   "go-to-page",
   "find",
   "find-next",
-  "find-previous"
+  "find-previous",
+  "insert-pages",
+  "insert-blank-page",
+  "rotate-pages-clockwise",
+  "rotate-pages-counterclockwise",
+  "delete-pages",
+  "extract-pages"
 ]

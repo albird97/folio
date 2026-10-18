@@ -3,13 +3,18 @@ import {
   APP_COMMANDS,
   Channel,
   createLocalStorage,
-  createMemoryRecoveryStore,
   type AppCommand,
   type IncomingFile,
   type OperatingSystem,
   type PlatformAdapter,
+  type RecentFile,
+  type RecentFiles,
+  type RecoveryRecord,
+  type RecoveryStore,
+  type TransferRequest,
+  type WriteFileResult,
 } from '@folio/platform-adapters';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, type InvokeArgs, type InvokeOptions } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TAURI_FEATURES } from './features';
@@ -37,14 +42,35 @@ interface AppInfo {
   arch: string;
 }
 
+/** What Folio's commands reject with: `{ code, message }`, never paths. */
 interface CommandError {
   code: string;
   message: string;
 }
 
-/** Mirrors `files::SavedFile`: the chosen file's name, never its path. */
+/** Mirrors `commands::SavedFile`: the chosen file's name, never its path. */
 interface SavedFile {
   name: string;
+  /** A grant for the new file when write access was asked for (Save As). */
+  token: string | null;
+}
+
+/** Mirrors `native_messaging::Status`. */
+export interface NativeMessagingStatus {
+  /** Chrome would start this copy of Folio for the extensions below. */
+  registered: boolean;
+  extensionIds: string[];
+}
+
+/** An error reported by one of Folio's native commands. */
+export class NativeCommandError extends Error {
+  override readonly name = 'NativeCommandError';
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 /** Commands the native menus send (shared with `menu.rs`, which tests the same list). */
@@ -53,24 +79,109 @@ export const MENU_COMMANDS: ReadonlySet<AppCommand> = new Set(
     (APP_COMMANDS as readonly string[]).includes(id),
   ),
 );
-/** Header carrying the proposed file name for `save_pdf_as` (see `save.rs`). */
-const NAME_HEADER = 'x-folio-name';
+
+/** Request headers of Folio's binary commands (see `save.rs` and `recovery.rs`). */
+const HEADERS = {
+  name: 'x-folio-name',
+  keepAccess: 'x-folio-keep-access',
+  token: 'x-folio-token',
+  expectedSha256: 'x-folio-expected-sha256',
+  overwrite: 'x-folio-overwrite',
+  recoveryId: 'x-folio-recovery-id',
+  recoveryKey: 'x-folio-recovery-key',
+  recoveryTitle: 'x-folio-recovery-title',
+} as const;
+
+const EVENTS = {
+  filesOpened: 'folio://files-opened',
+  menu: 'folio://menu',
+  dragHover: 'folio://drag-hover',
+  recentChanged: 'folio://recent-changed',
+  closeRequested: 'folio://close-requested',
+  transferRequest: 'folio://transfer-request',
+} as const;
+
+/**
+ * Recovery record ids and file keys, as `recovery.rs` validates them:
+ * letters, digits, `_` and `-`, but no Windows device name such as `CON`.
+ */
+const SAFE_NAME = /^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[A-Za-z0-9_-]{1,128}$/i;
+
+const encoder = new TextEncoder();
+
+/**
+ * Replaces unpaired UTF-16 surrogates (which `encodeURIComponent` throws on)
+ * with U+FFFD. `String.prototype.toWellFormed` is missing in older webviews.
+ */
+export function toWellFormed(text: string): string {
+  let result = '';
+  for (let index = 0; index < text.length; index += 1) {
+    const unit = text.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        result += text[index]! + text[index + 1]!;
+        index += 1;
+        continue;
+      }
+      result += '�';
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      result += '�';
+    } else {
+      result += text[index]!;
+    }
+  }
+  return result;
+}
+
+/** A header value carrying arbitrary text (headers are ASCII). */
+function headerText(text: string): string {
+  return encodeURIComponent(toWellFormed(text));
+}
 
 const notFound = () =>
   new PdfError('unknown', 'The file could not be found. It may have been moved or deleted.');
 
-function toPdfError(error: unknown): Error {
-  const value = error as Partial<CommandError> | undefined;
-  if (value?.code === 'too-large') return new PdfError('too-large');
-  if (value?.code === 'not-found') return notFound();
-  return new PdfError('unknown', value?.message ?? 'The file could not be read.');
+function commandError(error: unknown): Partial<CommandError> {
+  if (typeof error === 'string') return { message: error };
+  return (error ?? {}) as Partial<CommandError>;
 }
 
-function grantedToIncoming(file: GrantedFile): IncomingFile {
+function toNativeError(error: unknown, fallback: string): NativeCommandError {
+  const { code, message } = commandError(error);
+  return new NativeCommandError(code ?? 'unknown', message ?? fallback);
+}
+
+/** Invokes a command, turning its `{ code, message }` rejection into an Error. */
+async function call<T>(
+  command: string,
+  args?: InvokeArgs,
+  options?: InvokeOptions,
+  fallback = 'Folio could not complete this action.',
+): Promise<T> {
+  try {
+    return await invoke<T>(command, args, options);
+  } catch (error) {
+    throw toNativeError(error, fallback);
+  }
+}
+
+function toPdfError(error: unknown): Error {
+  const value = commandError(error);
+  if (value.code === 'too-large') return new PdfError('too-large');
+  if (value.code === 'not-found') return notFound();
+  return new PdfError('unknown', value.message ?? 'The file could not be read.');
+}
+
+/**
+ * Documents from Chrome are read through their token but have no file to
+ * save to, so their origin carries no handle (Save becomes Save As).
+ */
+function grantedToIncoming(file: GrantedFile, writable = true): IncomingFile {
   return {
     name: file.name,
     size: file.size,
-    origin: { kind: 'local-file', handle: file.token },
+    origin: { kind: 'local-file', handle: writable ? file.token : null },
     async read() {
       try {
         return new Uint8Array(
@@ -96,9 +207,9 @@ function failedToIncoming(name: string, error: () => Error): IncomingFile {
   };
 }
 
-function toIncoming({ files, skipped, unavailable }: OpenedFiles): IncomingFile[] {
+function toIncoming({ files, skipped, unavailable }: OpenedFiles, writable = true): IncomingFile[] {
   return [
-    ...files.map(grantedToIncoming),
+    ...files.map((file) => grantedToIncoming(file, writable)),
     ...skipped.map((name) => failedToIncoming(name, () => new PdfError('not-a-pdf'))),
     ...unavailable.map((name) => failedToIncoming(name, notFound)),
   ];
@@ -109,6 +220,96 @@ function toOperatingSystem(os: string): OperatingSystem {
   if (os === 'windows') return 'windows';
   if (os === 'linux') return 'linux';
   return 'unknown';
+}
+
+function isTransferRequest(value: unknown): value is TransferRequest {
+  const request = value as Partial<TransferRequest> | null;
+  return (
+    typeof request?.id === 'string' &&
+    typeof request.name === 'string' &&
+    typeof request.size === 'number'
+  );
+}
+
+function assertSafeName(kind: string, value: string): void {
+  if (!SAFE_NAME.test(value)) throw new Error(`Invalid recovery ${kind}.`);
+}
+
+/**
+ * Crash recovery data in Folio's app data folder (`recovery.rs`). Snapshots
+ * and files travel as raw request bodies; ids and keys are validated on both
+ * sides before anything is stored.
+ */
+function createTauriRecoveryStore(): RecoveryStore {
+  const failed = 'Recovery data could not be stored.';
+  return {
+    list: () => call<RecoveryRecord[]>('recovery_list'),
+    async saveSnapshot({ id, title }, snapshot) {
+      assertSafeName('id', id);
+      await call<void>(
+        'recovery_save_snapshot',
+        encoder.encode(snapshot),
+        {
+          headers: {
+            [HEADERS.recoveryId]: id,
+            [HEADERS.recoveryTitle]: headerText(title),
+          },
+        },
+        failed,
+      );
+    },
+    async saveFile(id, key, bytes) {
+      assertSafeName('id', id);
+      assertSafeName('file key', key);
+      await call<void>(
+        'recovery_save_file',
+        bytes,
+        { headers: { [HEADERS.recoveryId]: id, [HEADERS.recoveryKey]: key } },
+        failed,
+      );
+    },
+    async hasFile(id, key) {
+      if (!SAFE_NAME.test(id) || !SAFE_NAME.test(key)) return false;
+      return call<boolean>('recovery_has_file', { id, key });
+    },
+    async load(id) {
+      if (!SAFE_NAME.test(id)) return null;
+      const snapshot = await call<string | null>('recovery_load_snapshot', { id });
+      if (snapshot === null) return null;
+      const keys = await call<string[]>('recovery_file_keys', { id });
+      const files = new Map<string, Uint8Array>();
+      for (const key of keys) {
+        files.set(key, new Uint8Array(await call<ArrayBuffer>('recovery_load_file', { id, key })));
+      }
+      return { snapshot, files };
+    },
+    async remove(id) {
+      if (!SAFE_NAME.test(id)) return;
+      await call<void>('recovery_remove', { id });
+    },
+  };
+}
+
+/** Whether Chrome can reach this copy of Folio (desktop settings). */
+export function nativeMessagingStatus(): Promise<NativeMessagingStatus> {
+  return call<NativeMessagingStatus>('native_messaging_status');
+}
+
+/**
+ * Registers Folio as the native messaging host for the official Folio
+ * extension and, optionally, other extensions (ids are 32 letters from a to
+ * p), then returns the new status. Folio first shows a native confirmation
+ * dialog listing every extension; when the user declines, this rejects with
+ * a `NativeCommandError` whose code is `cancelled` and nothing changes.
+ */
+export function registerNativeMessaging(
+  extensionIds: string[] = [],
+): Promise<NativeMessagingStatus> {
+  return call<NativeMessagingStatus>('register_native_messaging', { extensionIds });
+}
+
+export function unregisterNativeMessaging(): Promise<NativeMessagingStatus> {
+  return call<NativeMessagingStatus>('unregister_native_messaging');
 }
 
 export function isTauri(): boolean {
@@ -124,27 +325,85 @@ export function isTauri(): boolean {
  * built-in `tauri://drag-*` events include the dragged paths and are not
  * listened to (`core:event:allow-listen` cannot be scoped by event name, so a
  * compromised page could still subscribe to them).
+ *
+ * One token is both the grant to read a file and its save handle (the
+ * `origin.handle` of an opened file, the `handle` Save As returns).
+ * Releasing it, through `IncomingFile.release` or `releaseHandle`, ends
+ * reading and writing alike (and deletes a document received from Chrome),
+ * so release a token only once its document is closed.
  */
 export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { info: AppInfo }> {
   const info = await invoke<AppInfo>('app_info');
   const incoming = new Channel<IncomingFile[]>(true);
   const commands = new Channel<AppCommand>();
   const hover = new Channel<boolean>();
+  const recentChanged = new Channel<undefined>();
+  const transfers = new Channel<TransferRequest>(true);
+  let closeHandler: (() => Promise<boolean>) | null = null;
+  let closing = false;
+  let unsaved = false;
 
   const deliver = (opened: OpenedFiles) => {
     const all = toIncoming(opened);
     if (all.length > 0) incoming.emit(all);
   };
 
-  await listen<OpenedFiles>('folio://files-opened', (event) => deliver(event.payload));
-  await listen<string>('folio://menu', (event) => {
+  /**
+   * Runs the UI's check, then lets the window close or Folio quit, or tells
+   * the native side the request was declined (so it does not linger).
+   */
+  const onCloseRequested = async () => {
+    if (closing) return;
+    closing = true;
+    let allowed = false;
+    try {
+      allowed = closeHandler ? await closeHandler() : true;
+    } catch {
+      // Keeping the window open is the safe outcome for unsaved work.
+    }
+    try {
+      await invoke(allowed ? 'confirm_close' : 'cancel_close');
+    } catch {
+      // Nothing else to do: the window stays open.
+    } finally {
+      closing = false;
+    }
+  };
+
+  await listen<OpenedFiles>(EVENTS.filesOpened, (event) => deliver(event.payload));
+  await listen<string>(EVENTS.menu, (event) => {
     const command = event.payload as AppCommand;
     if (MENU_COMMANDS.has(command)) commands.emit(command);
   });
-  await listen<boolean>('folio://drag-hover', (event) => hover.emit(event.payload === true));
-  // Files from launch arguments or Finder arrive before the UI exists; they
-  // are queued natively until the listener above is in place.
+  await listen<boolean>(EVENTS.dragHover, (event) => hover.emit(event.payload === true));
+  await listen(EVENTS.recentChanged, () => recentChanged.emit(undefined));
+  await listen(EVENTS.closeRequested, () => void onCloseRequested());
+  await listen<TransferRequest>(EVENTS.transferRequest, (event) => {
+    if (isTransferRequest(event.payload)) transfers.emit(event.payload);
+  });
+  // A reloaded page starts without unsaved work.
+  await invoke('set_close_guard', { enabled: false }).catch(() => undefined);
+  // Files from launch arguments or Finder, and documents from Chrome, arrive
+  // before the UI exists; they are queued natively until the listeners above
+  // are in place.
   deliver(await invoke<OpenedFiles>('take_pending_files'));
+  for (const request of await invoke<TransferRequest[]>('take_pending_transfers')) {
+    if (isTransferRequest(request)) transfers.emit(request);
+  }
+
+  const recentFiles: RecentFiles = {
+    list: () => call<RecentFile[]>('recent_list'),
+    async open(id) {
+      return toIncoming(await call<OpenedFiles>('recent_open', { id }));
+    },
+    async remove(id) {
+      await call<void>('recent_remove', { id });
+    },
+    async clear() {
+      await call<void>('recent_clear');
+    },
+    onChange: (listener) => recentChanged.subscribe(() => listener()),
+  };
 
   const window = getCurrentWindow();
   return {
@@ -168,33 +427,66 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
     setWindowTitle(title) {
       void window.setTitle(title).catch(() => undefined);
     },
-    async saveFileAs({ suggestedName, bytes }) {
+    async saveFileAs({ suggestedName, bytes, keepAccess }) {
+      // The bytes travel as the raw request body; the name as a header.
+      const headers: Record<string, string> = {
+        [HEADERS.name]: headerText(suggestedName),
+      };
+      if (keepAccess) headers[HEADERS.keepAccess] = '1';
+      const saved = await call<SavedFile | null>(
+        'save_pdf_as',
+        bytes,
+        { headers },
+        'The file could not be saved.',
+      );
+      return saved
+        ? { status: 'saved', name: saved.name, handle: saved.token ?? null }
+        : { status: 'cancelled' };
+    },
+    async writeFile({ handle, bytes, expectedSha256, overwriteExternalChanges }) {
+      const headers: Record<string, string> = {
+        [HEADERS.token]: handle,
+        [HEADERS.expectedSha256]: expectedSha256,
+      };
+      if (overwriteExternalChanges) headers[HEADERS.overwrite] = '1';
       try {
-        // The bytes travel as the raw request body; the name as a header.
-        const saved = await invoke<SavedFile | null>('save_pdf_as', bytes, {
-          headers: { [NAME_HEADER]: encodeURIComponent(suggestedName) },
-        });
-        return saved
-          ? { status: 'saved', name: saved.name, handle: null }
-          : { status: 'cancelled' };
+        return await invoke<WriteFileResult>('write_granted_file', bytes, { headers });
       } catch (error) {
-        const message = (error as Partial<CommandError> | undefined)?.message;
-        throw new Error(message ?? 'The file could not be saved.');
+        // The grant was released (or never existed): only Save As can help.
+        if (commandError(error).code === 'unknown-token') {
+          return {
+            status: 'unavailable',
+            message: 'This file is no longer available to Folio. Use Save As to save the document.',
+          };
+        }
+        throw toNativeError(error, 'The file could not be saved.');
       }
     },
-    // Phase 4 replaces these with native implementations.
-    async writeFile() {
-      return {
-        status: 'unavailable',
-        message: 'Saving to the original file is not available yet.',
+    // The handle is also the file's read grant: call only once the document
+    // is closed (see above).
+    releaseHandle(handle) {
+      void invoke('release_file', { token: handle }).catch(() => undefined);
+    },
+    async print() {
+      await call<void>('print_window', undefined, undefined, 'The document could not be printed.');
+    },
+    recovery: createTauriRecoveryStore(),
+    recentFiles,
+    setUnsavedChanges(value) {
+      if (value === unsaved) return;
+      unsaved = value;
+      void invoke('set_close_guard', { enabled: value }).catch(() => undefined);
+    },
+    onCloseRequested(handler) {
+      closeHandler = handler;
+      return () => {
+        if (closeHandler === handler) closeHandler = null;
       };
     },
-    releaseHandle() {},
-    async print() {
-      globalThis.window.print();
+    onTransferRequest: (listener) => transfers.subscribe(listener),
+    async answerTransfer(id, accept) {
+      const opened = await call<OpenedFiles>('answer_transfer', { id, accept });
+      return toIncoming(opened, false);
     },
-    recovery: createMemoryRecoveryStore(),
-    recentFiles: null,
-    setUnsavedChanges() {},
   };
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Least-privilege permissions for Folio's main window. There is no filesystem plugin: files are only reachable through tokens issued by Folio's own commands after the user chooses them, and new files are only written to a location the user picks in the native save dialog (PDF data only). The window permissions cover the title and the tab strip's drag region (drag to move, double-click to zoom or maximize).",
+  "description": "Least-privilege permissions for Folio's main window. There is no filesystem plugin: files are only reachable through tokens issued by Folio's own commands after the user chooses them (dialog, drop, launch, recent files, an accepted transfer from the Chrome extension), new files are only written to a location the user picks in the native save dialog, and Save writes back only through a token, refusing files that changed on disk (PDF data only in both cases). Crash recovery data, recent files and documents from Chrome live in Folio's app data folder and are addressed by validated ids, never paths. The window permissions cover the title and the tab strip's drag region (drag to move, double-click to zoom or maximize).",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -14,6 +14,28 @@
     "allow-release-file",
     "allow-take-pending-files",
     "allow-save-pdf-as",
-    "allow-app-info"
+    "allow-write-granted-file",
+    "allow-print-window",
+    "allow-app-info",
+    "allow-recovery-list",
+    "allow-recovery-save-snapshot",
+    "allow-recovery-save-file",
+    "allow-recovery-has-file",
+    "allow-recovery-load-snapshot",
+    "allow-recovery-load-file",
+    "allow-recovery-file-keys",
+    "allow-recovery-remove",
+    "allow-recent-list",
+    "allow-recent-open",
+    "allow-recent-remove",
+    "allow-recent-clear",
+    "allow-set-close-guard",
+    "allow-confirm-close",
+    "allow-cancel-close",
+    "allow-take-pending-transfers",
+    "allow-answer-transfer",
+    "allow-native-messaging-status",
+    "allow-register-native-messaging",
+    "allow-unregister-native-messaging"
   ]
 }

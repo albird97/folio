@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recovery-load-snapshot"
+description = "Enables the recovery_load_snapshot command without any pre-configured scope."
+commands.allow = ["recovery_load_snapshot"]
+
+[[permission]]
+identifier = "deny-recovery-load-snapshot"
+description = "Denies the recovery_load_snapshot command without any pre-configured scope."
+commands.deny = ["recovery_load_snapshot"]

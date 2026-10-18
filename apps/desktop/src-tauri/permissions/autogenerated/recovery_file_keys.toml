@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recovery-file-keys"
+description = "Enables the recovery_file_keys command without any pre-configured scope."
+commands.allow = ["recovery_file_keys"]
+
+[[permission]]
+identifier = "deny-recovery-file-keys"
+description = "Denies the recovery_file_keys command without any pre-configured scope."
+commands.deny = ["recovery_file_keys"]

@@ -103,6 +103,40 @@ pub fn is_likely_pdf(path: &Path) -> bool {
         .is_none_or(|name| is_likely_pdf_name(&name.to_string_lossy()))
 }
 
+/// Marks the id of a document the Chrome extension sent (see `incoming`). The
+/// native messaging host starts Folio with it, and a running Folio receives
+/// it through the single-instance plugin.
+pub const INCOMING_ARG: &str = "--incoming";
+
+/// What a command line asks Folio to open.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct LaunchArgs {
+    pub paths: Vec<PathBuf>,
+    /// Ids following [`INCOMING_ARG`], unvalidated.
+    pub incoming: Vec<String>,
+}
+
+/// Splits a command line (without the program name) into files to open and
+/// transfers to offer.
+pub fn parse_launch_args(args: impl IntoIterator<Item = OsString>, cwd: &Path) -> LaunchArgs {
+    let mut incoming = Vec::new();
+    let mut rest = Vec::new();
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == INCOMING_ARG {
+            if let Some(id) = args.next() {
+                incoming.push(id.to_string_lossy().into_owned());
+            }
+        } else {
+            rest.push(arg);
+        }
+    }
+    LaunchArgs {
+        paths: paths_from_args(rest, cwd),
+        incoming,
+    }
+}
+
 /// Picks file arguments out of a command line (file associations on Windows
 /// and Linux pass the document path as an argument).
 pub fn paths_from_args(args: impl IntoIterator<Item = OsString>, cwd: &Path) -> Vec<PathBuf> {
@@ -123,6 +157,18 @@ pub fn paths_from_args(args: impl IntoIterator<Item = OsString>, cwd: &Path) -> 
 #[derive(Debug)]
 struct Grant {
     path: PathBuf,
+    /// Whether Save may write to the file. Documents received from the
+    /// Chrome extension live in Folio's spool folder and are saved elsewhere.
+    writable: bool,
+    /// A folder Folio owns that is deleted once the grant is released.
+    cleanup: Option<PathBuf>,
+}
+
+/// What a token gives access to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantInfo {
+    pub path: PathBuf,
+    pub writable: bool,
 }
 
 #[derive(Debug, Default)]
@@ -148,13 +194,45 @@ impl FileGrants {
             .or_else(|| canonical.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled.pdf".to_owned());
-        let token = uuid::Uuid::new_v4().simple().to_string();
-        self.lock().insert(token.clone(), Grant { path: canonical });
-        Ok(GrantedFile {
-            token,
+        Ok(self.insert(
+            Grant {
+                path: canonical,
+                writable: true,
+                cleanup: None,
+            },
             name,
-            size: metadata.len(),
-        })
+            metadata.len(),
+        ))
+    }
+
+    /// Grants read access to a file in one of Folio's own folders under a
+    /// display name, deleting `cleanup` when the grant is released. Such
+    /// files cannot be written back to.
+    pub fn grant_spooled(
+        &self,
+        path: &Path,
+        name: &str,
+        cleanup: &Path,
+    ) -> Result<GrantedFile, FileError> {
+        let metadata = std::fs::metadata(path).map_err(|_| FileError::NotFound)?;
+        if !metadata.is_file() {
+            return Err(FileError::NotFound);
+        }
+        Ok(self.insert(
+            Grant {
+                path: path.to_path_buf(),
+                writable: false,
+                cleanup: Some(cleanup.to_path_buf()),
+            },
+            name.to_owned(),
+            metadata.len(),
+        ))
+    }
+
+    fn insert(&self, grant: Grant, name: String, size: u64) -> GrantedFile {
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        self.lock().insert(token.clone(), grant);
+        GrantedFile { token, name, size }
     }
 
     /// Grants a batch of user-chosen paths. Everything that cannot be granted
@@ -185,14 +263,28 @@ impl FileGrants {
     }
 
     pub fn path(&self, token: &str) -> Result<PathBuf, FileError> {
+        self.lookup(token).map(|grant| grant.path)
+    }
+
+    pub fn lookup(&self, token: &str) -> Result<GrantInfo, FileError> {
         self.lock()
             .get(token)
-            .map(|grant| grant.path.clone())
+            .map(|grant| GrantInfo {
+                path: grant.path.clone(),
+                writable: grant.writable,
+            })
             .ok_or(FileError::UnknownToken)
     }
 
+    /// Forgets a token. Spooled files are deleted with their folder.
     pub fn release(&self, token: &str) -> bool {
-        self.lock().remove(token).is_some()
+        let Some(grant) = self.lock().remove(token) else {
+            return false;
+        };
+        if let Some(folder) = grant.cleanup {
+            let _ = std::fs::remove_dir_all(folder);
+        }
+        true
     }
 
     pub fn len(&self) -> usize {
@@ -212,16 +304,29 @@ impl FileGrants {
     }
 }
 
-/// Reads a granted file, enforcing the size limit on the current file size.
+/// Reads a granted file, enforcing the size limit on what is actually read
+/// (the file may grow after its size was checked).
 pub fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, FileError> {
-    let metadata = std::fs::metadata(path).map_err(|_| FileError::NotFound)?;
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => FileError::NotFound,
+        _ => FileError::Unreadable,
+    })?;
+    let metadata = file.metadata().map_err(|_| FileError::Unreadable)?;
     if !metadata.is_file() {
         return Err(FileError::NotFound);
     }
     if metadata.len() > limit {
         return Err(FileError::TooLarge);
     }
-    std::fs::read(path).map_err(|_| FileError::Unreadable)
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| FileError::Unreadable)?;
+    if bytes.len() as u64 > limit {
+        return Err(FileError::TooLarge);
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug, Default)]
@@ -414,6 +519,57 @@ mod tests {
             read_limited(&path, MAX_FILE_BYTES),
             Err(FileError::NotFound)
         );
+    }
+
+    #[test]
+    fn spooled_grants_are_read_only_and_cleaned_up_on_release() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        fs::create_dir(&spool).unwrap();
+        let path = temp_pdf(&spool, "document.pdf");
+        let grants = FileGrants::default();
+        let granted = grants
+            .grant_spooled(&path, "Quarterly report.pdf", &spool)
+            .unwrap();
+        assert_eq!(granted.name, "Quarterly report.pdf");
+        assert_eq!(granted.size, PDF.len() as u64);
+        let info = grants.lookup(&granted.token).unwrap();
+        assert!(!info.writable);
+        assert_eq!(read_limited(&info.path, MAX_FILE_BYTES).unwrap(), PDF);
+        assert!(grants.release(&granted.token));
+        assert!(!spool.exists());
+        assert_eq!(
+            grants.grant_spooled(&path, "a.pdf", &spool),
+            Err(FileError::NotFound)
+        );
+    }
+
+    #[test]
+    fn user_chosen_files_are_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let grants = FileGrants::default();
+        let path = temp_pdf(dir.path(), "a.pdf");
+        let granted = grants.grant(&path).unwrap();
+        let info = grants.lookup(&granted.token).unwrap();
+        assert!(info.writable);
+        assert_eq!(info.path, fs::canonicalize(&path).unwrap());
+        assert!(grants.release(&granted.token));
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn separates_incoming_transfers_from_file_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        temp_pdf(dir.path(), "a.pdf");
+        let id = "0b3f2c1e-8c55-4a43-9c3c-6f0d2f8e9a10";
+        // A file named like the id must not be opened by accident.
+        temp_pdf(dir.path(), id);
+        let args = ["a.pdf", INCOMING_ARG, id, "--other"].map(OsString::from);
+        let launch = parse_launch_args(args, dir.path());
+        assert_eq!(launch.paths, vec![dir.path().join("a.pdf")]);
+        assert_eq!(launch.incoming, vec![id.to_owned()]);
+        let dangling = parse_launch_args([OsString::from(INCOMING_ARG)], dir.path());
+        assert_eq!(dangling, LaunchArgs::default());
     }
 
     #[test]

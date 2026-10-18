@@ -59,8 +59,21 @@ const EDITING_VERIFIED =
   'Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back.';
 
 const SHORTCUTS =
-  'Open, Save as, Save a copy, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous';
+  'Open, Save, Save as, Save a copy, Print, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, single keys for the drawing tools';
 const NO_THEME_SHORTCUT = 'Switching the theme has no shortcut.';
+
+const SAVE_NOTE =
+  'Writes changes back to the file you opened or last saved as, through a temporary file and an atomic replace. If another program changed the file, Folio asks before overwriting it; files that cannot be written fall back to Save As.';
+const PRINT_NOTE =
+  'All, current or chosen pages, with or without comments, through the system print dialog. Folio draws the pages at print resolution first.';
+const RECOVERY_NOTE =
+  'Unsaved changes are kept in Folio’s data folder two seconds after each change and offered when Folio starts after a crash. Saving, closing or discarding deletes them.';
+const NATIVE_MESSAGING_NOTE =
+  'Receives documents from the Chrome extension after File › Connect to Chrome… and asks before opening each one; declined documents are deleted.';
+const CLIPBOARD_NOTE =
+  'Selected page text, document property values, and comments (copy, cut, paste, also between documents); images on the clipboard paste as added images.';
+const RECENT_NOTE =
+  'Start screen list and File › Open Recent; only names reach the UI, and files that moved are reported.';
 
 export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   // Opening documents
@@ -111,7 +124,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
       ),
       windows: unverified(
         'windows',
-        'Opens a PDF passed on launch. Opening another file while Folio runs starts a second window until single-instance support lands.',
+        'Opens a PDF passed on launch; opening another file while Folio runs sends it to the running window.',
       ),
       chrome: none('Extensions cannot register as the operating system’s PDF handler.'),
     },
@@ -395,14 +408,17 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   {
     id: 'save',
     area: 'Saving and export',
-    feature: 'Save and Save As',
+    feature: 'Save (write changes back to the opened file)',
     plannedPhase: 4,
     targets: {
-      macos: none(),
-      windows: none(),
-      chrome: none('Will download a copy; extensions cannot write back to the original file.'),
+      macos: unverified('macos', SAVE_NOTE),
+      windows: unverified('windows', SAVE_NOTE),
+      chrome: none(
+        'Extensions cannot write back to the original file; Download PDF saves a copy instead.',
+      ),
     },
-    verification: '—',
+    verification:
+      'Rust unit tests for atomic replacement, changed-on-disk detection, read-only files and permissions; tauri-driver e2e on Linux saves through the real binary and refuses a file changed behind its back. Shared Save logic: unit and e2e tests with the web adapter.',
     runtimeFeature: 'saveInPlace',
   },
   {
@@ -484,8 +500,8 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Print',
     plannedPhase: 4,
     targets: {
-      macos: none(),
-      windows: none(),
+      macos: unverified('macos', PRINT_NOTE),
+      windows: unverified('windows', PRINT_NOTE),
       chrome: full(
         'All, current or chosen pages, with or without comments, through Chrome’s print dialog. Folio draws the pages at print resolution on this device first.',
       ),
@@ -559,11 +575,11 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: {
       macos: unverified(
         'macos',
-        'Folio (app), File, Edit, View and Window menus, with Save a Copy, Find and the zoom, rotation and Go to Page commands.',
+        'Folio (app), File (with Open Recent, Save, Save As, Print), Edit, View, Pages and Window menus with the editing, zoom, rotation and page commands.',
       ),
       windows: unverified(
         'windows',
-        'File, Edit, View and Help menus in the window menu bar, with the same commands.',
+        'File, Edit, View, Pages and Help menus in the window menu bar, with the same commands.',
       ),
       chrome: none('Not applicable.'),
     },
@@ -603,11 +619,12 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Clipboard',
     plannedPhase: 4,
     targets: {
-      macos: unverified('macos', 'Document property values and selected page text.'),
-      windows: unverified('windows', 'Document property values and selected page text.'),
-      chrome: full('Document property values and selected page text.'),
+      macos: unverified('macos', CLIPBOARD_NOTE),
+      windows: unverified('windows', CLIPBOARD_NOTE),
+      chrome: full(CLIPBOARD_NOTE),
     },
-    verification: 'E2E (Chromium) reads the clipboard after copying.',
+    verification:
+      'E2E (Chromium) reads the clipboard after copying and pastes comments and images. The desktop webviews (WebKit on macOS, WebView2 on Windows) have not run these tests.',
     runtimeFeature: 'clipboardWrite',
   },
   {
@@ -616,15 +633,48 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Autosave and crash recovery',
     plannedPhase: 4,
     targets: {
-      macos: none('The validated recovery snapshot format exists in the shared core.'),
-      windows: none('The validated recovery snapshot format exists in the shared core.'),
+      macos: unverified('macos', RECOVERY_NOTE),
+      windows: unverified('windows', RECOVERY_NOTE),
       chrome: full(
         'Unsaved changes are kept in the extension’s storage on this device two seconds after each change and offered when the editor opens again. Saving, closing or discarding deletes them; documents open in another editor tab are not offered.',
       ),
     },
     verification:
-      'Unit tests restore documents with their history, passwords asked again and damaged records refused; e2e (Chromium) restores after closing the tab and checks that saved work leaves nothing behind.',
+      'Unit tests restore documents with their history, passwords asked again and damaged records refused; e2e (Chromium) restores after closing the tab and checks that saved work leaves nothing behind. Desktop store: Rust unit tests and tauri-driver e2e on Linux.',
     runtimeFeature: 'crashRecovery',
+  },
+  {
+    id: 'recent-files',
+    area: 'App and platform',
+    feature: 'Recent files',
+    plannedPhase: 4,
+    targets: {
+      macos: unverified('macos', RECENT_NOTE),
+      windows: unverified('windows', RECENT_NOTE),
+      chrome: none('Not applicable: browsers do not let extensions reopen local files later.'),
+    },
+    verification:
+      'Rust unit tests for the list (order, limit, removal, damaged lists, no paths); DOM tests for the start screen list with a fake list.',
+    runtimeFeature: 'recentFiles',
+  },
+  {
+    id: 'single-instance',
+    area: 'App and platform',
+    feature: 'One running app, remembered window size and position',
+    plannedPhase: 4,
+    targets: {
+      macos: unverified(
+        'macos',
+        'Finder sends files to the running app; the window’s size and position are restored.',
+      ),
+      windows: unverified(
+        'windows',
+        'Opening a PDF while Folio runs hands it to the running window; the window’s size and position are restored.',
+      ),
+      chrome: none('Not applicable.'),
+    },
+    verification:
+      'tauri-driver e2e on Linux starts a second copy with a file and checks that the first window opens it.',
   },
   {
     id: 'auto-update',
@@ -658,10 +708,8 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Send documents between the extension and the desktop app',
     plannedPhase: 5,
     targets: {
-      macos: none('The desktop side (native messaging host and approval prompt) is being merged.'),
-      windows: none(
-        'The desktop side (native messaging host and approval prompt) is being merged.',
-      ),
+      macos: unverified('macos', NATIVE_MESSAGING_NOTE),
+      windows: unverified('windows', NATIVE_MESSAGING_NOTE),
       chrome: full(
         'Open in Folio for desktop, from the editor (with your changes) or the side panel. Chrome asks for the permission the first time; the desktop app asks before it opens anything. When the app is missing or not connected, Folio explains how to set it up.',
       ),

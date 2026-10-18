@@ -35,7 +35,7 @@ a note below the table.
 - **Open PDFs by drag and drop (Windows):** Dropped files are granted by the native layer. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Open PDFs by drag and drop (Chrome):** Drop onto the editor page or the side panel.
 - **Open from Finder / File Explorer (file association) (macOS):** Handles Finder “Open With” events once the app bundle is installed; Folio is registered as an alternate PDF handler. Implemented and built in CI, but not yet verified on a real Mac.
-- **Open from Finder / File Explorer (file association) (Windows):** Opens a PDF passed on launch. Opening another file while Folio runs starts a second window until single-instance support lands. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Open from Finder / File Explorer (file association) (Windows):** Opens a PDF passed on launch; opening another file while Folio runs sends it to the running window. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Open from Finder / File Explorer (file association) (Chrome):** Extensions cannot register as the operating system’s PDF handler.
 - **Open password-protected PDFs (macOS):** Standard security handler: AES-256 and legacy 128-bit RC4, both tested. The password is only kept in memory.
 - **Open password-protected PDFs (Windows):** Standard security handler: AES-256 and legacy 128-bit RC4, both tested. The password is only kept in memory.
@@ -125,15 +125,17 @@ a note below the table.
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Save and Save As | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported † | 4 | — |
+| Save (write changes back to the opened file) | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for atomic replacement, changed-on-disk detection, read-only files and permissions; tauri-driver e2e on Linux saves through the real binary and refuses a file changed behind its back. Shared Save logic: unit and e2e tests with the web adapter. |
 | Save changes as a new PDF (Save as) | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Export tests re-open every result with PDF.js and check it with qpdf; e2e (Chromium) reads downloaded files back with pdf-lib. The native save dialog cannot be automated. |
 | Save a copy of the original PDF | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Extension and desktop UI: e2e compares the SHA-256 of the saved file with the original. Desktop: Rust unit tests for validation, file names and atomic writes; tauri-driver checks that non-PDF data is refused. The native dialog cannot be automated. |
 | Export pages as images | ⛔ Not supported † | ⛔ Not supported † | ✅ Full † | 6 | E2E (Chromium) reads the downloaded ZIP and images back; the ZIP writer is unit-tested against Python’s zipfile. |
 | Extract text | ⛔ Not supported † | ⛔ Not supported † | ✅ Full † | 6 | Unit tests on the text fixture; e2e (Chromium) copies and downloads it. |
-| Print | ⛔ Not supported | ⛔ Not supported | ✅ Full † | 4 | E2E (Chromium) prints through the print layout to a PDF and counts its pages; unit tests for page ranges and print resolution. |
+| Print | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | E2E (Chromium) prints through the print layout to a PDF and counts its pages; unit tests for page ranges and print resolution. |
 | Save the current webpage as PDF | ⛔ Not supported † | ⛔ Not supported † | 🟡 Limited † | — | E2E (Chromium) checks that the popup asks Chrome to print the tab (activeTab stubbed); the print dialog cannot be automated. |
 
-- **Save and Save As (Chrome):** Will download a copy; extensions cannot write back to the original file.
+- **Save (write changes back to the opened file) (macOS):** Writes changes back to the file you opened or last saved as, through a temporary file and an atomic replace. If another program changed the file, Folio asks before overwriting it; files that cannot be written fall back to Save As. Implemented and built in CI, but not yet verified on a real Mac.
+- **Save (write changes back to the opened file) (Windows):** Writes changes back to the file you opened or last saved as, through a temporary file and an atomic replace. If another program changed the file, Folio asks before overwriting it; files that cannot be written fall back to Save As. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Save (write changes back to the opened file) (Chrome):** Extensions cannot write back to the original file; Download PDF saves a copy instead.
 - **Save changes as a new PDF (Save as) (macOS):** Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages. Implemented and built in CI, but not yet verified on a real Mac.
 - **Save changes as a new PDF (Save as) (Windows):** Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Save changes as a new PDF (Save as) (Chrome):** Downloads the edited document; comments can be kept editable or flattened into the pages.
@@ -146,6 +148,8 @@ a note below the table.
 - **Extract text (macOS):** Planned for the editor (Phase 6); page text can be selected and copied today.
 - **Extract text (Windows):** Planned for the editor (Phase 6); page text can be selected and copied today.
 - **Extract text (Chrome):** Side panel: text of chosen pages, line by line, to copy or download as .txt. Scanned pages need OCR, which Folio does not have yet.
+- **Print (macOS):** All, current or chosen pages, with or without comments, through the system print dialog. Folio draws the pages at print resolution first. Implemented and built in CI, but not yet verified on a real Mac.
+- **Print (Windows):** All, current or chosen pages, with or without comments, through the system print dialog. Folio draws the pages at print resolution first. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Print (Chrome):** All, current or chosen pages, with or without comments, through Chrome’s print dialog. Folio draws the pages at print resolution on this device first.
 - **Save the current webpage as PDF (macOS):** Not applicable.
 - **Save the current webpage as PDF (Windows):** Not applicable.
@@ -172,32 +176,40 @@ a note below the table.
 | Native menus | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for command forwarding on Linux, macOS and Windows CI runners. No test builds or uses the menus. |
 | Keyboard shortcuts | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | Key matching: unit tests. Browser key set: extension e2e. Desktop key set: desktop UI e2e in Chromium. Menu accelerators: Rust unit tests only. |
 | Light, dark and system themes | ✅ Full | ✅ Full | ✅ Full | — | E2E (including axe checks in both themes). |
-| Clipboard | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | E2E (Chromium) reads the clipboard after copying. |
-| Autosave and crash recovery | ⛔ Not supported † | ⛔ Not supported † | ✅ Full † | 4 | Unit tests restore documents with their history, passwords asked again and damaged records refused; e2e (Chromium) restores after closing the tab and checks that saved work leaves nothing behind. |
+| Clipboard | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | E2E (Chromium) reads the clipboard after copying and pastes comments and images. The desktop webviews (WebKit on macOS, WebView2 on Windows) have not run these tests. |
+| Autosave and crash recovery | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Unit tests restore documents with their history, passwords asked again and damaged records refused; e2e (Chromium) restores after closing the tab and checks that saved work leaves nothing behind. Desktop store: Rust unit tests and tauri-driver e2e on Linux. |
+| Recent files | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for the list (order, limit, removal, damaged lists, no paths); DOM tests for the start screen list with a fake list. |
+| One running app, remembered window size and position | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | tauri-driver e2e on Linux starts a second copy with a file and checks that the first window opens it. |
 | Automatic updates | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 7 | — |
 | Installers | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | CI release builds on macOS and Windows runners (see README). |
-| Send documents between the extension and the desktop app | ⛔ Not supported † | ⛔ Not supported † | ✅ Full † | 5 | Unit tests of the protocol against a scripted host; e2e (Chromium, Linux) sends documents from the side panel and the editor to the real desktop host binary, with the permission granted at install in a test copy of the extension (Chrome’s prompt cannot be automated). |
+| Send documents between the extension and the desktop app | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 5 | Unit tests of the protocol against a scripted host; e2e (Chromium, Linux) sends documents from the side panel and the editor to the real desktop host binary, with the permission granted at install in a test copy of the extension (Chrome’s prompt cannot be automated). |
 
-- **Native menus (macOS):** Folio (app), File, Edit, View and Window menus, with Save a Copy, Find and the zoom, rotation and Go to Page commands. Implemented and built in CI, but not yet verified on a real Mac.
-- **Native menus (Windows):** File, Edit, View and Help menus in the window menu bar, with the same commands. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Native menus (macOS):** Folio (app), File (with Open Recent, Save, Save As, Print), Edit, View, Pages and Window menus with the editing, zoom, rotation and page commands. Implemented and built in CI, but not yet verified on a real Mac.
+- **Native menus (Windows):** File, Edit, View, Pages and Help menus in the window menu bar, with the same commands. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Native menus (Chrome):** Not applicable.
-- **Keyboard shortcuts (macOS):** Open, Save as, Save a copy, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, rotate (⌘R/⌘L) and Close Window. Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Mac.
-- **Keyboard shortcuts (Windows):** Open, Save as, Save a copy, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, rotate (Ctrl+R/Ctrl+L). Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Windows PC.
-- **Keyboard shortcuts (Chrome):** Open, Save as, Save a copy, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab; rotation has no shortcut because Chrome keeps Ctrl+R and Ctrl+L. Switching the theme has no shortcut.
-- **Clipboard (macOS):** Document property values and selected page text. Implemented and built in CI, but not yet verified on a real Mac.
-- **Clipboard (Windows):** Document property values and selected page text. Implemented and built in CI, but not yet verified on a real Windows PC.
-- **Clipboard (Chrome):** Document property values and selected page text.
-- **Autosave and crash recovery (macOS):** The validated recovery snapshot format exists in the shared core.
-- **Autosave and crash recovery (Windows):** The validated recovery snapshot format exists in the shared core.
+- **Keyboard shortcuts (macOS):** Open, Save, Save as, Save a copy, Print, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, single keys for the drawing tools, rotate (⌘R/⌘L) and Close Window. Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Mac.
+- **Keyboard shortcuts (Windows):** Open, Save, Save as, Save a copy, Print, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, single keys for the drawing tools, rotate (Ctrl+R/Ctrl+L). Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Keyboard shortcuts (Chrome):** Open, Save, Save as, Save a copy, Print, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, single keys for the drawing tools. Closing and switching documents use Alt keys because Chrome reserves Ctrl/⌘+W and Ctrl+Tab; rotation has no shortcut because Chrome keeps Ctrl+R and Ctrl+L. Switching the theme has no shortcut.
+- **Clipboard (macOS):** Selected page text, document property values, and comments (copy, cut, paste, also between documents); images on the clipboard paste as added images. Implemented and built in CI, but not yet verified on a real Mac.
+- **Clipboard (Windows):** Selected page text, document property values, and comments (copy, cut, paste, also between documents); images on the clipboard paste as added images. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Clipboard (Chrome):** Selected page text, document property values, and comments (copy, cut, paste, also between documents); images on the clipboard paste as added images.
+- **Autosave and crash recovery (macOS):** Unsaved changes are kept in Folio’s data folder two seconds after each change and offered when Folio starts after a crash. Saving, closing or discarding deletes them. Implemented and built in CI, but not yet verified on a real Mac.
+- **Autosave and crash recovery (Windows):** Unsaved changes are kept in Folio’s data folder two seconds after each change and offered when Folio starts after a crash. Saving, closing or discarding deletes them. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Autosave and crash recovery (Chrome):** Unsaved changes are kept in the extension’s storage on this device two seconds after each change and offered when the editor opens again. Saving, closing or discarding deletes them; documents open in another editor tab are not offered.
+- **Recent files (macOS):** Start screen list and File › Open Recent; only names reach the UI, and files that moved are reported. Implemented and built in CI, but not yet verified on a real Mac.
+- **Recent files (Windows):** Start screen list and File › Open Recent; only names reach the UI, and files that moved are reported. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Recent files (Chrome):** Not applicable: browsers do not let extensions reopen local files later.
+- **One running app, remembered window size and position (macOS):** Finder sends files to the running app; the window’s size and position are restored. Implemented and built in CI, but not yet verified on a real Mac.
+- **One running app, remembered window size and position (Windows):** Opening a PDF while Folio runs hands it to the running window; the window’s size and position are restored. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **One running app, remembered window size and position (Chrome):** Not applicable.
 - **Automatic updates (macOS):** Requires an updater signing key and a release feed.
 - **Automatic updates (Windows):** Requires an updater signing key and a release feed.
 - **Automatic updates (Chrome):** Will be handled by the Chrome Web Store once published.
 - **Installers (macOS):** Unsigned .app/.dmg; Developer ID signing and notarization need Apple credentials.
 - **Installers (Windows):** Unsigned NSIS .exe and .msi; Authenticode signing needs a certificate.
 - **Installers (Chrome):** Unpacked build and a Web Store zip; not yet published.
-- **Send documents between the extension and the desktop app (macOS):** The desktop side (native messaging host and approval prompt) is being merged.
-- **Send documents between the extension and the desktop app (Windows):** The desktop side (native messaging host and approval prompt) is being merged.
+- **Send documents between the extension and the desktop app (macOS):** Receives documents from the Chrome extension after File › Connect to Chrome… and asks before opening each one; declined documents are deleted. Implemented and built in CI, but not yet verified on a real Mac.
+- **Send documents between the extension and the desktop app (Windows):** Receives documents from the Chrome extension after File › Connect to Chrome… and asks before opening each one; declined documents are deleted. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Send documents between the extension and the desktop app (Chrome):** Open in Folio for desktop, from the editor (with your changes) or the side panel. Chrome asks for the permission the first time; the desktop app asks before it opens anything. When the app is missing or not connected, Folio explains how to set it up.
 
 ## Chrome extension
