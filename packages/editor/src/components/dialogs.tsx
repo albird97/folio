@@ -446,7 +446,8 @@ function TransferDialog({ request }: { request: TransferRequest }) {
     setBusy(true);
     try {
       const files = await adapter.answerTransfer(request.id, accept);
-      if (accept && files.length > 0) await workspace.getState().openFiles(files);
+      // Opening shows in its own tab (with any error there), so the prompt can go.
+      if (accept && files.length > 0) void workspace.getState().openFiles(files);
     } catch {
       workspace.getState().showNotice('The document from Chrome could not be opened.');
     } finally {
