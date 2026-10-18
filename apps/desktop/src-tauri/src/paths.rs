@@ -1,7 +1,7 @@
 //! Where Folio keeps its own data (crash recovery, recent files, documents
 //! received from the Chrome extension). The app and the native messaging
 //! host, which runs without Tauri, must agree on it, so it is derived from
-//! the bundle identifier exactly like Tauri's `app_data_dir`.
+//! the bundle identifier exactly like Tauri's `app_local_data_dir`.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -12,11 +12,13 @@ pub const IDENTIFIER: &str = "io.github.albird97.folio";
 /// Replaces the data directory, for tests. Only absolute paths are used.
 pub const DATA_DIR_ENV: &str = "FOLIO_DATA_DIR";
 
-/// `<data dir>/io.github.albird97.folio`: `~/Library/Application Support` on
-/// macOS, `%APPDATA%` on Windows and `$XDG_DATA_HOME` (`~/.local/share`) on
-/// Linux, unless [`DATA_DIR_ENV`] names another folder.
+/// `<local data dir>/io.github.albird97.folio`: `~/Library/Application
+/// Support` on macOS, `%LOCALAPPDATA%` on Windows (recovery data and
+/// documents from Chrome must not roam with the profile) and
+/// `$XDG_DATA_HOME` (`~/.local/share`) on Linux, unless [`DATA_DIR_ENV`]
+/// names another folder.
 pub fn app_data_dir() -> Option<PathBuf> {
-    resolve_data_dir(std::env::var_os(DATA_DIR_ENV), dirs::data_dir())
+    resolve_data_dir(std::env::var_os(DATA_DIR_ENV), dirs::data_local_dir())
 }
 
 fn resolve_data_dir(overridden: Option<OsString>, system: Option<PathBuf>) -> Option<PathBuf> {
@@ -42,6 +44,76 @@ pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
         builder.mode(0o700);
     }
     builder.create(dir)
+}
+
+/// Creates Folio's data folder if needed and, on Unix, makes sure only the
+/// user can enter it, also when it already existed with looser permissions.
+pub fn prepare_data_dir(dir: &Path) -> std::io::Result<()> {
+    create_private_dir(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Space available to the user on the volume holding `path`, if the system
+/// says.
+#[cfg(unix)]
+pub fn available_space(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
+    // SAFETY: `path` is NUL-terminated and `stats` is valid for writes.
+    if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: statvfs succeeded, so it filled in `stats`.
+    let stats = unsafe { stats.assume_init() };
+    #[allow(clippy::useless_conversion)] // The field types differ between systems.
+    let available = u64::from(stats.f_bavail).saturating_mul(u64::from(stats.f_frsize));
+    Some(available)
+}
+
+/// Space available to the user on the volume holding `path`, if the system
+/// says.
+#[cfg(windows)]
+pub fn available_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut available = 0u64;
+    // SAFETY: `wide` is NUL-terminated; the other outputs are optional.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
+}
+
+/// The program to register with Chrome and to start: the AppImage when Folio
+/// runs from one (its own executable lives in a temporary mount), otherwise
+/// the executable itself.
+pub fn executable() -> std::io::Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    if let Some(appimage) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
+        if appimage.is_absolute() && appimage.is_file() {
+            return Ok(appimage);
+        }
+    }
+    std::env::current_exe()
+}
+
+/// macOS runs apps opened from their download location from a randomized,
+/// read-only copy ("App Translocation") that disappears later, so nothing
+/// may point to it.
+pub fn is_translocated(executable: &Path) -> bool {
+    executable.to_string_lossy().contains("/AppTranslocation/")
 }
 
 /// Writes one of Folio's own data files through a temporary file in the same
@@ -168,5 +240,36 @@ mod tests {
             let mode = std::fs::metadata(folder).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o700);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tightens_an_existing_data_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        std::fs::create_dir(&data).unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o755)).unwrap();
+        prepare_data_dir(&data).unwrap();
+        let mode = std::fs::metadata(&data).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn reports_free_space() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(available_space(dir.path()).is_some_and(|free| free > 0));
+        assert_eq!(available_space(&dir.path().join("missing")), None);
+    }
+
+    #[test]
+    fn recognizes_translocated_apps() {
+        assert!(is_translocated(Path::new(
+            "/private/var/folders/x/AppTranslocation/1234/d/Folio.app/Contents/MacOS/folio-desktop"
+        )));
+        assert!(!is_translocated(Path::new(
+            "/Applications/Folio.app/Contents/MacOS/folio-desktop"
+        )));
+        assert!(executable().unwrap().is_absolute());
     }
 }

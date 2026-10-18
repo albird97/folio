@@ -2,10 +2,13 @@
 //! (`io.github.albird97.folio`). It is the desktop binary itself: Chrome
 //! starts it with the caller's origin (`chrome-extension://<id>/`) as the
 //! first argument, and `main` then runs [`run_stdio`] instead of the app.
+//! The host only answers the official Folio extension and the extensions
+//! the user allowed in Folio (see `native_messaging`); anyone else gets
+//! `origin-not-allowed` and the host exits.
 //!
-//! Messages are UTF-8 JSON preceded by their length as a 32-bit integer in
-//! native byte order (little-endian on every platform Folio supports), in
-//! both directions. Only these messages are understood:
+//! Messages are UTF-8 JSON objects preceded by their length as a 32-bit
+//! integer in native byte order (little-endian on every platform Folio
+//! supports), in both directions. Only these messages are understood:
 //!
 //! ```text
 //! → { type: "hello" }                          ← { type: "hello", protocol: 1, version }
@@ -16,23 +19,26 @@
 //! ```
 //!
 //! A transfer is spooled into `incoming/<transfer>/` (see [`crate::incoming`])
-//! and verified (size, SHA-256, PDF header) before the app is started with
-//! `--incoming <transfer>` to ask the user whether to open it. Anything that
-//! goes wrong deletes what was received so far.
+//! and verified (size, SHA-256, PDF header) before the app is asked to offer
+//! it to the user. Anything that goes wrong deletes what was received so far.
 
 use crate::incoming::{self, IncomingMeta};
-use crate::{paths, save};
+use crate::{native_messaging, paths, save};
 use base64::Engine as _;
+use serde::de::IgnoredAny;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub const PROTOCOL: u32 = 1;
-/// Longest message accepted from Chrome.
-pub const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+/// Longest message accepted from Chrome: a chunk (8 MiB of data, base64
+/// encoded) and its envelope.
+pub const MAX_MESSAGE_BYTES: usize = 12 * 1024 * 1024;
 /// Chrome refuses messages from a host of 1 MiB or more.
 pub const MAX_REPLY_BYTES: usize = 1024 * 1024;
 pub const MAX_TRANSFER_BYTES: u64 = 512 * 1024 * 1024;
@@ -43,12 +49,32 @@ pub const NO_LAUNCH_ENV: &str = "FOLIO_NATIVE_HOST_NO_LAUNCH";
 const ORIGIN_PREFIX: &str = "chrome-extension://";
 /// PDF readers accept the header anywhere in the first 1024 bytes.
 const HEADER_WINDOW: usize = 1024;
+/// Free space left on the disk besides an incoming document.
+const DISK_RESERVE: u64 = 64 * 1024 * 1024;
+
+// A full chunk message must fit in a frame.
+const _: () = assert!(MAX_CHUNK_BYTES.div_ceil(3) * 4 + 64 * 1024 <= MAX_MESSAGE_BYTES);
 
 /// Whether the process was started by Chrome as a native messaging host.
 pub fn is_host_invocation(first_arg: Option<&OsStr>) -> bool {
     first_arg
         .and_then(OsStr::to_str)
         .is_some_and(|arg| arg.starts_with(ORIGIN_PREFIX))
+}
+
+/// Whether `origin` is exactly `chrome-extension://<id>/` for an extension
+/// Folio answers: the official one or one the user allowed (from Folio's own
+/// record in `data_dir`).
+pub fn origin_allowed(origin: Option<&OsStr>, data_dir: Option<&Path>) -> bool {
+    let Some(id) = origin
+        .and_then(OsStr::to_str)
+        .and_then(native_messaging::extension_id_from_origin)
+    else {
+        return false;
+    };
+    native_messaging::allowed_extension_ids(data_dir)
+        .iter()
+        .any(|allowed| allowed == id)
 }
 
 #[derive(Debug)]
@@ -105,6 +131,10 @@ const fn host_error(code: &'static str, message: &'static str) -> HostError {
     HostError { code, message }
 }
 
+const ORIGIN_NOT_ALLOWED: HostError = host_error(
+    "origin-not-allowed",
+    "This extension may not send documents to Folio.",
+);
 const INVALID_MESSAGE: HostError = host_error("invalid-message", "The message was not understood.");
 const UNKNOWN_TYPE: HostError =
     host_error("unknown-type", "This kind of message is not supported.");
@@ -118,6 +148,14 @@ const CHUNK_TOO_LARGE: HostError =
 const INVALID_SHA256: HostError = host_error(
     "invalid-sha256",
     "The document's checksum is not a SHA-256 digest.",
+);
+const BUSY: HostError = host_error(
+    "busy",
+    "Documents sent earlier are still waiting in Folio. Open or decline them there first.",
+);
+const DISK_FULL: HostError = host_error(
+    "busy",
+    "There is not enough free disk space to receive this document.",
 );
 const UNKNOWN_TRANSFER: HostError =
     host_error("unknown-transfer", "There is no such transfer in progress.");
@@ -146,32 +184,50 @@ const STORAGE_FAILED: HostError =
     host_error("storage-failed", "Folio could not store the document.");
 const LAUNCH_FAILED: HostError = host_error("launch-failed", "The Folio app could not be started.");
 const MESSAGE_TOO_LARGE: HostError =
-    host_error("message-too-large", "The message is larger than 64 MB.");
+    host_error("message-too-large", "The message is larger than 12 MB.");
 
+/// An error reply. The transfer is only echoed when it is a valid id, so a
+/// long bogus value cannot push the reply over Chrome's limit.
 fn error_reply(error: &HostError, transfer: Option<&str>) -> Value {
     let mut reply = json!({ "type": "error", "code": error.code, "message": error.message });
-    if let Some(transfer) = transfer {
+    if let Some(transfer) = transfer.filter(|transfer| incoming::is_valid_id(transfer)) {
         reply["transfer"] = json!(transfer);
     }
     reply
 }
 
+/// The type of a message. Everything else in it is skipped, not buffered.
 #[derive(Deserialize)]
+struct Envelope<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Cow<'a, str>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Begin {
+    #[serde(rename = "type")]
+    _kind: IgnoredAny,
     name: String,
     size: u64,
     sha256: String,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Chunk {
+    #[serde(rename = "type")]
+    _kind: IgnoredAny,
     transfer: String,
     index: u64,
     data: String,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct End {
+    #[serde(rename = "type")]
+    _kind: IgnoredAny,
     transfer: String,
 }
 
@@ -190,13 +246,14 @@ struct Transfer {
     head: Vec<u8>,
 }
 
-/// Starts the app to ask the user about a transfer.
-pub type Launch = Box<dyn FnMut(&str) -> io::Result<()>>;
+/// Asks the app to offer a transfer: `(transfer folder, transfer id)`.
+pub type Launch = Box<dyn FnMut(&Path, &str) -> io::Result<()>>;
 
 pub struct Host {
     /// `<app data>/incoming`, if there is a data directory.
     incoming: Option<PathBuf>,
     launch: Option<Launch>,
+    free_space: fn(&Path) -> Option<u64>,
     active: Option<Transfer>,
 }
 
@@ -206,42 +263,38 @@ impl Host {
         Host {
             incoming,
             launch,
+            free_space: paths::available_space,
             active: None,
         }
     }
 
     /// Answers one message.
     pub fn handle(&mut self, message: &[u8]) -> Value {
-        // Objects only (serde would also read a struct from an array).
-        let Ok(Value::Object(fields)) = serde_json::from_slice::<Value>(message) else {
+        // Objects only: serde would also read a struct from an array.
+        if message.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
+            return error_reply(&INVALID_MESSAGE, None);
+        }
+        let Ok(envelope) = serde_json::from_slice::<Envelope>(message) else {
             return error_reply(&INVALID_MESSAGE, None);
         };
-        let Some(kind) = fields
-            .get("type")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-        else {
-            return error_reply(&INVALID_MESSAGE, None);
-        };
-        let message = Value::Object(fields);
-        match kind.as_str() {
+        match envelope.kind.as_ref() {
             "hello" => json!({
                 "type": "hello",
                 "protocol": PROTOCOL,
                 "version": env!("CARGO_PKG_VERSION"),
             }),
-            "begin" => match serde_json::from_value::<Begin>(message) {
+            "begin" => match serde_json::from_slice::<Begin>(message) {
                 Ok(begin) => self.begin(begin),
                 Err(_) => {
                     self.abort();
                     error_reply(&INVALID_MESSAGE, None)
                 }
             },
-            "chunk" => match serde_json::from_value::<Chunk>(message) {
+            "chunk" => match serde_json::from_slice::<Chunk>(message) {
                 Ok(chunk) => self.chunk(chunk),
                 Err(_) => self.fail(&INVALID_MESSAGE),
             },
-            "end" => match serde_json::from_value::<End>(message) {
+            "end" => match serde_json::from_slice::<End>(message) {
                 Ok(end) => self.end(end),
                 Err(_) => self.fail(&INVALID_MESSAGE),
             },
@@ -277,9 +330,24 @@ impl Host {
         if !save::is_sha256_hex(&begin.sha256) {
             return error_reply(&INVALID_SHA256, None);
         }
-        let Some(base) = &self.incoming else {
+        let Some(base) = self.incoming.clone() else {
             return error_reply(&UNAVAILABLE, None);
         };
+        // The spool stays small: a few documents waiting for an answer.
+        let usage = incoming::usage(&base);
+        if usage.count >= incoming::MAX_PENDING
+            || usage.bytes.saturating_add(begin.size) > incoming::MAX_PENDING_BYTES
+        {
+            return error_reply(&BUSY, None);
+        }
+        if paths::create_private_dir(&base).is_err() {
+            return error_reply(&STORAGE_FAILED, None);
+        }
+        if (self.free_space)(&base)
+            .is_some_and(|free| free < begin.size.saturating_add(DISK_RESERVE))
+        {
+            return error_reply(&DISK_FULL, None);
+        }
         let id = incoming::new_id();
         let dir = base.join(&id);
         let file = paths::create_private_dir(&dir).and_then(|()| {
@@ -372,8 +440,9 @@ impl Host {
             return self.fail(&STORAGE_FAILED);
         }
         let id = transfer.id.clone();
+        let dir = transfer.dir.clone();
         if let Some(launch) = &mut self.launch {
-            if launch(&id).is_err() {
+            if launch(&dir, &id).is_err() {
                 return self.fail(&LAUNCH_FAILED);
             }
         }
@@ -434,15 +503,78 @@ fn finish(transfer: &mut Transfer) -> io::Result<()> {
     paths::write_atomically(&transfer.dir.join(incoming::META_FILE), &meta)
 }
 
-/// Starts the app with `--incoming <id>`, detached from the host (which
-/// Chrome stops when the extension disconnects). A running app receives the
-/// arguments through the single-instance plugin and the new process exits.
-pub fn launch_app(id: &str) -> io::Result<()> {
+/// The `.app` bundle an executable belongs to
+/// (`…/Folio.app/Contents/MacOS/folio-desktop`).
+#[cfg(target_os = "macos")]
+fn app_bundle(exe: &Path) -> Option<PathBuf> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    let is_bundle = macos.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && bundle.extension()? == "app";
+    is_bundle.then(|| bundle.to_path_buf())
+}
+
+/// Chrome's pipes to the host are inheritable; a process started with
+/// inheritance would keep them open after the host is gone.
+#[cfg(windows)]
+fn keep_std_handles_private() {
+    use windows_sys::Win32::Foundation::{
+        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: GetStdHandle has no preconditions, and SetHandleInformation
+        // only clears a flag on a handle this process owns.
+        unsafe {
+            let handle = GetStdHandle(which);
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
+}
+
+/// Asks the app to offer a transfer, starting it if needed, detached from
+/// the host (which Chrome stops when the extension disconnects).
+///
+/// - macOS: LaunchServices (`/usr/bin/open -a <bundle> <document>`) brings
+///   Folio to the front and hands it the spooled document, which the app
+///   recognizes as a transfer.
+/// - Windows and Linux: the app is started with `--incoming <id>`; a
+///   running app receives it through the single-instance plugin and the new
+///   process exits. From an AppImage, the AppImage is started.
+pub fn launch_app(dir: &Path, id: &str) -> io::Result<()> {
     use std::process::{Command, Stdio};
-    let mut command = Command::new(std::env::current_exe()?);
+    let exe = paths::executable()?;
+    #[cfg(target_os = "macos")]
+    let mut command = match app_bundle(&exe) {
+        Some(bundle) => {
+            let mut command = Command::new("/usr/bin/open");
+            command
+                .arg("-a")
+                .arg(bundle)
+                .arg(dir.join(incoming::DOCUMENT_FILE));
+            command
+        }
+        // Not inside an app bundle (development builds).
+        None => {
+            let mut command = Command::new(&exe);
+            command.arg(crate::files::INCOMING_ARG).arg(id);
+            command
+        }
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut command = {
+        let _ = dir;
+        let mut command = Command::new(&exe);
+        command.arg(crate::files::INCOMING_ARG).arg(id);
+        command
+    };
     command
-        .arg(crate::files::INCOMING_ARG)
-        .arg(id)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -457,6 +589,7 @@ pub fn launch_app(id: &str) -> io::Result<()> {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        keep_std_handles_private();
         // Leaving Chrome's job object keeps the app alive when the host
         // ends; not every job allows it.
         command.creation_flags(
@@ -480,15 +613,30 @@ pub fn launch_app(id: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Host mode: serves Chrome on stdin/stdout. Returns the exit code.
-pub fn run_stdio() -> i32 {
-    let incoming = paths::app_data_dir().map(|dir| dir.join(incoming::INCOMING_DIR));
+/// Host mode: serves Chrome on stdin/stdout. `origin` is the first argument
+/// Chrome passed. Returns the exit code.
+pub fn run_stdio(origin: Option<&OsStr>) -> i32 {
+    let data_dir = paths::app_data_dir();
+    let mut stdout = io::stdout().lock();
+    if !origin_allowed(origin, data_dir.as_deref()) {
+        let _ = write_message(&mut stdout, &error_reply(&ORIGIN_NOT_ALLOWED, None));
+        return 1;
+    }
+    let incoming = data_dir.as_deref().map(|dir| {
+        let _ = paths::prepare_data_dir(dir);
+        dir.join(incoming::INCOMING_DIR)
+    });
+    // Leftovers of hosts that ended mid-transfer, and transfers nobody
+    // answered for a day. Accepted ones are the app's to delete.
+    if let Some(base) = &incoming {
+        incoming::purge(base, SystemTime::now(), false);
+    }
     let launch = match std::env::var(NO_LAUNCH_ENV) {
         Ok(value) if value == "1" => None,
         _ => Some(Box::new(launch_app) as Launch),
     };
     let mut host = Host::new(incoming, launch);
-    let served = host.serve(&mut io::stdin().lock(), &mut io::stdout().lock());
+    let served = host.serve(&mut io::stdin().lock(), &mut stdout);
     drop(host);
     i32::from(served.is_err())
 }
@@ -500,6 +648,7 @@ mod tests {
     use std::rc::Rc;
 
     const PDF: &[u8] = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n";
+    const OFFICIAL: &str = "ghfckfnleaidabfhaplbnfknipajedan";
 
     fn base64(bytes: &[u8]) -> String {
         base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -515,7 +664,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let launched = Rc::new(RefCell::new(Vec::new()));
         let record = launched.clone();
-        let launch: Launch = Box::new(move |id: &str| {
+        let launch: Launch = Box::new(move |folder: &Path, id: &str| {
+            assert!(folder.join(incoming::DOCUMENT_FILE).is_file());
             record.borrow_mut().push(id.to_owned());
             Ok(())
         });
@@ -552,6 +702,14 @@ mod tests {
             }))
         }
 
+        fn complete(&mut self, bytes: &[u8]) -> String {
+            let transfer = self.begin(bytes);
+            assert_eq!(self.chunk(&transfer, 0, bytes)["type"], "ack");
+            let done = self.send(json!({ "type": "end", "transfer": transfer }));
+            assert_eq!(done["type"], "done", "{done}");
+            transfer
+        }
+
         fn incoming(&self) -> PathBuf {
             self.dir.path().join("incoming")
         }
@@ -579,9 +737,43 @@ mod tests {
         assert!(is_host_invocation(Some(OsStr::new(
             "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
         ))));
+        // Malformed origins still start the host, which then refuses them.
+        assert!(is_host_invocation(Some(OsStr::new("chrome-extension://x"))));
         assert!(!is_host_invocation(Some(OsStr::new("Report.pdf"))));
         assert!(!is_host_invocation(Some(OsStr::new("--incoming"))));
         assert!(!is_host_invocation(None));
+    }
+
+    #[test]
+    fn answers_the_official_extension_and_those_the_user_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let official = format!("chrome-extension://{OFFICIAL}/");
+        assert!(origin_allowed(Some(OsStr::new(&official)), None));
+        assert!(origin_allowed(
+            Some(OsStr::new(&official)),
+            Some(dir.path())
+        ));
+        let other = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
+        assert!(!origin_allowed(Some(OsStr::new(other)), Some(dir.path())));
+        // Folio's own record of the extensions the user allowed.
+        std::fs::write(
+            dir.path().join("native-messaging.json"),
+            r#"{"extensionIds":["abcdefghijklmnopabcdefghijklmnop"]}"#,
+        )
+        .unwrap();
+        assert!(origin_allowed(Some(OsStr::new(other)), Some(dir.path())));
+        for origin in [
+            format!("chrome-extension://{OFFICIAL}"),
+            format!("chrome-extension://{OFFICIAL}/extra"),
+            format!("chrome-extension://{}/", OFFICIAL.to_uppercase()),
+            "chrome-extension://".to_owned(),
+        ] {
+            assert!(
+                !origin_allowed(Some(OsStr::new(&origin)), Some(dir.path())),
+                "{origin}"
+            );
+        }
+        assert!(!origin_allowed(None, Some(dir.path())));
     }
 
     #[test]
@@ -615,8 +807,20 @@ mod tests {
             read_message(&mut io::Cursor::new(too_long)),
             Err(FrameError::TooLarge(_))
         ));
+        assert_eq!(MAX_MESSAGE_BYTES, 12 * 1024 * 1024);
         let huge = serde_json::json!({ "type": "error", "message": "x".repeat(MAX_REPLY_BYTES) });
         assert!(write_message(&mut Vec::new(), &huge).is_err());
+    }
+
+    #[test]
+    fn a_message_with_the_largest_chunk_fits_in_a_frame() {
+        let message = json!({
+            "type": "chunk",
+            "transfer": incoming::new_id(),
+            "index": u64::MAX,
+            "data": base64(&vec![0xff; MAX_CHUNK_BYTES]),
+        });
+        assert!(serde_json::to_vec(&message).unwrap().len() <= MAX_MESSAGE_BYTES);
     }
 
     #[test]
@@ -627,6 +831,9 @@ mod tests {
             reply,
             json!({ "type": "hello", "protocol": 1, "version": env!("CARGO_PKG_VERSION") })
         );
+        // Hello tolerates additions from newer extensions.
+        let reply = fixture.send(json!({ "type": "hello", "client": "folio-extension" }));
+        assert_eq!(reply["type"], "hello");
     }
 
     #[test]
@@ -728,7 +935,24 @@ mod tests {
         );
         assert_error(&fixture.send(json!({ "kind": "hello" })), "invalid-message");
         assert_error(&fixture.send(json!(["hello"])), "invalid-message");
+        assert_error(
+            &fixture.send(json!(["begin", "a.pdf", 8, "x"])),
+            "invalid-message",
+        );
         assert_error(&fixture.host.handle(b"not json"), "invalid-message");
+        assert_error(&fixture.host.handle(b""), "invalid-message");
+        assert_error(
+            &fixture.host.handle(br#"{"type":"hello","type":"begin"}"#),
+            "invalid-message",
+        );
+        // Fields the protocol does not have are refused.
+        let sha = save::sha256_hex(PDF);
+        assert_error(
+            &fixture.send(json!({
+                "type": "begin", "name": "a.pdf", "size": 8, "sha256": sha, "path": "/etc"
+            })),
+            "invalid-message",
+        );
         assert_error(
             &fixture.chunk("0b3f2c1e-8c55-4a43-9c3c-6f0d2f8e9a10", 0, PDF),
             "unknown-transfer",
@@ -737,6 +961,33 @@ mod tests {
             &fixture.send(json!({ "type": "end", "transfer": "nope" })),
             "unknown-transfer",
         );
+    }
+
+    #[test]
+    fn only_echoes_transfer_ids_that_are_valid() {
+        let mut fixture = fixture();
+        let bogus = "x".repeat(MAX_REPLY_BYTES * 2);
+        let reply = fixture.send(json!({ "type": "end", "transfer": bogus }));
+        assert_error(&reply, "unknown-transfer");
+        assert!(reply.get("transfer").is_none());
+        let mut out = Vec::new();
+        write_message(&mut out, &reply).unwrap();
+        let valid = "0b3f2c1e-8c55-4a43-9c3c-6f0d2f8e9a10";
+        let reply = fixture.send(json!({ "type": "end", "transfer": valid }));
+        assert_eq!(reply["transfer"], valid);
+    }
+
+    #[test]
+    fn a_huge_array_is_skipped_without_building_it() {
+        let mut fixture = fixture();
+        // About 12 MB of tiny numbers: parsed into a JSON value, this would
+        // take hundreds of megabytes.
+        let mut message = br#"{"type":"nonsense","x":["#.to_vec();
+        while message.len() < MAX_MESSAGE_BYTES - 16 {
+            message.extend_from_slice(b"0,");
+        }
+        message.extend_from_slice(b"0]}");
+        assert_error(&fixture.host.handle(&message), "unknown-type");
     }
 
     #[test]
@@ -854,6 +1105,56 @@ mod tests {
         assert_eq!(reply["type"], "done", "{reply}");
     }
 
+    fn announce(size: u64) -> Value {
+        json!({ "type": "begin", "name": "a.pdf", "size": size, "sha256": save::sha256_hex(PDF) })
+    }
+
+    #[test]
+    fn keeps_at_most_three_documents_waiting() {
+        let mut fixture = fixture();
+        for _ in 0..incoming::MAX_PENDING {
+            fixture.complete(PDF);
+        }
+        assert_error(&fixture.send(announce(PDF.len() as u64)), "busy");
+        assert_eq!(fixture.spooled().len(), incoming::MAX_PENDING);
+    }
+
+    #[test]
+    fn keeps_what_waits_below_a_gigabyte() {
+        let mut fixture = fixture();
+        fixture.host.free_space = |_| None;
+        // A document of 600 MiB waits for an answer.
+        let waiting = fixture.incoming().join(incoming::new_id());
+        std::fs::create_dir_all(&waiting).unwrap();
+        let meta = IncomingMeta {
+            name: "big.pdf".into(),
+            size: 600 * 1024 * 1024,
+            created_at: crate::time::now(),
+        };
+        std::fs::write(
+            waiting.join(incoming::META_FILE),
+            serde_json::to_vec(&meta).unwrap(),
+        )
+        .unwrap();
+        assert_error(&fixture.send(announce(500 * 1024 * 1024)), "busy");
+        assert_eq!(fixture.send(announce(400 * 1024 * 1024))["type"], "ready");
+    }
+
+    #[test]
+    fn refuses_documents_the_disk_has_no_room_for() {
+        let mut fixture = fixture();
+        fixture.host.free_space = |_| Some(10 * 1024 * 1024);
+        let reply = fixture.send(json!({
+            "type": "begin", "name": "a.pdf", "size": 1024, "sha256": save::sha256_hex(PDF)
+        }));
+        assert_error(&reply, "busy");
+        assert!(reply["message"].as_str().unwrap().contains("disk space"));
+        assert!(fixture.spooled().is_empty());
+        // When the system does not say, the host tries.
+        fixture.host.free_space = |_| None;
+        fixture.complete(PDF);
+    }
+
     #[test]
     fn a_new_transfer_replaces_an_abandoned_one() {
         let mut fixture = fixture();
@@ -877,7 +1178,7 @@ mod tests {
     #[test]
     fn deletes_the_document_when_the_app_cannot_be_started() {
         let dir = tempfile::tempdir().unwrap();
-        let launch: Launch = Box::new(|_| Err(io::Error::other("no app")));
+        let launch: Launch = Box::new(|_, _| Err(io::Error::other("no app")));
         let mut host = Host::new(Some(dir.path().join("incoming")), Some(launch));
         let send =
             |host: &mut Host, message: Value| host.handle(&serde_json::to_vec(&message).unwrap());
@@ -948,14 +1249,29 @@ mod tests {
     #[test]
     fn replies_stay_far_below_chromes_limit() {
         for error in [
+            ORIGIN_NOT_ALLOWED,
             INVALID_MESSAGE,
             UNKNOWN_TYPE,
             TOO_LARGE,
+            BUSY,
+            DISK_FULL,
             SHA256_MISMATCH,
             MESSAGE_TOO_LARGE,
         ] {
             let reply = error_reply(&error, Some(&incoming::new_id()));
             assert!(serde_json::to_vec(&reply).unwrap().len() < 1024);
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finds_the_app_bundle() {
+        assert_eq!(
+            app_bundle(Path::new(
+                "/Applications/Folio.app/Contents/MacOS/folio-desktop"
+            )),
+            Some(PathBuf::from("/Applications/Folio.app"))
+        );
+        assert_eq!(app_bundle(Path::new("/usr/local/bin/folio-desktop")), None);
     }
 }

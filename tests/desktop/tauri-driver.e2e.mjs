@@ -20,8 +20,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -33,7 +33,10 @@ const exe = process.platform === 'win32' ? 'folio-desktop.exe' : 'folio-desktop'
 const application = process.env.FOLIO_APP ?? join(root, 'target', 'release', exe);
 const fixtures = join(root, 'tests', 'fixtures');
 const DRIVER = 'http://127.0.0.1:4444';
-const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
+/** The official Folio extension (its development key gives it this id). */
+const OFFICIAL_EXTENSION_ID = 'ghfckfnleaidabfhaplbnfknipajedan';
+/** An extension Folio does not know. */
+const OTHER_EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
 
 if (!existsSync(application)) {
   console.error(`Desktop binary not found at ${application}. Build it first.`);
@@ -201,12 +204,15 @@ function exitOf(child, timeout = 20000) {
 }
 
 /** Talks to the binary in native messaging host mode, like Chrome. */
-function startHost() {
-  const host = spawn(application, [`chrome-extension://${EXTENSION_ID}/`], {
+function startHost(extensionId = OFFICIAL_EXTENSION_ID) {
+  const host = spawn(application, [`chrome-extension://${extensionId}/`], {
     env,
     stdio: ['pipe', 'pipe', 'inherit'],
   });
+  // A host that exits early must not take the test down with EPIPE.
+  host.stdin.on('error', () => undefined);
   let buffer = Buffer.alloc(0);
+  const received = [];
   const waiting = [];
   host.stdout.on('data', (chunk) => {
     buffer = Buffer.concat([buffer, chunk]);
@@ -215,17 +221,24 @@ function startHost() {
       if (buffer.length < 4 + length) break;
       const message = JSON.parse(buffer.subarray(4, 4 + length).toString('utf8'));
       buffer = buffer.subarray(4 + length);
-      waiting.shift()?.(message);
+      const waiter = waiting.shift();
+      if (waiter) waiter(message);
+      else received.push(message);
     }
   });
+  const next = () =>
+    received.length > 0
+      ? Promise.resolve(received.shift())
+      : new Promise((resolve) => waiting.push(resolve));
   return {
     host,
+    next,
     ask(message) {
       const json = Buffer.from(JSON.stringify(message), 'utf8');
       const length = Buffer.alloc(4);
       length.writeUInt32LE(json.length);
       host.stdin.write(Buffer.concat([length, json]));
-      return new Promise((resolve) => waiting.push(resolve));
+      return next();
     },
   };
 }
@@ -566,38 +579,20 @@ try {
     assert.ok(!existsSync(join(dataDir, 'incoming', declined)), 'declined documents are deleted');
   });
 
-  await test('registers the native messaging host for Chrome', async () => {
-    const manifest = join(
-      configDir,
-      'google-chrome',
-      'NativeMessagingHosts',
-      'io.github.albird97.folio.json',
-    );
-    assert.deepEqual(await invoke('native_messaging_status'), {
-      registered: false,
-      extensionIds: [],
-    });
-    const invalid = await invoke('register_native_messaging', { extensionIds: ['../evil'] });
-    assert.equal(invalid.rejected?.code, 'invalid-extension-id');
-    assert.ok(!existsSync(manifest));
-
-    const status = await invoke('register_native_messaging', { extensionIds: [EXTENSION_ID] });
-    assert.deepEqual(status, { registered: true, extensionIds: [EXTENSION_ID] });
-    const written = JSON.parse(readFileSync(manifest, 'utf8'));
-    assert.equal(written.name, 'io.github.albird97.folio');
-    assert.equal(written.type, 'stdio');
-    assert.equal(written.path, realpathSync(application));
-    assert.deepEqual(written.allowed_origins, [`chrome-extension://${EXTENSION_ID}/`]);
-
-    assert.deepEqual(await invoke('unregister_native_messaging'), {
-      registered: false,
-      extensionIds: [],
-    });
-    assert.ok(!existsSync(manifest));
+  await test('the host refuses extensions Folio does not know', async () => {
+    const before = readdirSync(join(dataDir, 'incoming')).length;
+    const { host, next } = startHost(OTHER_EXTENSION_ID);
+    const reply = await next();
+    assert.equal(reply.type, 'error');
+    assert.equal(reply.code, 'origin-not-allowed');
+    host.stdin.end();
+    assert.notEqual(await exitOf(host), 0);
+    assert.equal(readdirSync(join(dataDir, 'incoming')).length, before);
   });
 
-  await test('confirming a close does nothing unless a close was requested', async () => {
+  await test('confirming or cancelling a close does nothing unless one was requested', async () => {
     assert.equal(await invoke('confirm_close'), false);
+    assert.equal(await invoke('cancel_close'), false);
     assert.equal(await invoke('set_close_guard', { enabled: false }), null);
   });
 
@@ -611,6 +606,40 @@ try {
     await waitFor(
       `return document.querySelector('main')?.textContent?.includes('Open a PDF to get started')`,
     );
+  });
+
+  // Last: it leaves Folio's native confirmation dialog open, which WebDriver
+  // cannot answer.
+  await test('registering with Chrome waits for the native confirmation', async () => {
+    const chrome = join(configDir, 'google-chrome');
+    const manifest = join(chrome, 'NativeMessagingHosts', 'io.github.albird97.folio.json');
+    const record = join(dataDir, 'native-messaging.json');
+    assert.deepEqual(await invoke('native_messaging_status'), {
+      registered: false,
+      extensionIds: [],
+    });
+    // Refused before anyone is asked.
+    const invalid = await invoke('register_native_messaging', { extensionIds: ['../evil'] });
+    assert.equal(invalid.rejected?.code, 'invalid-extension-id');
+    const noBrowser = await invoke('register_native_messaging', { extensionIds: [] });
+    assert.equal(noBrowser.rejected?.code, 'browser-not-found');
+    assert.ok(!existsSync(chrome) && !existsSync(join(configDir, 'chromium')));
+
+    // With Chrome installed, Folio asks first and writes nothing meanwhile.
+    mkdirSync(chrome, { recursive: true });
+    await run(`
+      window.__folioRegistration = 'pending';
+      window.__TAURI_INTERNALS__
+        .invoke('register_native_messaging', { extensionIds: [${JSON.stringify(OTHER_EXTENSION_ID)}] })
+        .then(
+          () => { window.__folioRegistration = 'registered'; },
+          (error) => { window.__folioRegistration = error?.code ?? 'failed'; },
+        );
+    `);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.equal(await run('return window.__folioRegistration'), 'pending');
+    assert.ok(!existsSync(manifest), 'no manifest before the user agrees');
+    assert.ok(!existsSync(record), 'no extension allowed before the user agrees');
   });
 } catch (error) {
   failed = true;

@@ -16,6 +16,7 @@ use files::{FileError, FileGrants, LaunchArgs, LaunchQueue, OpenedFiles};
 use incoming::TransferQueue;
 use recent::RecentFiles;
 use recovery::RecoveryStore;
+#[cfg(not(target_os = "macos"))]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -122,9 +123,25 @@ fn deliver(app: &AppHandle, opened: OpenedFiles) {
     focus_main_window(app);
 }
 
-/// Grants user-provided paths and delivers them to the UI.
+/// Grants user-provided paths and delivers them to the UI. Documents in the
+/// Chrome spool (macOS hands them over through LaunchServices) are offered
+/// as transfers instead, so the user is asked first.
 fn open_paths(app: &AppHandle, paths: &[PathBuf]) {
-    let opened = grant_paths(app, paths);
+    let base = app.state::<Storage>().incoming.clone();
+    let (transfers, files): (Vec<_>, Vec<_>) = paths.iter().partition(|path| {
+        base.as_deref()
+            .and_then(|base| incoming::transfer_for_document(base, path))
+            .is_some()
+    });
+    if let Some(base) = base.as_deref() {
+        let ids: Vec<String> = transfers
+            .iter()
+            .filter_map(|path| incoming::transfer_for_document(base, path))
+            .collect();
+        offer_transfers(app, &ids);
+    }
+    let files: Vec<PathBuf> = files.into_iter().cloned().collect();
+    let opened = grant_paths(app, &files);
     deliver(app, opened);
 }
 
@@ -149,18 +166,11 @@ pub(crate) fn open_recent(app: &AppHandle, id: &str) -> OpenedFiles {
     opened
 }
 
-/// Asks the user about documents the Chrome extension sent (`--incoming`).
-fn offer_transfers(app: &AppHandle, ids: &[String]) {
-    let Some(base) = app.state::<Storage>().incoming.clone() else {
-        return;
-    };
+/// Asks the user about documents the Chrome extension sent.
+fn offer_requests(app: &AppHandle, requests: Vec<incoming::TransferRequest>) {
     let queue = app.state::<TransferQueue>();
-    let mut offered = false;
-    for id in ids {
-        let Some(request) = incoming::request_for(&base, id) else {
-            continue;
-        };
-        offered = true;
+    let offered = !requests.is_empty();
+    for request in requests {
         if let Some(request) = queue.offer(request) {
             let _ = app.emit(TRANSFER_REQUEST_EVENT, request);
         }
@@ -170,6 +180,18 @@ fn offer_transfers(app: &AppHandle, ids: &[String]) {
     }
 }
 
+/// Asks the user about the transfers with these ids (`--incoming`).
+fn offer_transfers(app: &AppHandle, ids: &[String]) {
+    let Some(base) = app.state::<Storage>().incoming.clone() else {
+        return;
+    };
+    let requests = ids
+        .iter()
+        .filter_map(|id| incoming::request_for(&base, id))
+        .collect();
+    offer_requests(app, requests);
+}
+
 fn handle_launch(app: &AppHandle, launch: LaunchArgs) {
     open_paths(app, &launch.paths);
     offer_transfers(app, &launch.incoming);
@@ -177,7 +199,8 @@ fn handle_launch(app: &AppHandle, launch: LaunchArgs) {
 
 /// Folio was started again (a file opened from Explorer or a file manager,
 /// a document from Chrome): the new process hands its arguments to this one
-/// and exits.
+/// and exits. macOS routes such requests to the running app itself.
+#[cfg(not(target_os = "macos"))]
 fn on_second_instance(app: &AppHandle, argv: Vec<String>, cwd: String) {
     let args = argv.into_iter().skip(1).map(OsString::from);
     handle_launch(app, files::parse_launch_args(args, Path::new(&cwd)));
@@ -255,10 +278,17 @@ fn window_state_plugin(data_dir: Option<&Path>) -> tauri::plugin::TauriPlugin<Wr
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let data_dir = paths::app_data_dir();
-    tauri::Builder::default()
-        // First: a second launch hands over its arguments and exits before
-        // anything else starts.
-        .plugin(tauri_plugin_single_instance::init(on_second_instance))
+    if let Some(dir) = &data_dir {
+        // Only the user may enter Folio's data folder, also an older one.
+        let _ = paths::prepare_data_dir(dir);
+    }
+    let builder = tauri::Builder::default();
+    // First: a second launch hands over its arguments and exits before
+    // anything else starts. macOS needs no plugin: LaunchServices routes
+    // files opened later to the running app (`RunEvent::Opened`).
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(on_second_instance));
+    builder
         .plugin(window_state_plugin(data_dir.as_deref()))
         .plugin(tauri_plugin_dialog::init())
         .manage(FileGrants::default())
@@ -278,10 +308,13 @@ pub fn run() {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(recent);
             app.on_menu_event(on_menu_event);
-            // Accepted documents from Chrome whose grants were never released
-            // (Folio quit) and ones nobody answered for a day.
-            if let Some(base) = &handle.state::<Storage>().incoming {
-                incoming::purge(base, SystemTime::now());
+            // Documents from Chrome: accepted ones whose grants were never
+            // released (Folio quit), ones nobody answered for a day and
+            // leftovers of interrupted transfers are deleted. The others
+            // still need the user's answer, so they are offered again.
+            if let Some(base) = handle.state::<Storage>().incoming.clone() {
+                incoming::purge(&base, SystemTime::now(), true);
+                offer_requests(handle, incoming::pending_requests(&base));
             }
             // Windows and Linux pass files opened from the file manager as
             // arguments; the native messaging host passes `--incoming <id>`.

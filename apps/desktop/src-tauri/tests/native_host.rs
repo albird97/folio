@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
+/// The official Folio extension.
+const ORIGIN: &str = "chrome-extension://ghfckfnleaidabfhaplbnfknipajedan/";
 
 struct Host {
     child: Child,
@@ -17,8 +18,12 @@ struct Host {
 
 impl Host {
     fn start(data_dir: &std::path::Path, extra_args: &[&str]) -> Host {
+        Host::start_as(ORIGIN, data_dir, extra_args)
+    }
+
+    fn start_as(origin: &str, data_dir: &std::path::Path, extra_args: &[&str]) -> Host {
         let mut child = Command::new(env!("CARGO_BIN_EXE_folio-desktop"))
-            .arg(ORIGIN)
+            .arg(origin)
             .args(extra_args)
             .env("FOLIO_DATA_DIR", data_dir)
             .env("FOLIO_NATIVE_HOST_NO_LAUNCH", "1")
@@ -150,4 +155,64 @@ fn deletes_an_unfinished_transfer_when_chrome_disconnects() {
     assert!(data.path().join("incoming").join(&transfer).exists());
     assert!(host.finish().success());
     assert!(!data.path().join("incoming").join(&transfer).exists());
+}
+
+#[test]
+fn refuses_extensions_folio_does_not_know() {
+    let data = tempfile::tempdir().unwrap();
+    for origin in [
+        "chrome-extension://abcdefghijklmnopabcdefghijklmnop/",
+        "chrome-extension://ghfckfnleaidabfhaplbnfknipajedan",
+        "chrome-extension://ghfckfnleaidabfhaplbnfknipajedan/../",
+        "chrome-extension://x/",
+    ] {
+        let mut host = Host::start_as(origin, data.path(), &[]);
+        // One answer, before anything is read, then the host exits.
+        let reply = host.receive();
+        assert_eq!(reply["type"], "error", "{origin}");
+        assert_eq!(reply["code"], "origin-not-allowed", "{origin}");
+        assert!(!host.finish().success(), "{origin}");
+    }
+    assert!(!data.path().join("incoming").exists());
+}
+
+#[test]
+fn answers_extensions_the_user_allowed_in_folio() {
+    let data = tempfile::tempdir().unwrap();
+    let origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
+    // Folio's own record of the extensions the user confirmed.
+    std::fs::write(
+        data.path().join("native-messaging.json"),
+        r#"{"extensionIds":["abcdefghijklmnopabcdefghijklmnop"]}"#,
+    )
+    .unwrap();
+    let mut host = Host::start_as(origin, data.path(), &[]);
+    assert_eq!(host.ask(json!({ "type": "hello" }))["type"], "hello");
+    assert!(host.finish().success());
+}
+
+#[cfg(unix)]
+#[test]
+fn clears_what_ended_hosts_left_behind() {
+    use std::time::{Duration, SystemTime};
+    let data = tempfile::tempdir().unwrap();
+    // A transfer whose host was killed an hour ago.
+    let dir = data
+        .path()
+        .join("incoming")
+        .join("0b3f2c1e-8c55-4a43-9c3c-6f0d2f8e9a10");
+    std::fs::create_dir_all(&dir).unwrap();
+    let part = dir.join("document.pdf.part");
+    std::fs::write(&part, b"%PDF-1.7 half").unwrap();
+    let long_ago = SystemTime::now() - Duration::from_secs(3600);
+    for path in [&part, &dir] {
+        std::fs::File::open(path)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+    }
+    let mut host = Host::start(data.path(), &[]);
+    assert_eq!(host.ask(json!({ "type": "hello" }))["type"], "hello");
+    assert!(!dir.exists());
+    assert!(host.finish().success());
 }
