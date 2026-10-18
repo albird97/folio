@@ -60,14 +60,15 @@ export function PagesPanel({ doc }: { doc: WorkspaceDocument }) {
                   current ? 'bg-accent-soft text-accent-soft-ink' : 'hover:bg-hover',
                 )}
               >
-                <span
-                  aria-hidden
-                  className={cn(
-                    'flex h-9 w-7 shrink-0 items-center justify-center rounded-xs bg-page text-2xs font-medium text-[oklch(0.4_0.01_230)] shadow-page tabular',
-                    rotation % 180 !== 0 && 'h-7 w-9',
-                  )}
-                >
-                  {index + 1}
+                <span aria-hidden className="flex w-9 shrink-0 justify-center">
+                  <span
+                    className={cn(
+                      'flex h-9 w-7 items-center justify-center rounded-xs bg-page text-2xs font-medium text-[oklch(0.4_0.01_230)] shadow-page tabular',
+                      rotation % 180 !== 0 && 'h-7 w-9',
+                    )}
+                  >
+                    {index + 1}
+                  </span>
                 </span>
                 <span className="min-w-0">
                   <span className="block text-xs font-medium">Page {index + 1}</span>
