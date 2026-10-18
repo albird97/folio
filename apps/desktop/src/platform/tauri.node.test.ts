@@ -6,6 +6,7 @@ import {
   createTauriPlatformAdapter,
   nativeMessagingStatus,
   registerNativeMessaging,
+  toWellFormed,
   unregisterNativeMessaging,
 } from './tauri';
 
@@ -189,6 +190,20 @@ describe('desktop platform adapter', () => {
       );
     });
 
+    it('encodes names with unpaired surrogates instead of failing', async () => {
+      const adapter = await createTauriPlatformAdapter();
+      tauri.responses.set('save_pdf_as', { name: 'a.pdf', token: null });
+      // A file name cut in the middle of an emoji.
+      await adapter.saveFileAs({ suggestedName: 'Plan \ud83d.pdf', bytes });
+      expect(lastCall('save_pdf_as').options?.headers).toEqual({
+        'x-folio-name': 'Plan%20%EF%BF%BD.pdf',
+      });
+      await adapter.recovery.saveSnapshot({ id: 'doc', title: '\udc00x' }, '{}');
+      expect(lastCall('recovery_save_snapshot').options?.headers).toMatchObject({
+        'x-folio-recovery-title': '%EF%BF%BDx',
+      });
+    });
+
     it('writes back through the grant only while the file is unchanged', async () => {
       const adapter = await createTauriPlatformAdapter();
       const expectedSha256 = 'ab'.repeat(32);
@@ -293,6 +308,11 @@ describe('desktop platform adapter', () => {
       );
       expect(await adapter.recovery.hasFile('..', 'key')).toBe(false);
       expect(await adapter.recovery.load('..')).toBeNull();
+      // Names Windows reserves for devices, like the native side.
+      await expect(adapter.recovery.saveSnapshot({ id: 'CON', title: 't' }, '{}')).rejects.toThrow(
+        /Invalid recovery id/,
+      );
+      expect(await adapter.recovery.hasFile('doc', 'lpt1')).toBe(false);
       expect(tauri.calls.filter((call) => call.command.startsWith('recovery_'))).toEqual([]);
     });
 
@@ -497,6 +517,14 @@ describe('desktop platform adapter', () => {
       tauri.responses.set('register_native_messaging', { registered: true, extensionIds: [id] });
       expect(await registerNativeMessaging([id])).toEqual({ registered: true, extensionIds: [id] });
       expect(lastCall('register_native_messaging').args).toEqual({ extensionIds: [id] });
+      // The official extension alone.
+      await registerNativeMessaging();
+      expect(lastCall('register_native_messaging').args).toEqual({ extensionIds: [] });
+      tauri.responses.set(
+        'register_native_messaging',
+        rejectWith('cancelled', 'Chrome integration was not changed.'),
+      );
+      await expect(registerNativeMessaging()).rejects.toMatchObject({ code: 'cancelled' });
 
       tauri.responses.set('unregister_native_messaging', { registered: false, extensionIds: [] });
       expect((await unregisterNativeMessaging()).registered).toBe(false);
@@ -514,5 +542,16 @@ describe('desktop platform adapter', () => {
         message: 'Enter the ID of the Folio extension.',
       });
     });
+  });
+});
+
+describe('toWellFormed', () => {
+  it('replaces unpaired surrogates and keeps everything else', () => {
+    expect(toWellFormed('Report 📄 été.pdf')).toBe('Report 📄 été.pdf');
+    expect(toWellFormed('a\ud83db')).toBe('a�b');
+    expect(toWellFormed('a\udc00b')).toBe('a�b');
+    expect(toWellFormed('\ud83d')).toBe('�');
+    expect(toWellFormed('\udc00\ud83d')).toBe('��');
+    expect(() => encodeURIComponent(toWellFormed('x\ud800'))).not.toThrow();
   });
 });

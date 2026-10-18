@@ -101,10 +101,43 @@ const EVENTS = {
   transferRequest: 'folio://transfer-request',
 } as const;
 
-/** Recovery record ids and file keys, as `recovery.rs` validates them. */
-const SAFE_NAME = /^[A-Za-z0-9_-]{1,128}$/;
+/**
+ * Recovery record ids and file keys, as `recovery.rs` validates them:
+ * letters, digits, `_` and `-`, but no Windows device name such as `CON`.
+ */
+const SAFE_NAME = /^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[A-Za-z0-9_-]{1,128}$/i;
 
 const encoder = new TextEncoder();
+
+/**
+ * Replaces unpaired UTF-16 surrogates (which `encodeURIComponent` throws on)
+ * with U+FFFD. `String.prototype.toWellFormed` is missing in older webviews.
+ */
+export function toWellFormed(text: string): string {
+  let result = '';
+  for (let index = 0; index < text.length; index += 1) {
+    const unit = text.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        result += text[index]! + text[index + 1]!;
+        index += 1;
+        continue;
+      }
+      result += '�';
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      result += '�';
+    } else {
+      result += text[index]!;
+    }
+  }
+  return result;
+}
+
+/** A header value carrying arbitrary text (headers are ASCII). */
+function headerText(text: string): string {
+  return encodeURIComponent(toWellFormed(text));
+}
 
 const notFound = () =>
   new PdfError('unknown', 'The file could not be found. It may have been moved or deleted.');
@@ -219,7 +252,7 @@ function createTauriRecoveryStore(): RecoveryStore {
         {
           headers: {
             [HEADERS.recoveryId]: id,
-            [HEADERS.recoveryTitle]: encodeURIComponent(title),
+            [HEADERS.recoveryTitle]: headerText(title),
           },
         },
         failed,
@@ -263,10 +296,15 @@ export function nativeMessagingStatus(): Promise<NativeMessagingStatus> {
 }
 
 /**
- * Registers Folio as the native messaging host for the Folio extension
- * (ids are 32 letters from a to p) and returns the new status.
+ * Registers Folio as the native messaging host for the official Folio
+ * extension and, optionally, other extensions (ids are 32 letters from a to
+ * p), then returns the new status. Folio first shows a native confirmation
+ * dialog listing every extension; when the user declines, this rejects with
+ * a `NativeCommandError` whose code is `cancelled` and nothing changes.
  */
-export function registerNativeMessaging(extensionIds: string[]): Promise<NativeMessagingStatus> {
+export function registerNativeMessaging(
+  extensionIds: string[] = [],
+): Promise<NativeMessagingStatus> {
   return call<NativeMessagingStatus>('register_native_messaging', { extensionIds });
 }
 
@@ -287,6 +325,12 @@ export function isTauri(): boolean {
  * built-in `tauri://drag-*` events include the dragged paths and are not
  * listened to (`core:event:allow-listen` cannot be scoped by event name, so a
  * compromised page could still subscribe to them).
+ *
+ * One token is both the grant to read a file and its save handle (the
+ * `origin.handle` of an opened file, the `handle` Save As returns).
+ * Releasing it, through `IncomingFile.release` or `releaseHandle`, ends
+ * reading and writing alike (and deletes a document received from Chrome),
+ * so release a token only once its document is closed.
  */
 export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { info: AppInfo }> {
   const info = await invoke<AppInfo>('app_info');
@@ -386,7 +430,7 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
     async saveFileAs({ suggestedName, bytes, keepAccess }) {
       // The bytes travel as the raw request body; the name as a header.
       const headers: Record<string, string> = {
-        [HEADERS.name]: encodeURIComponent(suggestedName),
+        [HEADERS.name]: headerText(suggestedName),
       };
       if (keepAccess) headers[HEADERS.keepAccess] = '1';
       const saved = await call<SavedFile | null>(
@@ -418,6 +462,8 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
         throw toNativeError(error, 'The file could not be saved.');
       }
     },
+    // The handle is also the file's read grant: call only once the document
+    // is closed (see above).
     releaseHandle(handle) {
       void invoke('release_file', { token: handle }).catch(() => undefined);
     },
