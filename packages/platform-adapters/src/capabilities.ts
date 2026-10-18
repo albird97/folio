@@ -449,8 +449,15 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'Saving and export',
     feature: 'Print',
     plannedPhase: 4,
-    targets: all(none()),
-    verification: '—',
+    targets: {
+      macos: none(),
+      windows: none(),
+      chrome: full(
+        'All, current or chosen pages, with or without comments, through Chrome’s print dialog. Folio draws the pages at print resolution on this device first.',
+      ),
+    },
+    verification:
+      'E2E (Chromium) prints through the print layout to a PDF and counts its pages; unit tests for page ranges and print resolution.',
     runtimeFeature: 'printing',
   },
   {
@@ -567,8 +574,16 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     area: 'App and platform',
     feature: 'Autosave and crash recovery',
     plannedPhase: 4,
-    targets: all(none('The validated recovery snapshot format exists in the shared core.')),
-    verification: 'Serialization unit tests.',
+    targets: {
+      macos: none('The validated recovery snapshot format exists in the shared core.'),
+      windows: none('The validated recovery snapshot format exists in the shared core.'),
+      chrome: full(
+        'Unsaved changes are kept in the extension’s storage on this device two seconds after each change and offered when the editor opens again. Saving, closing or discarding deletes them; documents open in another editor tab are not offered.',
+      ),
+    },
+    verification:
+      'Unit tests restore documents with their history, passwords asked again and damaged records refused; e2e (Chromium) restores after closing the tab and checks that saved work leaves nothing behind.',
+    runtimeFeature: 'crashRecovery',
   },
   {
     id: 'auto-update',

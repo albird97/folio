@@ -92,6 +92,11 @@ export interface RenderOptions {
   maxCanvasPixels?: number;
   /** Set the canvas' CSS size to the page size (default). Off when a layout sizes it. */
   styleCanvas?: boolean;
+  /**
+   * 'print' draws what a PDF marks for printing: annotations without the
+   * print flag are left out. Default 'display'.
+   */
+  intent?: 'display' | 'print';
 }
 
 export interface RenderJob {
@@ -332,7 +337,7 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
         canvas.style.width = `${Math.floor(cssViewport.width)}px`;
         canvas.style.height = `${Math.floor(cssViewport.height)}px`;
       }
-      const task = page.render({ canvas, viewport });
+      const task = page.render({ canvas, viewport, intent: options.intent ?? 'display' });
       cancelTask = () => task.cancel();
       try {
         await task.promise;

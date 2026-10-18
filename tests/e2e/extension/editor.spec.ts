@@ -7,8 +7,17 @@ import {
   fixture,
   FIXTURE_PASSWORD,
   pageRendered,
+  recoveryRecords,
 } from '../helpers';
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+
+/** Runs `action` and returns the bytes of the file it downloads. */
+async function download(page: Page, action: () => Promise<unknown>) {
+  const pending = page.waitForEvent('download');
+  await action();
+  return readFileSync((await (await pending).path())!);
+}
 
 test.describe('extension editor', () => {
   test.beforeEach(async ({ page, extensionUrl }) => {
@@ -184,5 +193,70 @@ test.describe('extension editor', () => {
       'aria-current',
       'page',
     );
+  });
+
+  test('prints through Chrome’s print dialog with Ctrl+P', async ({ page }) => {
+    await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
+      'rotated-pages.pdf',
+    ]);
+    await pageRendered(page);
+    await page.evaluate(() => {
+      const record = window as unknown as { printCalls: number };
+      record.printCalls = 0;
+      window.print = () => {
+        record.printCalls += 1;
+      };
+    });
+    // Ctrl+P opens Folio's print options instead of printing the editor itself.
+    await page.getByRole('region', { name: 'Page view' }).focus();
+    await page.keyboard.press('ControlOrMeta+P');
+    const dialog = page.getByRole('dialog', { name: 'Print' });
+    await dialog.getByRole('radio', { name: /^Current page/ }).check();
+    await dialog.getByRole('button', { name: 'Print…' }).click();
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { printCalls: number }).printCalls))
+      .toBe(1);
+    await expect(page.locator('#folio-print img')).toHaveCount(1);
+    const paper = await PDFDocument.load(await page.pdf());
+    expect(paper.getPageCount()).toBe(1);
+  });
+
+  test('offers unsaved changes again after the editor tab closed', async ({
+    page,
+    context,
+    extensionUrl,
+  }) => {
+    await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
+      'basic-3-pages.pdf',
+    ]);
+    await pageRendered(page);
+    await page.getByRole('button', { name: 'Rotate page clockwise' }).click();
+    const tab = page.getByRole('button', { name: /^basic-3-pages\.pdf/ });
+    await expect(tab).toHaveAccessibleName(/unsaved/i);
+    // Autosave runs two seconds after the change; give it time to finish.
+    await page.waitForTimeout(3500);
+    await page.close();
+
+    const next = await context.newPage();
+    await next.goto(extensionUrl('editor.html'));
+    const dialog = next.getByRole('dialog', { name: 'Recover unsaved changes' });
+    await expect(dialog).toContainText('basic-3-pages.pdf');
+    await dialog.getByRole('button', { name: 'Restore' }).click();
+    await pageRendered(next);
+    const pdf = await download(next, () =>
+      next.getByRole('button', { name: 'Download PDF' }).click(),
+    );
+    const saved = await PDFDocument.load(pdf);
+    expect(saved.getPage(0).getRotation().angle).toBe(90);
+    // Saving deletes the recovery data at once (autosave itself waits two seconds).
+    await expect.poll(() => recoveryRecords(next), { timeout: 1000 }).toBe(0);
+    await next.close();
+
+    // Saved work is not offered again.
+    const last = await context.newPage();
+    await last.goto(extensionUrl('editor.html'));
+    await expect(last.getByRole('heading', { name: 'Open a PDF to get started' })).toBeVisible();
+    await last.waitForTimeout(1000);
+    await expect(last.getByRole('dialog')).toHaveCount(0);
   });
 });

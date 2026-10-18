@@ -361,10 +361,16 @@ export const AnnotationLayer = memo(function AnnotationLayer({
     const target = event.target instanceof Element ? event.target : null;
     const point = toPage(event);
     const client = { x: event.clientX, y: event.clientY };
+    // Keep keyboard focus in the page view so Delete, arrow keys and the
+    // clipboard apply to what is drawn or picked (pointer presses here do
+    // not move focus by themselves).
+    const focusPageView = () =>
+      layerRef.current?.closest<HTMLElement>('[role="region"]')?.focus({ preventScroll: true });
 
     if (drawing) {
       event.preventDefault();
       event.stopPropagation();
+      focusPageView();
       layerRef.current.setPointerCapture(event.pointerId);
       if (tool === 'note') {
         const position = {
@@ -406,10 +412,7 @@ export const AnnotationLayer = memo(function AnnotationLayer({
     const annotationId = target?.closest<SVGElement>('[data-annotation-id]')?.dataset
       .annotationId as AnnotationId | undefined;
     const state = workspace.getState();
-    if (handle || annotationId) {
-      // Keep keyboard focus in the page view so Delete and arrow keys apply.
-      layerRef.current.closest<HTMLElement>('[role="region"]')?.focus({ preventScroll: true });
-    }
+    if (handle || annotationId) focusPageView();
     if (handle && selected.length === 1) {
       const original = annotations.find((annotation) => annotation.id === selected[0]);
       if (!original) return;

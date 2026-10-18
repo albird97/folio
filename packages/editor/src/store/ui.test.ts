@@ -135,4 +135,26 @@ describe('ui store', () => {
     expect(store.getState()).toMatchObject({ leftPanelOpen: true, sidebarTab: 'results' });
     expect(storage.data.get(UI_STORAGE_KEY)).toMatchObject({ sidebarTab: 'results' });
   });
+
+  it('gives waiting questions the cautious answer when their dialog goes away', async () => {
+    const store = createUiStore(createMemoryStorage());
+    const conflict = new Promise((resolve) =>
+      store.getState().openDialog({ kind: 'save-conflict', docKey: 'a', resolve }),
+    );
+    // Another dialog takes its place: the save is cancelled, not left hanging.
+    const quit = new Promise((resolve) => store.getState().openDialog({ kind: 'quit', resolve }));
+    expect(await conflict).toBe('cancel');
+    store.getState().closeDialog();
+    expect(await quit).toBe(false);
+    expect(store.getState().dialog).toBeNull();
+
+    // An answer given before the dialog closes stands.
+    const answered = new Promise<boolean>((resolve) =>
+      store.getState().openDialog({ kind: 'quit', resolve }),
+    );
+    const dialog = store.getState().dialog;
+    if (dialog?.kind === 'quit') dialog.resolve(true);
+    store.getState().closeDialog();
+    expect(await answered).toBe(true);
+  });
 });

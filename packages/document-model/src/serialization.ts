@@ -256,6 +256,12 @@ function assertConsistent(value: RecoverySnapshot): void {
     if (key !== entry.id || !pageIds.has(entry.pageId)) {
       throw new SnapshotError('inconsistent', 'An annotation references an unknown page.');
     }
+    if ('assetId' in entry && !model.assets[entry.assetId]) {
+      throw new SnapshotError('inconsistent', 'An annotation references an unknown image.');
+    }
+  }
+  for (const [key, entry] of Object.entries(model.assets)) {
+    if (key !== entry.id) throw new SnapshotError('inconsistent', 'Asset keys do not match IDs.');
   }
   if (value.view.currentPageId !== null && !pageIds.has(value.view.currentPageId)) {
     throw new SnapshotError('inconsistent', 'The current page does not exist.');

@@ -1,7 +1,9 @@
 import { isDirty, type PageId } from '@folio/document-model';
+import type { TransferRequest } from '@folio/platform-adapters';
 import {
   Button,
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -11,9 +13,12 @@ import {
 } from '@folio/shared-ui';
 import { useId, useState, type FormEvent } from 'react';
 import { useUi, useWorkspaceContext } from '../context';
+import { formatBytes, formatDate } from '../format';
 import { insertFiles } from '../hooks/use-page-commands';
-import { useSaveAs } from '../hooks/use-save-as';
+import { usePrint } from '../hooks/use-print';
+import { useSave } from '../hooks/use-save';
 import type { DialogRequest } from '../store/ui';
+import { claimRecord, releaseRecord } from '../store/recovery-locks';
 
 type Of<K extends DialogRequest['kind']> = Extract<DialogRequest, { kind: K }>;
 
@@ -179,18 +184,19 @@ function SplitDialog({ request }: { request: Of<'split'> }) {
 }
 
 function CloseDocumentDialog({ request }: { request: Of<'close-document'> }) {
-  const { workspace, ui } = useWorkspaceContext();
-  const saveAs = useSaveAs();
+  const { adapter, workspace, ui } = useWorkspaceContext();
+  const save = useSave();
   const doc = workspace.getState().documents.find((entry) => entry.key === request.docKey);
   const close = () => ui.getState().closeDialog();
   if (!doc) return null;
+  const inPlace = adapter.features.saveInPlace && doc.saveTarget !== null;
   const discard = () => {
     ui.getState().closeDialog();
     void workspace.getState().close(doc.key);
   };
-  const save = () => {
+  const saveAndClose = () => {
     ui.getState().closeDialog();
-    void saveAs(doc.key).then((saved) => {
+    void save(doc.key).then((saved) => {
       if (saved) void workspace.getState().close(doc.key);
     });
   };
@@ -205,7 +211,34 @@ function CloseDocumentDialog({ request }: { request: Of<'close-document'> }) {
           Don’t save
         </Button>
         <Button onClick={close}>Cancel</Button>
-        <Button variant="primary" onClick={save} autoFocus>
+        <Button variant="primary" onClick={saveAndClose} autoFocus>
+          {inPlace ? 'Save' : 'Save as…'}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+function SaveConflictDialog({ request }: { request: Of<'save-conflict'> }) {
+  const { workspace, ui } = useWorkspaceContext();
+  const doc = workspace.getState().documents.find((entry) => entry.key === request.docKey);
+  const answer = (choice: 'overwrite' | 'save-as' | 'cancel') => {
+    request.resolve(choice);
+    ui.getState().closeDialog();
+  };
+  return (
+    <DialogContent>
+      <DialogTitle>{doc?.saveTarget?.name ?? 'The file'} changed on disk</DialogTitle>
+      <DialogDescription>
+        Another program changed the file since Folio opened or saved it. Replacing it loses those
+        changes; saving under a new name keeps both.
+      </DialogDescription>
+      <DialogFooter>
+        <Button variant="danger" onClick={() => answer('overwrite')} className="mr-auto">
+          Replace the file
+        </Button>
+        <Button onClick={() => answer('cancel')}>Cancel</Button>
+        <Button variant="primary" onClick={() => answer('save-as')} autoFocus>
           Save as…
         </Button>
       </DialogFooter>
@@ -213,10 +246,360 @@ function CloseDocumentDialog({ request }: { request: Of<'close-document'> }) {
   );
 }
 
-/** The dialog the workspace asked for, if any. */
+function QuitDialog({ request }: { request: Of<'quit'> }) {
+  const { workspace, ui } = useWorkspaceContext();
+  const dirty = workspace
+    .getState()
+    .documents.filter((doc) => doc.editor !== null && isDirty(doc.editor));
+  const answer = (close: boolean) => {
+    request.resolve(close);
+    ui.getState().closeDialog();
+  };
+  return (
+    <DialogContent>
+      <DialogTitle>
+        {dirty.length === 1
+          ? `Close Folio without saving ${dirty[0]!.fileName}?`
+          : `Close Folio without saving ${dirty.length} documents?`}
+      </DialogTitle>
+      <DialogDescription>
+        {dirty.length > 1
+          ? `${dirty.map((doc) => doc.fileName).join(', ')} have changes that are not saved.`
+          : 'Its changes are not saved.'}{' '}
+        Cancel to save them first.
+      </DialogDescription>
+      <DialogFooter>
+        <Button variant="danger" onClick={() => answer(true)} className="mr-auto">
+          Close without saving
+        </Button>
+        <Button variant="primary" onClick={() => answer(false)} autoFocus>
+          Cancel
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+function RecoverDialog({ request }: { request: Of<'recover'> }) {
+  const { adapter, workspace, ui } = useWorkspaceContext();
+  const [records, setRecords] = useState(request.records);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [password, setPassword] = useState<{
+    recordId: string;
+    sourceId: string;
+    fileName: string;
+    rejected: boolean;
+    known: Record<string, string>;
+  } | null>(null);
+  const [value, setValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const id = useId();
+  const done = (recordId: string) => {
+    const remaining = records.filter((record) => record.id !== recordId);
+    setRecords(remaining);
+    if (remaining.length === 0) ui.getState().closeDialog();
+  };
+
+  /** Takes a record from other windows; tells the user when one has it open. */
+  const claim = async (recordId: string) => {
+    if (await claimRecord(recordId)) return true;
+    setError('This document is open in another Folio window.');
+    done(recordId);
+    return false;
+  };
+
+  const restore = async (recordId: string, passwords: Record<string, string> = {}) => {
+    setBusy(recordId);
+    setError(null);
+    let restored = false;
+    try {
+      if (!(await claim(recordId))) return;
+      const stored = await adapter.recovery.load(recordId);
+      if (!stored) {
+        setError('This recovered work is no longer available.');
+        done(recordId);
+        return;
+      }
+      const outcome = await workspace.getState().restoreDocument({
+        snapshot: stored.snapshot,
+        files: stored.files,
+        passwords,
+        recoveryId: recordId,
+      });
+      if (outcome.status === 'restored') {
+        // The document keeps the record (and its lock) until it is saved or closed.
+        restored = true;
+        setPassword(null);
+        done(recordId);
+      } else if (outcome.status === 'needs-password') {
+        setValue('');
+        setPassword({
+          recordId,
+          sourceId: outcome.sourceId,
+          fileName: outcome.fileName,
+          rejected: outcome.rejected,
+          known: passwords,
+        });
+      } else {
+        setError(outcome.message);
+      }
+    } catch {
+      setError('This recovered work could not be read.');
+    } finally {
+      if (!restored) releaseRecord(recordId);
+      setBusy(null);
+    }
+  };
+
+  const discard = async (recordId: string) => {
+    setError(null);
+    if (!(await claim(recordId))) return;
+    await adapter.recovery.remove(recordId).catch(() => undefined);
+    releaseRecord(recordId);
+    done(recordId);
+  };
+
+  return (
+    <DialogContent className="w-[min(32rem,calc(100vw-2rem))]">
+      <DialogTitle>Recover unsaved changes</DialogTitle>
+      <DialogDescription>
+        Folio closed before these documents were saved. Their unsaved changes were kept on this
+        device.
+      </DialogDescription>
+      <ul aria-label="Recovered documents" className="mt-4 space-y-2">
+        {records.map((record) => (
+          <li
+            key={record.id}
+            className="flex items-center gap-3 rounded-md bg-surface px-3 py-2 text-sm"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{record.title}</span>
+              <span className="block text-xs text-ink-muted">
+                Changed {formatDate(record.savedAt)}
+              </span>
+            </span>
+            <Button size="sm" onClick={() => void discard(record.id)} disabled={busy !== null}>
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => void restore(record.id)}
+              disabled={busy !== null}
+            >
+              Restore
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {password ? (
+        <form
+          className="mt-4 flex flex-col gap-1.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!value) return;
+            void restore(password.recordId, { ...password.known, [password.sourceId]: value });
+          }}
+        >
+          <Label htmlFor={`${id}-password`}>Password for {password.fileName}</Label>
+          <div className="flex gap-2">
+            <Input
+              id={`${id}-password`}
+              type="password"
+              autoComplete="off"
+              autoFocus
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              aria-invalid={password.rejected || undefined}
+            />
+            <Button type="submit" variant="primary" disabled={!value || busy !== null}>
+              Unlock
+            </Button>
+          </div>
+          {password.rejected ? (
+            <p role="alert" className="text-xs text-danger-ink">
+              That password is incorrect.
+            </p>
+          ) : null}
+        </form>
+      ) : null}
+      {error ? (
+        <p role="alert" className="mt-3 text-xs text-danger-ink">
+          {error}
+        </p>
+      ) : null}
+      <DialogFooter>
+        <DialogClose asChild>
+          <Button>Decide later</Button>
+        </DialogClose>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+function TransferDialog({ request }: { request: TransferRequest }) {
+  const { adapter, workspace, ui } = useWorkspaceContext();
+  const [busy, setBusy] = useState(false);
+  const answer = async (accept: boolean) => {
+    if (!adapter.answerTransfer) return;
+    setBusy(true);
+    try {
+      const files = await adapter.answerTransfer(request.id, accept);
+      if (accept && files.length > 0) await workspace.getState().openFiles(files);
+    } catch {
+      workspace.getState().showNotice('The document from Chrome could not be opened.');
+    } finally {
+      ui.getState().finishTransfer(request.id);
+    }
+  };
+  return (
+    <DialogContent>
+      <DialogTitle>Open a document from Chrome?</DialogTitle>
+      <DialogDescription>
+        The Folio extension in Chrome wants to open{' '}
+        <span className="font-medium text-ink">{request.name}</span> ({formatBytes(request.size)})
+        in Folio. Nothing is opened unless you allow it; a declined document is deleted.
+      </DialogDescription>
+      <DialogFooter>
+        <Button onClick={() => void answer(false)} disabled={busy}>
+          Decline
+        </Button>
+        <Button variant="primary" onClick={() => void answer(true)} disabled={busy} autoFocus>
+          Open
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+/** Pages to print: "1-3, 5" in document positions. */
+export function parsePageRange(text: string, pageCount: number): number[] | null {
+  const positions = new Set<number>();
+  for (const part of text.split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const match = /^(\d+)\s*(?:[-–]\s*(\d+))?$/.exec(trimmed);
+    if (!match) return null;
+    const from = Number(match[1]);
+    const to = match[2] === undefined ? from : Number(match[2]);
+    if (from < 1 || to < from || to > pageCount) return null;
+    for (let page = from; page <= to; page += 1) positions.add(page - 1);
+  }
+  return positions.size > 0 ? [...positions].sort((a, b) => a - b) : null;
+}
+
+function PrintDialog({ request }: { request: Of<'print'> }) {
+  const { workspace, ui } = useWorkspaceContext();
+  const print = usePrint();
+  const id = useId();
+  const doc = workspace.getState().documents.find((entry) => entry.key === request.docKey);
+  const pages = doc?.editor?.model.pages ?? [];
+  const current = Math.max(
+    0,
+    pages.findIndex((page) => page.id === doc?.view?.currentPageId),
+  );
+  const [range, setRange] = useState<'all' | 'current' | 'custom'>('all');
+  const [custom, setCustom] = useState(`1-${pages.length}`);
+  const [comments, setComments] = useState(true);
+  const positions =
+    range === 'all'
+      ? pages.map((_, index) => index)
+      : range === 'current'
+        ? [current]
+        : parsePageRange(custom, pages.length);
+  const onSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!positions || !doc) return;
+    ui.getState().closeDialog();
+    void print(doc.key, {
+      pageIds: positions.map((position) => pages[position]!.id),
+      includeComments: comments,
+    });
+  };
+  return (
+    <DialogContent aria-describedby={`${id}-description`}>
+      <form onSubmit={onSubmit}>
+        <DialogTitle>Print</DialogTitle>
+        <DialogDescription id={`${id}-description`}>
+          Folio prepares the pages, then opens your system’s print dialog.
+        </DialogDescription>
+        <fieldset className="mt-4 space-y-2 text-sm">
+          <legend className="mb-1 text-xs font-semibold">Pages</legend>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`${id}-range`}
+              checked={range === 'all'}
+              onChange={() => setRange('all')}
+            />
+            All {pages.length} pages
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`${id}-range`}
+              checked={range === 'current'}
+              onChange={() => setRange('current')}
+            />
+            Current page ({current + 1})
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`${id}-range`}
+              checked={range === 'custom'}
+              onChange={() => setRange('custom')}
+            />
+            Pages
+            <Input
+              aria-label="Pages to print"
+              className="h-7 w-40"
+              value={custom}
+              onFocus={() => setRange('custom')}
+              onChange={(event) => setCustom(event.target.value)}
+              aria-invalid={(range === 'custom' && !positions) || undefined}
+            />
+          </label>
+        </fieldset>
+        <label className="mt-4 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={comments}
+            onChange={(event) => setComments(event.target.checked)}
+          />
+          Print comments and drawings
+        </label>
+        {range === 'custom' && !positions ? (
+          <p role="alert" className="mt-2 text-xs text-danger-ink">
+            Enter pages like 1-3, 5 (from 1 to {pages.length}).
+          </p>
+        ) : null}
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button>Cancel</Button>
+          </DialogClose>
+          <Button type="submit" variant="primary" disabled={!positions}>
+            Print…
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  );
+}
+
+/** The dialog the workspace asked for, if any; then documents sent from Chrome. */
 export function Dialogs() {
   const dialog = useUi((state) => state.dialog);
+  const transfer = useUi((state) => state.transfers[0] ?? null);
+  // Questions waiting for an answer get the cautious one (see the ui store).
   const closeDialog = useUi((state) => state.closeDialog);
+  if (!dialog && transfer) {
+    return (
+      <Dialog open onOpenChange={() => undefined}>
+        <TransferDialog key={transfer.id} request={transfer} />
+      </Dialog>
+    );
+  }
   return (
     <Dialog open={dialog !== null} onOpenChange={(open) => !open && closeDialog()}>
       {dialog?.kind === 'insert-password' ? (
@@ -225,12 +608,15 @@ export function Dialogs() {
         <SplitDialog key={dialog.docKey} request={dialog} />
       ) : dialog?.kind === 'close-document' ? (
         <CloseDocumentDialog request={dialog} />
+      ) : dialog?.kind === 'save-conflict' ? (
+        <SaveConflictDialog request={dialog} />
+      ) : dialog?.kind === 'quit' ? (
+        <QuitDialog request={dialog} />
+      ) : dialog?.kind === 'recover' ? (
+        <RecoverDialog request={dialog} />
+      ) : dialog?.kind === 'print' ? (
+        <PrintDialog key={dialog.docKey} request={dialog} />
       ) : null}
     </Dialog>
   );
-}
-
-/** Whether closing would lose changes. */
-export function hasUnsavedChanges(doc: { editor: Parameters<typeof isDirty>[0] | null }): boolean {
-  return doc.editor !== null && isDirty(doc.editor);
 }

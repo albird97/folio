@@ -4,6 +4,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   ICON,
   IconButton,
@@ -19,6 +20,7 @@ import {
   Moon,
   PanelLeft,
   PanelRight,
+  Printer,
   RotateCcw,
   RotateCw,
   Save,
@@ -63,6 +65,7 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
   const nextTheme = THEME_META[nextThemePreference(theme)].label.replace('Theme: ', '');
   const desktop = adapter.platform === 'desktop';
   const saveAs = useSaveAs();
+  const inPlace = adapter.features.saveInPlace && doc?.saveTarget != null;
 
   return (
     <ToolbarPrimitive.Root
@@ -95,19 +98,29 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
       {adapter.features.saveCopy ? (
         <>
           <ToolbarPrimitive.Button asChild>
-            <IconButton
-              label={desktop ? 'Save as…' : 'Download PDF'}
-              icon={
-                desktop ? (
-                  <Save size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
-                ) : (
-                  <Download size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
-                )
-              }
-              disabled={!ready}
-              onClick={() => onCommand('save-as')}
-              shortcut={shortcut('save-as')}
-            />
+            {inPlace ? (
+              <IconButton
+                label="Save"
+                icon={<Save size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+                disabled={!ready}
+                onClick={() => onCommand('save')}
+                shortcut={shortcut('save')}
+              />
+            ) : (
+              <IconButton
+                label={desktop ? 'Save as…' : 'Download PDF'}
+                icon={
+                  desktop ? (
+                    <Save size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
+                  ) : (
+                    <Download size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
+                  )
+                }
+                disabled={!ready}
+                onClick={() => onCommand('save-as')}
+                shortcut={shortcut('save-as')}
+              />
+            )}
           </ToolbarPrimitive.Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild disabled={!ready}>
@@ -121,6 +134,9 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
               </ToolbarPrimitive.Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
+              {inPlace ? (
+                <DropdownMenuItem onSelect={() => onCommand('save')}>Save</DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem onSelect={() => doc && void saveAs(doc.key)}>
                 {desktop ? 'Save as…' : 'Download PDF'}
               </DropdownMenuItem>
@@ -133,9 +149,26 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
               <DropdownMenuItem onSelect={() => onCommand('save-copy')}>
                 {desktop ? 'Save a copy of the original…' : 'Download the original'}
               </DropdownMenuItem>
+              {adapter.features.printing ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => onCommand('print')}>Print…</DropdownMenuItem>
+                </>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </>
+      ) : null}
+      {adapter.features.printing ? (
+        <ToolbarPrimitive.Button asChild>
+          <IconButton
+            label="Print…"
+            icon={<Printer size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+            disabled={!ready}
+            onClick={() => onCommand('print')}
+            shortcut={shortcut('print')}
+          />
+        </ToolbarPrimitive.Button>
       ) : null}
 
       <div className="mx-2 flex min-w-0 flex-1 items-baseline gap-2">

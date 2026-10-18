@@ -3,6 +3,10 @@ import { useTheme } from '@folio/shared-ui';
 import { useCallback, useEffect } from 'react';
 import { useCommands } from '../hooks/use-commands';
 import { useFileDrop } from '../hooks/use-file-drop';
+import { useRecovery } from '../hooks/use-recovery';
+import { useToolShortcuts } from '../hooks/use-tool-shortcuts';
+import { useTransfers } from '../hooks/use-transfers';
+import { useUnsavedGuard } from '../hooks/use-unsaved-guard';
 import { useActiveDocument, useUi, useWorkspace, useWorkspaceContext } from '../context';
 import type { WorkspaceDocument } from '../store/workspace';
 import { DocumentViewer } from '../viewer/document-viewer';
@@ -12,6 +16,7 @@ import { Dialogs } from './dialogs';
 import { ErrorState, LoadingState, PasswordState } from './document-states';
 import { FindBar } from './find-bar';
 import { DropOverlay, NoticeToast } from './overlays';
+import { PrintLayout } from './print-layout';
 import { PropertiesPanel } from './properties-panel';
 import { Sidebar } from './sidebar';
 import { StatusBar } from './status-bar';
@@ -100,6 +105,10 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
   const doc = useActiveDocument();
   const dispatch = useCommands();
   const { hovering, handlers } = useFileDrop();
+  useUnsavedGuard();
+  useRecovery();
+  useTransfers();
+  useToolShortcuts();
   useTheme(theme);
 
   const open = useCallback(() => dispatch('open'), [dispatch]);
@@ -160,6 +169,7 @@ export function Workspace({ chrome = {} }: { chrome?: WorkspaceChrome }) {
       <DropOverlay visible={hovering && hasDocuments} />
       <NoticeToast />
       <Dialogs />
+      <PrintLayout />
     </div>
   );
 }

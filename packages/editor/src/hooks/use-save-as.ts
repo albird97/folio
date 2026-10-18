@@ -1,3 +1,4 @@
+import { sha256Hex } from '@folio/pdf-core';
 import { useCallback, useRef } from 'react';
 import { useWorkspaceContext } from '../context';
 
@@ -6,11 +7,32 @@ const WARNING_NOTES = {
     'Some characters in added text cannot be shown by the standard PDF fonts and were saved as “?”.',
 } as const;
 
+export const SIGNATURE_NOTE =
+  'Its digital signatures do not cover the changes and will show as invalid.';
+
+/** Notes to add to "Saved …" messages: export warnings and signatures. */
+export function saveNotes(
+  warnings: readonly (keyof typeof WARNING_NOTES)[],
+  hasSignatures: boolean,
+): string[] {
+  return [
+    ...warnings.map((warning) => WARNING_NOTES[warning]),
+    ...(hasSignatures ? [SIGNATURE_NOTE] : []),
+  ];
+}
+
+export function exportFailureMessage(error: unknown): string {
+  const code = (error as { code?: string } | null)?.code;
+  return code === 'wrong-password'
+    ? 'The document could not be saved: a password for one of its files is missing.'
+    : 'The document could not be saved.';
+}
+
 /**
  * "Save as": writes the document with all changes to a new file (a save
  * dialog on desktop, a download in browsers). The file the document was
- * opened from is only replaced if the user picks it in the save dialog.
- * Resolves true once saved.
+ * opened from is only replaced if the user picks it in the save dialog. On
+ * desktop, later saves go to the chosen file. Resolves true once saved.
  */
 export function useSaveAs(): (key: string, options?: { flatten?: boolean }) => Promise<boolean> {
   const { adapter, workspace } = useWorkspaceContext();
@@ -31,27 +53,31 @@ export function useSaveAs(): (key: string, options?: { flatten?: boolean }) => P
           key,
           options.flatten === undefined ? {} : { flatten: options.flatten },
         );
-        const result = await adapter.saveFileAs({ suggestedName: doc.fileName, bytes });
+        // A flattened copy is a different document: the next Save does not go there.
+        const keepAccess = adapter.features.saveInPlace && !options.flatten;
+        const result = await adapter.saveFileAs({
+          suggestedName: doc.fileName,
+          bytes,
+          ...(keepAccess ? { keepAccess } : {}),
+        });
         if (result.status === 'cancelled') return false;
-        workspace.getState().markSaved(key);
-        const notes = [
-          result.status === 'saved' ? `Saved as ${result.name}.` : `Downloading ${result.name}.`,
-          ...warnings.map((warning) => WARNING_NOTES[warning]),
-          ...(doc.info?.hasSignatures
-            ? ['Its digital signatures do not cover the changes and will show as invalid.']
-            : []),
-        ];
-        workspace.getState().showNotice(notes.join(' '));
+        const current = workspace.getState();
+        if (!options.flatten) current.markSaved(key);
+        if (result.status === 'saved' && result.handle) {
+          const handle = result.handle;
+          current.setSaveTarget(key, { handle, name: result.name }, await sha256Hex(bytes), () =>
+            adapter.releaseHandle(handle),
+          );
+        }
+        current.showNotice(
+          [
+            result.status === 'saved' ? `Saved as ${result.name}.` : `Downloading ${result.name}.`,
+            ...saveNotes(warnings, doc.info?.hasSignatures ?? false),
+          ].join(' '),
+        );
         return true;
       } catch (error) {
-        const code = (error as { code?: string } | null)?.code;
-        workspace
-          .getState()
-          .showNotice(
-            code === 'wrong-password'
-              ? 'The document could not be saved: a password for one of its files is missing.'
-              : 'The document could not be saved.',
-          );
+        workspace.getState().showNotice(exportFailureMessage(error));
         return false;
       } finally {
         saving.current = false;

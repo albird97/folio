@@ -110,3 +110,81 @@
     opacity: 0.4;
   }
 }
+
+/*
+ * Printing: the pages to print are laid out as images in #folio-print, which
+ * only print styles show; while Folio prints, the rest of the app is hidden on
+ * paper. Printing from the browser's own menu prints the app as it looks.
+ */
+#folio-print {
+  display: none;
+}
+
+@media print {
+  /*
+   * No page margin, so browsers print no headers or footers (address, date);
+   * each sheet keeps clear of the edge printers cannot reach instead.
+   */
+  @page {
+    margin: 0;
+  }
+
+  html[data-folio-printing] body > :not(#folio-print) {
+    display: none !important;
+  }
+
+  /* The app fills one window and scrolls inside; on paper the pages flow. */
+  html[data-folio-printing],
+  html[data-folio-printing] body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  #folio-print {
+    --folio-print-edge: 0.25in;
+    display: block;
+  }
+
+  .folio-print-sheet {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    break-after: page;
+    break-inside: avoid;
+  }
+
+  .folio-print-sheet:last-child {
+    break-after: auto;
+  }
+
+  .folio-print-sheet img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: calc(100vw - 2 * var(--folio-print-edge));
+    height: calc(100vh - 2 * var(--folio-print-edge));
+    max-width: none;
+    object-fit: contain;
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* Pages are turned to fill the paper, like print dialogs' auto-rotate. */
+@media print and (orientation: portrait) {
+  .folio-print-sheet img[data-orientation='landscape'] {
+    width: calc(100vh - 2 * var(--folio-print-edge));
+    height: calc(100vw - 2 * var(--folio-print-edge));
+    transform: translate(-50%, -50%) rotate(-90deg);
+  }
+}
+
+@media print and (orientation: landscape) {
+  .folio-print-sheet img[data-orientation='portrait'] {
+    width: calc(100vh - 2 * var(--folio-print-edge));
+    height: calc(100vw - 2 * var(--folio-print-edge));
+    transform: translate(-50%, -50%) rotate(-90deg);
+  }
+}

@@ -1,6 +1,11 @@
 import { isThemePreference, type ThemePreference } from '@folio/shared-ui';
 import type { FontFamily, HexColor } from '@folio/document-model';
-import type { IncomingFile, KeyValueStorage } from '@folio/platform-adapters';
+import type {
+  IncomingFile,
+  KeyValueStorage,
+  RecoveryRecord,
+  TransferRequest,
+} from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
 export type SidebarTab = 'pages' | 'outline' | 'comments' | 'results';
@@ -96,7 +101,18 @@ export type DialogRequest =
       rest: IncomingFile[];
     }
   | { kind: 'split'; docKey: string }
-  | { kind: 'close-document'; docKey: string };
+  | { kind: 'close-document'; docKey: string }
+  /** The file changed on disk since Folio read it. */
+  | {
+      kind: 'save-conflict';
+      docKey: string;
+      resolve(choice: 'overwrite' | 'save-as' | 'cancel'): void;
+    }
+  /** The window is closing with unsaved changes. */
+  | { kind: 'quit'; resolve(close: boolean): void }
+  /** Unsaved work kept from an earlier session. */
+  | { kind: 'recover'; records: RecoveryRecord[] }
+  | { kind: 'print'; docKey: string };
 
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {
@@ -109,6 +125,8 @@ export interface UiState {
   /** Written into new annotations as their author; empty leaves it out. */
   authorName: string;
   dialog: DialogRequest | null;
+  /** Documents the Chrome extension sent, waiting for the user to accept them. */
+  transfers: TransferRequest[];
   hydrated: boolean;
   setTheme(theme: ThemePreference): void;
   toggleLeftPanel(): void;
@@ -122,6 +140,8 @@ export interface UiState {
   setAuthorName(name: string): void;
   openDialog(dialog: DialogRequest): void;
   closeDialog(): void;
+  queueTransfer(request: TransferRequest): void;
+  finishTransfer(id: string): void;
 }
 
 type Persisted = Pick<
@@ -184,8 +204,14 @@ const persistedOf = (state: UiState): Persisted => ({
   authorName: state.authorName,
 });
 
+/** A question still waiting when its dialog goes away gets the cautious answer. */
+function settle(dialog: DialogRequest | null): void {
+  if (dialog?.kind === 'save-conflict') dialog.resolve('cancel');
+  if (dialog?.kind === 'quit') dialog.resolve(false);
+}
+
 export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
-  const store = createStore<UiState>()((set) => ({
+  const store = createStore<UiState>()((set, get) => ({
     theme: 'system',
     leftPanelOpen: true,
     rightPanelOpen: true,
@@ -194,6 +220,7 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     style: DEFAULT_STYLE,
     authorName: '',
     dialog: null,
+    transfers: [],
     hydrated: false,
     setTheme: (theme) => set({ theme }),
     toggleLeftPanel: () => set((state) => ({ leftPanelOpen: !state.leftPanelOpen })),
@@ -207,8 +234,22 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
         style: { ...state.style, colors: { ...state.style.colors, [tool]: color } },
       })),
     setAuthorName: (authorName) => set({ authorName: authorName.slice(0, 200) }),
-    openDialog: (dialog) => set({ dialog }),
-    closeDialog: () => set({ dialog: null }),
+    openDialog: (dialog) => {
+      settle(get().dialog);
+      set({ dialog });
+    },
+    closeDialog: () => {
+      settle(get().dialog);
+      set({ dialog: null });
+    },
+    queueTransfer: (request) =>
+      set((state) =>
+        state.transfers.some((entry) => entry.id === request.id)
+          ? state
+          : { transfers: [...state.transfers, request] },
+      ),
+    finishTransfer: (id) =>
+      set((state) => ({ transfers: state.transfers.filter((entry) => entry.id !== id) })),
   }));
 
   void storage.get<unknown>(UI_STORAGE_KEY).then((stored) => {

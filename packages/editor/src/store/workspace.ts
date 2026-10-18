@@ -8,7 +8,9 @@ import {
   markSaved as markEditorSaved,
   movePagesOperation,
   newAssetId,
+  newDocumentId,
   OperationError,
+  parseRecoverySnapshot,
   redo as redoHistory,
   undo as undoHistory,
   type Annotation,
@@ -125,6 +127,15 @@ export interface WorkspaceDocument {
   selection: Selection;
   /** A long-running task (saving, inserting pages), for progress display. */
   busy: string | null;
+  /**
+   * Where Save writes: the opened file (desktop) or the file chosen in the
+   * last Save As. Null when Save has to ask where (Save As).
+   */
+  saveTarget: { handle: string; name: string } | null;
+  /** SHA-256 of the save target's contents as Folio last read or wrote them. */
+  diskSha256: string | null;
+  /** Identifies the document's crash-recovery record. */
+  recoveryId: string;
 }
 
 export type InsertOutcome =
@@ -137,6 +148,13 @@ export interface ExportRequest {
   pageIds?: PageId[];
   /** Burn annotations into the pages. */
   flatten?: boolean;
+  /**
+   * Leave out the original's password protection. Only for bytes that never
+   * leave memory (printing); saved files always keep it.
+   */
+  unprotected?: boolean;
+  /** Leave out Folio's annotations (printing without comments). */
+  withoutAnnotations?: boolean;
 }
 
 export interface WorkspaceState {
@@ -218,7 +236,40 @@ export interface WorkspaceState {
   splitDocument(key: string, parts: PageId[][]): Promise<number>;
   /** Records that the document's current state was saved. */
   markSaved(key: string): void;
+  /**
+   * Points Save at a file (after Save As) whose contents hash to `sha256`.
+   * `release` gives up the file's handle when the document closes.
+   */
+  setSaveTarget(
+    key: string,
+    target: { handle: string; name: string } | null,
+    sha256: string | null,
+    release?: () => void,
+  ): void;
+  /** Re-creates a document from a crash-recovery record. */
+  restoreDocument(request: RestoreRequest): Promise<RestoreOutcome>;
 }
+
+export interface RestoreRequest {
+  /** A serialized recovery snapshot (`serializeRecoverySnapshot`). */
+  snapshot: string;
+  /** Source files by SHA-256 and image assets by asset id. */
+  files: ReadonlyMap<string, Uint8Array>;
+  /** Passwords of protected sources, by source id. */
+  passwords?: Readonly<Record<string, string>>;
+  /** The record the document keeps saving to. */
+  recoveryId: string;
+}
+
+export type RestoreOutcome =
+  | { status: 'restored'; key: string }
+  | {
+      status: 'needs-password';
+      sourceId: SourceId;
+      fileName: string;
+      rejected: boolean;
+    }
+  | { status: 'failed'; message: string };
 
 interface SourceEntry {
   bytes: Uint8Array;
@@ -229,6 +280,8 @@ interface SourceEntry {
 }
 
 interface Resources {
+  /** Gives up the file Save writes to, when it came from Save As. */
+  releaseSaveTarget: (() => void) | null;
   file: IncomingFile;
   /** Password to try first (documents split off a protected one). */
   initialPassword: string | undefined;
@@ -257,6 +310,12 @@ export interface WorkspaceStore extends StoreApi<WorkspaceState> {
   getBytes(key: string): Uint8Array | null;
   /** An object URL showing an image asset of the document. */
   getAssetUrl(key: string, assetId: AssetId): string | null;
+  /** The bytes of one of a document's source files (crash recovery). */
+  getSourceBytes(key: string, sourceId: SourceId): Uint8Array | null;
+  /** The bytes of an image asset (crash recovery). */
+  getAssetBytes(key: string, assetId: AssetId): Uint8Array | null;
+  /** The engine, to open bytes the workspace produced (printing). */
+  readonly engine: PdfEngine;
   destroy(): Promise<void>;
 }
 
@@ -276,6 +335,9 @@ export function isLikelyPdfName(name: string): boolean {
 
 /** "report.pdf" → "report". */
 export const baseName = (fileName: string) => fileName.replace(/\.pdf$/i, '') || 'document';
+
+/** Recovery record ids (letters, digits, '-' and '_' only). */
+const newRecoveryId = () => `doc-${newDocumentId().slice(4)}`;
 
 let tabCounter = 0;
 const nextKey = () => `tab-${Date.now().toString(36)}-${(tabCounter += 1)}`;
@@ -306,6 +368,12 @@ function newDocument(key: string, file: IncomingFile): WorkspaceDocument {
     search: IDLE_SEARCH,
     selection: EMPTY_SELECTION,
     busy: null,
+    saveTarget:
+      file.origin.kind === 'local-file' && file.origin.handle
+        ? { handle: file.origin.handle, name: file.name }
+        : null,
+    diskSha256: null,
+    recoveryId: newRecoveryId(),
   };
 }
 
@@ -534,6 +602,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
           status: 'ready',
           error: null,
           passwordRejected: false,
+          diskSha256: model.sources[sourceId]?.sha256 ?? null,
           info: handle.info,
           permissions: editPermissions(handle.info),
           editor: createEditorState(model),
@@ -564,6 +633,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       const added = files.map(({ file, password }) => {
         const key = nextKey();
         resources.set(key, {
+          releaseSaveTarget: null,
           file,
           initialPassword: password,
           bytes: null,
@@ -584,6 +654,107 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         activeKey: added[0]?.key ?? state.activeKey,
       }));
       await Promise.all(added.map((doc) => load(doc.key, resources.get(doc.key)?.initialPassword)));
+    }
+
+    /**
+     * Opens every source of a recovered document from the stored bytes and
+     * shows it again with its history. Protected sources need their password
+     * again: passwords are never stored.
+     */
+    async function restore(request: RestoreRequest): Promise<RestoreOutcome> {
+      let snapshot;
+      try {
+        snapshot = parseRecoverySnapshot(request.snapshot);
+      } catch {
+        return { status: 'failed', message: 'The recovered data is damaged.' };
+      }
+      const { editor, view } = snapshot;
+      const { model } = editor;
+      const sources = Object.values(model.sources);
+      const primary = sources[0];
+      if (!primary) return { status: 'failed', message: 'The recovered data is damaged.' };
+      const opened: Array<{ id: SourceId; entry: Omit<SourceEntry, 'unsubscribe'> }> = [];
+      const destroyAll = () => Promise.all(opened.map(({ entry }) => entry.handle.destroy()));
+      for (const source of sources) {
+        const bytes = request.files.get(source.sha256);
+        if (!bytes || (await sha256Hex(bytes)) !== source.sha256) {
+          await destroyAll();
+          return {
+            status: 'failed',
+            message: `The copy of ${source.fileName} kept for recovery is missing or damaged.`,
+          };
+        }
+        const password = request.passwords?.[source.id];
+        try {
+          const handle = await engine.open(bytes, password === undefined ? {} : { password });
+          opened.push({
+            id: source.id,
+            entry: {
+              bytes,
+              handle,
+              password: handle.info.encryption === 'none' ? undefined : (password ?? ''),
+            },
+          });
+        } catch (error) {
+          await destroyAll();
+          if (isPdfError(error, 'password-required') || isPdfError(error, 'incorrect-password')) {
+            return {
+              status: 'needs-password',
+              sourceId: source.id,
+              fileName: source.fileName,
+              rejected: isPdfError(error, 'incorrect-password'),
+            };
+          }
+          return { status: 'failed', message: `${source.fileName} could not be opened.` };
+        }
+      }
+      const key = nextKey();
+      const primaryBytes = opened[0]!.entry.bytes;
+      const file: IncomingFile = {
+        name: primary.fileName,
+        size: primaryBytes.byteLength,
+        origin: { kind: 'generated' },
+        read: async () => primaryBytes,
+      };
+      const entry: Resources = {
+        releaseSaveTarget: null,
+        file,
+        initialPassword: undefined,
+        bytes: primaryBytes,
+        handle: opened[0]!.entry.handle,
+        sources: new Map(),
+        assets: new Map(),
+        assetUrls: new Map(),
+        pendingPageInfo: new Map(),
+        flushTimer: null,
+        search: null,
+        searchText: new Map(),
+        searchTextChars: 0,
+      };
+      for (const id of Object.keys(model.assets) as AssetId[]) {
+        const bytes = request.files.get(id);
+        if (bytes) entry.assets.set(id, bytes);
+      }
+      resources.set(key, entry);
+      for (const { id, entry: source } of opened) addSource(key, id, source);
+      const info = opened[0]!.entry.handle.info;
+      const doc: WorkspaceDocument = {
+        ...newDocument(key, file),
+        status: 'ready',
+        info,
+        permissions: editPermissions(info),
+        editor,
+        view,
+        pagesComplete: opened.every(({ entry: source }) => source.handle.pagesComplete),
+        recoveryId: request.recoveryId,
+      };
+      set((state) => ({ documents: [...state.documents, doc], activeKey: key }));
+      void Promise.all(opened.map(({ entry: source }) => source.handle.pagesReady)).then(() => {
+        if (!resources.has(key)) return;
+        flushPageInfo(key);
+        patch(key, { pagesComplete: true });
+      });
+      return { status: 'restored', key };
     }
 
     // ── Editing ──────────────────────────────────────────────────────────
@@ -685,15 +856,18 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         ]),
       );
       const primary = [...entry.sources.values()][0];
+      const model = doc.editor.model;
       return exportPdf({
-        model: doc.editor.model,
+        model: request.withoutAnnotations
+          ? { ...model, annotations: {} as typeof model.annotations }
+          : model,
         sources,
         assets: entry.assets,
         ...(request.pageIds ? { pageIds: request.pageIds } : {}),
         ...(request.flatten === undefined ? {} : { flatten: request.flatten }),
         // Saved copies stay as protected as the opened file.
         protection:
-          doc.info.encryption === 'none'
+          doc.info.encryption === 'none' || request.unprotected
             ? null
             : { userPassword: primary?.password ?? '', permissions: doc.info.permissions },
       });
@@ -1122,6 +1296,26 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         update(key, (doc) => (doc.editor ? { editor: markEditorSaved(doc.editor) } : null));
       },
 
+      setSaveTarget(key, target, sha256, release) {
+        const entry = resources.get(key);
+        if (!entry) {
+          release?.();
+          return;
+        }
+        // Save no longer writes to the file of an earlier Save As.
+        entry.releaseSaveTarget?.();
+        entry.releaseSaveTarget = release ?? null;
+        update(key, () => ({
+          saveTarget: target,
+          diskSha256: sha256,
+          ...(target ? { fileName: target.name } : {}),
+        }));
+      },
+
+      async restoreDocument(request) {
+        return restore(request);
+      },
+
       async splitDocument(key, parts) {
         const doc = find(key);
         const entry = resources.get(key);
@@ -1154,6 +1348,8 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
   });
 
   async function releaseResources(entry: Resources) {
+    entry.releaseSaveTarget?.();
+    entry.releaseSaveTarget = null;
     if (entry.flushTimer) clearTimeout(entry.flushTimer);
     entry.search?.abort();
     entry.file.release?.();
@@ -1172,6 +1368,9 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
     ...store,
     getHandle: (key) => resources.get(key)?.handle ?? null,
     getSourceHandle: (key, sourceId) => resources.get(key)?.sources.get(sourceId)?.handle ?? null,
+    getSourceBytes: (key, sourceId) => resources.get(key)?.sources.get(sourceId)?.bytes ?? null,
+    getAssetBytes: (key, assetId) => resources.get(key)?.assets.get(assetId) ?? null,
+    engine,
     getBytes: (key) => {
       const entry = resources.get(key);
       return entry?.handle ? entry.bytes : null;

@@ -56,3 +56,27 @@ export const pageRendered = (page: Page, pageNumber = 1) =>
     'data-render-state',
     'done',
   );
+
+/** Records in Folio's recovery store (IndexedDB) for this origin. */
+export const recoveryRecords = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const request = indexedDB.open('folio-recovery', 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains('records')) {
+            db.close();
+            resolve(0);
+            return;
+          }
+          const count = db.transaction('records').objectStore('records').count();
+          count.onsuccess = () => {
+            db.close();
+            resolve(count.result);
+          };
+          count.onerror = () => reject(count.error);
+        };
+      }),
+  );

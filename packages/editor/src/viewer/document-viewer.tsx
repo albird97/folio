@@ -24,6 +24,7 @@ import {
   type PointerEvent,
 } from 'react';
 import { useUi, useWorkspaceContext } from '../context';
+import { useAnnotationClipboard } from '../hooks/use-annotation-clipboard';
 import type { TextMatch } from '../search/match';
 import { MARKUP_TOOLS } from '../store/ui';
 import type { NavigationTarget, WorkspaceDocument } from '../store/workspace';
@@ -745,6 +746,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
     }
   };
 
+  useAnnotationClipboard(scrollRef, doc, pages, view.rotation);
   const annotationsByPage = useAnnotationsByPage(doc.editor?.model.annotations ?? {});
   const selectedByPage = useMemo(() => {
     const map = new Map<PageId, AnnotationId[]>();

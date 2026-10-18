@@ -8,6 +8,7 @@ import { PAGE_INPUT_ID } from '../components/viewer-controls';
 import { useActiveDocument, useWorkspaceContext } from '../context';
 import { useCloseDocument } from './use-close-document';
 import { usePageCommands } from './use-page-commands';
+import { useSave } from './use-save';
 import { useSaveAs } from './use-save-as';
 import { useSaveCopy } from './use-save-copy';
 
@@ -31,6 +32,7 @@ export function useCommands(): (command: AppCommand) => void {
   const closeDocument = useCloseDocument();
   const saveCopy = useSaveCopy();
   const saveAs = useSaveAs();
+  const save = useSave();
   const activeDoc = useActiveDocument();
   const pageCommands = usePageCommands(activeDoc?.status === 'ready' ? activeDoc : null);
 
@@ -71,8 +73,20 @@ export function useCommands(): (command: AppCommand) => void {
           if (key) state.redo(key);
           break;
         case 'save':
+          if (key) void save(key);
+          break;
         case 'save-as':
           if (key) void saveAs(key);
+          break;
+        case 'print':
+          if (!key || !active) break;
+          if (!adapter.features.printing) {
+            state.showNotice('Printing is not available here.');
+          } else if (active.info?.permissions && !active.info.permissions.print) {
+            state.showNotice('The author of this document does not allow printing it.');
+          } else {
+            ui.getState().openDialog({ kind: 'print', docKey: key });
+          }
           break;
         case 'insert-pages':
           pageCommands.insertFromFile();
@@ -161,7 +175,7 @@ export function useCommands(): (command: AppCommand) => void {
           break;
       }
     },
-    [adapter, workspace, ui, closeDocument, saveCopy, saveAs, pageCommands],
+    [adapter, workspace, ui, closeDocument, saveCopy, saveAs, save, pageCommands],
   );
 
   const dispatch = useCallback((command: AppCommand) => run(command, 'ui'), [run]);

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createViewState } from './create';
 import { createEditorState, execute, isDirty, markSaved } from './history';
+import { newAnnotationId, newAssetId } from './ids';
 import { parseRecoverySnapshot, serializeRecoverySnapshot, SnapshotError } from './serialization';
 import { sampleModel } from './test-helpers';
+import type { AddedImageAnnotation, AssetRef } from './types';
 
 function editedState() {
   let state = createEditorState(sampleModel(3));
@@ -56,6 +58,48 @@ describe('recovery snapshots', () => {
     const valid = JSON.parse(serializeRecoverySnapshot(state, createViewState(state.model)));
     valid.view.currentPageId = 'page_ffffffffffffffffffffffff';
     expect(() => parseRecoverySnapshot(JSON.stringify(valid))).toThrowError(
+      expect.objectContaining({ code: 'inconsistent' }) as Error,
+    );
+  });
+
+  it('refuses images that are not part of the snapshot', () => {
+    const asset: AssetRef = {
+      id: newAssetId(),
+      mimeType: 'image/png',
+      byteLength: 68,
+      sha256: 'a'.repeat(64),
+    };
+    let state = createEditorState(sampleModel(1));
+    const image: AddedImageAnnotation = {
+      id: newAnnotationId(),
+      pageId: state.model.pages[0]!.id,
+      author: '',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      modifiedAt: '2026-01-01T00:00:00.000Z',
+      color: '#000000',
+      opacity: 1,
+      kind: 'added-image',
+      rect: { x: 10, y: 10, width: 50, height: 50 },
+      assetId: asset.id,
+      rotation: 0,
+    };
+    state = execute(
+      state,
+      { type: 'annotations/add', annotations: [image], assets: [asset] },
+      { label: 'Add image' },
+    );
+    const view = createViewState(state.model);
+    expect(parseRecoverySnapshot(serializeRecoverySnapshot(state, view)).editor).toEqual(state);
+
+    const missing = JSON.parse(serializeRecoverySnapshot(state, view));
+    delete missing.editor.model.assets[asset.id];
+    expect(() => parseRecoverySnapshot(JSON.stringify(missing))).toThrowError(
+      expect.objectContaining({ code: 'inconsistent' }) as Error,
+    );
+
+    const renamed = JSON.parse(serializeRecoverySnapshot(state, view));
+    renamed.editor.model.assets[asset.id].id = newAssetId();
+    expect(() => parseRecoverySnapshot(JSON.stringify(renamed))).toThrowError(
       expect.objectContaining({ code: 'inconsistent' }) as Error,
     );
   });

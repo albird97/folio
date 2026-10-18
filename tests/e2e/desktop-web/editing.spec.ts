@@ -378,4 +378,61 @@ test.describe('editing', () => {
     const saved = await read((await saveAs(page)).bytes);
     expect(saved.pages[0]).toMatchObject({ rotation: 90, subtypes: ['FreeText'] });
   });
+
+  test('copies, cuts and pastes comments, and pastes images', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await open(page, 'basic-3-pages.pdf');
+    const box = await pageBox(page);
+    await tool(page, 'Rectangle').click();
+    await drag(page, [box.x + 100, box.y + 400], [box.x + 260, box.y + 480]);
+    // The new shape is selected and keyboard focus is in the page view.
+    await expect(page.getByRole('region', { name: 'Page view' })).toBeFocused();
+    await page.keyboard.press('Control+C');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Rectangle');
+    await page.keyboard.press('Control+V');
+    await page.keyboard.press('Control+V');
+    await expect(annotationGroups(page)).toHaveCount(3);
+    // Each paste lands a little further down and to the right.
+    const [first, second, third] = await Promise.all(
+      [0, 1, 2].map(
+        async (index) =>
+          (await annotationGroups(page).nth(index).locator('rect').first().boundingBox())!,
+      ),
+    );
+    expect(second!.x).toBeGreaterThan(first!.x);
+    expect(second!.y).toBeGreaterThan(first!.y);
+    expect(third!.x).toBeGreaterThan(second!.x);
+
+    // Cut takes the selection (the last copy) away; undo brings it back.
+    await page.keyboard.press('Control+X');
+    await expect(annotationGroups(page)).toHaveCount(2);
+    await page.keyboard.press('Control+Z');
+    await expect(annotationGroups(page)).toHaveCount(3);
+
+    // Text from elsewhere is not pasted as comments.
+    await page.evaluate(() => navigator.clipboard.writeText('Rectangle'));
+    await page.keyboard.press('Control+V');
+    await page.keyboard.press('Control+C');
+    await expect(annotationGroups(page)).toHaveCount(3);
+
+    // An image on the clipboard becomes an added image on the current page.
+    await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 96;
+      canvas.height = 48;
+      const context = canvas.getContext('2d')!;
+      context.fillStyle = '#1060d0';
+      context.fillRect(0, 0, 96, 48);
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!)));
+      const data = new DataTransfer();
+      data.items.add(new File([blob], 'image.png', { type: 'image/png' }));
+      document.activeElement!.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+      );
+    });
+    await expect(annotationGroups(page)).toHaveCount(4);
+    await expect(page.getByRole('region', { name: 'Selected comment' })).toContainText('Image');
+    const saved = await read((await saveAs(page)).bytes);
+    expect(saved.pages[0]?.subtypes).toEqual(['Square', 'Square', 'Square', 'Stamp']);
+  });
 });

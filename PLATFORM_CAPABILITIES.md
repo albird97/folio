@@ -126,7 +126,7 @@ a note below the table.
 | Save a copy of the original PDF | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Extension and desktop UI: e2e compares the SHA-256 of the saved file with the original. Desktop: Rust unit tests for validation, file names and atomic writes; tauri-driver checks that non-PDF data is refused. The native dialog cannot be automated. |
 | Export pages as images | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
 | Extract text | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
-| Print | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 4 | — |
+| Print | ⛔ Not supported | ⛔ Not supported | ✅ Full † | 4 | E2E (Chromium) prints through the print layout to a PDF and counts its pages; unit tests for page ranges and print resolution. |
 | Save the current webpage as PDF | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported | 5 | — |
 
 - **Save and Save As (Chrome):** Will download a copy; extensions cannot write back to the original file.
@@ -136,6 +136,7 @@ a note below the table.
 - **Save a copy of the original PDF (macOS):** Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path. Implemented and built in CI, but not yet verified on a real Mac.
 - **Save a copy of the original PDF (Windows):** Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Save a copy of the original PDF (Chrome):** Downloaded through Chrome’s downloads; needs no extra permission.
+- **Print (Chrome):** All, current or chosen pages, with or without comments, through Chrome’s print dialog. Folio draws the pages at print resolution on this device first.
 - **Save the current webpage as PDF (macOS):** Not applicable.
 - **Save the current webpage as PDF (Windows):** Not applicable.
 
@@ -161,7 +162,7 @@ a note below the table.
 | Keyboard shortcuts | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | Key matching: unit tests. Browser key set: extension e2e. Desktop key set: desktop UI e2e in Chromium. Menu accelerators: Rust unit tests only. |
 | Light, dark and system themes | ✅ Full | ✅ Full | ✅ Full | — | E2E (including axe checks in both themes). |
 | Clipboard | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | E2E (Chromium) reads the clipboard after copying. |
-| Autosave and crash recovery | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 4 | Serialization unit tests. |
+| Autosave and crash recovery | ⛔ Not supported † | ⛔ Not supported † | ✅ Full † | 4 | Unit tests restore documents with their history, passwords asked again and damaged records refused; e2e (Chromium) restores after closing the tab and checks that saved work leaves nothing behind. |
 | Automatic updates | ⛔ Not supported † | ⛔ Not supported † | ⛔ Not supported † | 7 | — |
 | Installers | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | CI release builds on macOS and Windows runners (see README). |
 | Send documents between the extension and the desktop app | ⛔ Not supported | ⛔ Not supported | ⛔ Not supported | 5 | — |
@@ -177,7 +178,7 @@ a note below the table.
 - **Clipboard (Chrome):** Document property values and selected page text.
 - **Autosave and crash recovery (macOS):** The validated recovery snapshot format exists in the shared core.
 - **Autosave and crash recovery (Windows):** The validated recovery snapshot format exists in the shared core.
-- **Autosave and crash recovery (Chrome):** The validated recovery snapshot format exists in the shared core.
+- **Autosave and crash recovery (Chrome):** Unsaved changes are kept in the extension’s storage on this device two seconds after each change and offered when the editor opens again. Saving, closing or discarding deletes them; documents open in another editor tab are not offered.
 - **Automatic updates (macOS):** Requires an updater signing key and a release feed.
 - **Automatic updates (Windows):** Requires an updater signing key and a release feed.
 - **Automatic updates (Chrome):** Will be handled by the Chrome Web Store once published.
