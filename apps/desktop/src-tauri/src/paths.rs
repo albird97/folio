@@ -48,15 +48,30 @@ pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     builder.create(dir)
 }
 
-/// Creates Folio's data folder if needed and, on Unix, makes sure only the
-/// user can enter it, also when it already existed with looser permissions.
+/// Creates Folio's data folder if needed; on Unix only the user can enter
+/// the folders Folio creates. An existing folder is only made private when
+/// it is Folio's own folder below the system data directory, never a folder
+/// named through [`DATA_DIR_ENV`], which Folio did not create.
 pub fn prepare_data_dir(dir: &Path) -> std::io::Result<()> {
+    prepare(dir, !data_dir_is_overridden())
+}
+
+fn prepare(dir: &Path, own: bool) -> std::io::Result<()> {
+    let existed = std::fs::symlink_metadata(dir).is_ok();
     create_private_dir(dir)?;
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    if existed && own {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let metadata = std::fs::symlink_metadata(dir)?;
+        // SAFETY: geteuid has no preconditions.
+        let user = unsafe { libc::geteuid() };
+        // A real folder of this user's, not a link to somewhere else.
+        if metadata.is_dir() && metadata.uid() == user && metadata.mode() & 0o777 != 0o700 {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        }
     }
+    #[cfg(not(unix))]
+    let _ = (existed, own);
     Ok(())
 }
 
@@ -376,15 +391,32 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn tightens_an_existing_data_folder() {
+    fn makes_only_its_own_data_folder_private() {
         use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
         let dir = tempfile::tempdir().unwrap();
-        let data = dir.path().join("data");
-        std::fs::create_dir(&data).unwrap();
-        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o755)).unwrap();
-        prepare_data_dir(&data).unwrap();
-        let mode = std::fs::metadata(&data).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o700);
+        // Folio's folder below the system data directory, from an older build.
+        let own = dir.path().join("own");
+        std::fs::create_dir(&own).unwrap();
+        std::fs::set_permissions(&own, std::fs::Permissions::from_mode(0o755)).unwrap();
+        prepare(&own, true).unwrap();
+        assert_eq!(mode(&own), 0o700);
+        // A folder named through FOLIO_DATA_DIR is left as it is...
+        let named = dir.path().join("named");
+        std::fs::create_dir(&named).unwrap();
+        std::fs::set_permissions(&named, std::fs::Permissions::from_mode(0o755)).unwrap();
+        prepare(&named, false).unwrap();
+        assert_eq!(mode(&named), 0o755);
+        // ...unless Folio creates it, parents included.
+        let created = dir.path().join("new").join("data");
+        prepare(&created, false).unwrap();
+        assert_eq!(mode(&created), 0o700);
+        assert_eq!(mode(&dir.path().join("new")), 0o700);
+        // A link is not followed.
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&named, &link).unwrap();
+        prepare(&link, true).unwrap();
+        assert_eq!(mode(&named), 0o755);
     }
 
     #[test]

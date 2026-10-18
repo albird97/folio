@@ -1,5 +1,9 @@
 //! Runs the real binary the way Chrome starts a native messaging host and
 //! sends a document through it.
+//!
+//! Debug builds only: release builds ignore FOLIO_NATIVE_HOST_NO_LAUNCH and
+//! would start the app for every document.
+#![cfg(debug_assertions)]
 
 use base64::Engine as _;
 use serde_json::{json, Value};

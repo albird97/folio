@@ -44,7 +44,8 @@ pub const MAX_REPLY_BYTES: usize = 1024 * 1024;
 pub const MAX_TRANSFER_BYTES: u64 = 512 * 1024 * 1024;
 /// Largest decoded chunk.
 pub const MAX_CHUNK_BYTES: usize = 8 * 1024 * 1024;
-/// `1` spools transfers without starting the app (tests).
+/// `1` spools transfers without starting the app, in debug builds only
+/// (tests); release builds ignore it.
 pub const NO_LAUNCH_ENV: &str = "FOLIO_NATIVE_HOST_NO_LAUNCH";
 const ORIGIN_PREFIX: &str = "chrome-extension://";
 /// PDF readers accept the header anywhere in the first 1024 bytes.
@@ -616,6 +617,11 @@ pub fn launch_app(dir: &Path, id: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Whether [`NO_LAUNCH_ENV`] (with this value) turns starting the app off.
+fn launch_disabled_by(value: Option<&OsStr>) -> bool {
+    cfg!(debug_assertions) && value == Some(OsStr::new("1"))
+}
+
 /// Host mode: serves Chrome on stdin/stdout. `origin` is the first argument
 /// Chrome passed. Returns the exit code.
 pub fn run_stdio(origin: Option<&OsStr>) -> i32 {
@@ -634,9 +640,10 @@ pub fn run_stdio(origin: Option<&OsStr>) -> i32 {
     if let Some(base) = &incoming {
         incoming::purge(base, SystemTime::now(), false);
     }
-    let launch = match std::env::var(NO_LAUNCH_ENV) {
-        Ok(value) if value == "1" => None,
-        _ => Some(Box::new(launch_app) as Launch),
+    let launch = if launch_disabled_by(std::env::var_os(NO_LAUNCH_ENV).as_deref()) {
+        None
+    } else {
+        Some(Box::new(launch_app) as Launch)
     };
     let mut host = Host::new(incoming, launch);
     let served = host.serve(&mut io::stdin().lock(), &mut stdout);
@@ -763,6 +770,17 @@ mod tests {
             assert!(!origin_allowed(Some(OsStr::new(&origin))), "{origin}");
         }
         assert!(!origin_allowed(None));
+    }
+
+    #[test]
+    fn only_debug_builds_can_turn_starting_the_app_off() {
+        assert_eq!(
+            launch_disabled_by(Some(OsStr::new("1"))),
+            cfg!(debug_assertions)
+        );
+        assert!(!launch_disabled_by(Some(OsStr::new("0"))));
+        assert!(!launch_disabled_by(Some(OsStr::new("true"))));
+        assert!(!launch_disabled_by(None));
     }
 
     #[test]
