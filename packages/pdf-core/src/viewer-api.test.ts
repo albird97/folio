@@ -1,3 +1,4 @@
+import { PDFDocument } from '@cantoo/pdf-lib';
 import { afterAll, describe, expect, it } from 'vitest';
 import { makeLargePdf, nodeWorkerSrc, readFixture } from '../../../tests/setup/fixtures';
 import { createPdfEngine, EAGER_PAGE_COUNT } from './engine';
@@ -140,6 +141,20 @@ describe('viewports', () => {
     const [x, y] = applyTransform(turned.transform, 0, 792);
     expect([Math.round(x), Math.round(y)]).toEqual([792, 0]);
     await handle.destroy();
+  });
+
+  it('reports where page space starts: the corner of the crop box', async () => {
+    const pdf = await PDFDocument.create({ updateMetadata: false });
+    pdf.addPage([600, 800]).setCropBox(50, 60, 500, 700);
+    const handle = await engine.open(await pdf.save());
+    const viewport = await handle.getViewport(0, { scale: 2, rotation: 90 });
+    expect(viewport.origin).toEqual({ x: 50, y: 60 });
+    // Turned a quarter clockwise, the lower-left corner shows top-left.
+    expect(applyTransform(viewport.transform, 50, 60).map((value) => value + 0)).toEqual([0, 0]);
+    expect(applyTransform(viewport.transform, 550, 760)).toEqual([1400, 1000]);
+    const plain = await engine.open(readFixture('basic-3-pages.pdf'));
+    expect((await plain.getViewport(0, { scale: 1 })).origin).toEqual({ x: 0, y: 0 });
+    await Promise.all([handle.destroy(), plain.destroy()]);
   });
 
   it('combines the stored rotation with the view rotation', async () => {

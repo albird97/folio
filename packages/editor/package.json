@@ -9,7 +9,8 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./viewer.css": "./src/viewer/viewer.css"
+    "./viewer.css": "./src/viewer/viewer.css",
+    "./vite-plugin": "./vite/plugin.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
@@ -20,8 +21,14 @@
     "@folio/platform-adapters": "workspace:*",
     "@folio/shared-ui": "workspace:*",
     "@fontsource-variable/dancing-script": "^5.3.0",
+    "@tesseract.js-data/chi_sim": "1.0.0",
+    "@tesseract.js-data/chi_tra": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/ind": "1.0.0",
     "lucide-react": "^1.59.0",
     "radix-ui": "^1.8.1",
+    "tesseract.js": "7.0.0",
+    "tesseract.js-core": "7.0.0",
     "zustand": "^5.0.15"
   },
   "peerDependencies": {

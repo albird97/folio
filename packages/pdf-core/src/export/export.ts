@@ -22,6 +22,7 @@ import {
   pruneRemovedPages,
   replacePageTree,
 } from './objects';
+import { RecognizedTextWriter } from './recognized-text';
 import { StampWriter } from './stamps';
 
 export interface ExportSource {
@@ -119,10 +120,10 @@ async function loadSource(source: ExportSource | undefined, id: SourceId): Promi
 
 /**
  * Writes the document as a new PDF: pages in model order with their
- * rotation, pages from other files, blank pages, page numbers and watermark,
- * Folio's annotations and the metadata. Removed pages and everything only
- * they used are left out of the file entirely, so nothing deleted can be
- * recovered from it.
+ * rotation, pages from other files, blank pages, recognized text, page
+ * numbers and watermark, Folio's annotations and the metadata. Removed pages
+ * and everything only they used are left out of the file entirely, so
+ * nothing deleted can be recovered from it.
  */
 export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   const { model } = options;
@@ -211,7 +212,7 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     output.map((entry) => entry.page),
   );
 
-  // Page numbers, watermark and annotations.
+  // Recognized text, page numbers, watermark and annotations.
   const pageAnnotations = new Map<PageId, Annotation[]>();
   for (const annotation of Object.values(model.annotations)) {
     const list = pageAnnotations.get(annotation.pageId);
@@ -225,6 +226,7 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   }
   const fonts = new StandardFontSet(doc);
   const stamper = new StampWriter(doc, fonts);
+  const recognized = new RecognizedTextWriter(doc, model, options.assets);
   const writer = new AnnotationWriter(doc, assets, fonts);
   await writer.prepare(output.flatMap((entry) => pageAnnotations.get(entry.model.id) ?? []));
   const flatten = options.flatten ?? model.exportConfig.flattenAnnotations;
@@ -239,11 +241,14 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
       positions.get(pageModel.id)!,
       model.pages.length,
     );
-    if (annotations.length === 0 && stamps.length === 0) continue;
+    const text = recognized.textOf(pageModel);
+    if (annotations.length === 0 && stamps.length === 0 && !text) continue;
     isolatePageEntries(page);
     // Model geometry is relative to the lower-left corner of the visible area.
     const origin = pageOrigin(page);
     const offset = { dx: origin.x, dy: origin.y };
+    // Recognized text (invisible) belongs to the page's image, under what Folio adds.
+    if (text) recognized.write(page, text, offset);
     // Stamps first, so flattened annotations cover them as they do on screen.
     stamper.draw(page, stamps, offset);
     if (flatten) writer.flatten(page, annotations, offset);

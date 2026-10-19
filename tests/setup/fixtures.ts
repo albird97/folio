@@ -14,6 +14,7 @@ export type FixtureName =
   | 'encrypted-rc4.pdf'
   | 'outline-and-text.pdf'
   | 'filled-form.pdf'
+  | 'scanned-pages.pdf'
   | 'not-a-pdf.pdf'
   | 'empty.pdf'
   | 'header-only.pdf';
@@ -26,6 +27,20 @@ export function readFixture(name: FixtureName): Uint8Array {
 export function nodeWorkerSrc(): string {
   const require = createRequire(import.meta.url);
   return pathToFileURL(require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs')).href;
+}
+
+/**
+ * A canvas pages can be drawn into in Node tests: PDF.js' own canvas package
+ * (@napi-rs/canvas), which implements the parts of HTMLCanvasElement the
+ * engine and the OCR runner use (getContext('2d'), toBlob).
+ */
+export function createNodeCanvas(): HTMLCanvasElement {
+  const require = createRequire(import.meta.url);
+  const pdfjs = createRequire(require.resolve('pdfjs-dist/package.json'));
+  const { createCanvas } = pdfjs('@napi-rs/canvas') as {
+    createCanvas(width: number, height: number): unknown;
+  };
+  return createCanvas(1, 1) as HTMLCanvasElement;
 }
 
 /**
