@@ -2,10 +2,13 @@ import {
   normalizeRotation,
   type DocumentMetadata,
   type EncryptionState,
+  type FormFieldDescriptor,
+  type FormFieldValue,
   type Rotation,
 } from '@folio/document-model';
 import {
   AnnotationMode,
+  AnnotationType,
   GlobalWorkerOptions,
   InvalidPDFException,
   PDFDateString,
@@ -22,6 +25,18 @@ import {
   type PDFPageProxy,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PdfError } from './errors';
+import {
+  fieldDescriptor,
+  indexFields,
+  needsListValue,
+  sameFieldValue,
+  storedValues,
+  widgetFrom,
+  type FieldObjectLike,
+  type FormFieldEntry,
+  type FormWidget,
+  type WidgetAnnotationLike,
+} from './forms';
 import { normalizeMetadata, type PdfJsInfo, type XmpLike } from './metadata';
 import { resolveOutline, type OutlineItem, type RawOutlineNode } from './outline';
 import {
@@ -150,6 +165,26 @@ export interface PdfDocumentHandle {
   renderTextLayer(pageIndex: number, container: HTMLElement, options: ViewOptions): TextLayerJob;
   getViewport(pageIndex: number, options: ViewOptions): Promise<PageViewportInfo>;
   getOutline(): Promise<OutlineItem[]>;
+  /**
+   * The fields of the file's interactive form (AcroForm) with the values the
+   * file has; none for documents without one, or with an XFA form.
+   */
+  getFormFields(): Promise<FormFieldDescriptor[]>;
+  /** The form widgets of a page in the page's annotation order, hidden ones included. */
+  getFormWidgets(pageIndex: number): Promise<FormWidget[]>;
+  /**
+   * Fills in fields (by name) for rendering and `saveFormValues`: pages are
+   * drawn with these values from then on. Fields or values that do not fit
+   * are left alone. Returns the pages whose fields show something else now.
+   * Takes effect once `getFormFields` has resolved.
+   */
+  setFormValues(values: Iterable<readonly [string, FormFieldValue]>): number[];
+  /**
+   * The file with the filled-in values written into it as an incremental
+   * update (values and their appearances, encryption kept), or null while
+   * every field has the file's own value. Password fields are never written.
+   */
+  saveFormValues(): Promise<Uint8Array | null>;
   /** Frees cached rendering resources of a page that is no longer on screen. */
   releasePage(pageIndex: number): void;
   destroy(): Promise<void>;
@@ -229,6 +264,11 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
   #textCache = new Map<number, Promise<TextContentLike>>();
   /** Pages PDF.js has loaded (and may hold rendering resources for). */
   #loaded = new Set<number>();
+  #formFields: Promise<FormFieldEntry[]> | null = null;
+  /** Form fields by name, once read; `setFormValues` needs them. */
+  #fields: ReadonlyMap<string, FormFieldEntry> | null = null;
+  /** Widget annotations by page; they never change. */
+  #widgets = new Map<number, Promise<WidgetAnnotationLike[]>>();
   #resolvePagesReady!: () => void;
   readonly pagesReady: Promise<void>;
 
@@ -342,9 +382,11 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
         canvas,
         viewport,
         intent: options.intent ?? 'display',
-        // Form fields are drawn from their appearances like other annotations:
-        // there is no HTML form layer to show them (and their values) instead.
-        annotationMode: AnnotationMode.ENABLE,
+        // Form fields are drawn from their appearances like other annotations,
+        // with the values from `setFormValues` (PDF.js draws those as it saves
+        // them), so pages look as they will be saved and printed. Without
+        // values this draws exactly what AnnotationMode.ENABLE does.
+        annotationMode: AnnotationMode.ENABLE_STORAGE,
       });
       cancelTask = () => task.cancel();
       try {
@@ -438,6 +480,105 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
     });
   }
 
+  getFormFields(): Promise<FormFieldDescriptor[]> {
+    this.#formFields ??= this.#readFormFields();
+    return this.#formFields.then((entries) => entries.map(fieldDescriptor));
+  }
+
+  async #readFormFields(): Promise<FormFieldEntry[]> {
+    if (this.info.forms !== 'acroform') return [];
+    try {
+      const objects = (await this.#document.getFieldObjects()) as Map<
+        string,
+        FieldObjectLike[]
+      > | null;
+      if (!objects || this.#destroyed) return [];
+      // A signed signature field cannot be signed again.
+      const signed = new Set<string>();
+      if (this.info.hasSignatures) {
+        const signatures = ((await this.#document.getSignatures()) ?? []) as Array<{
+          id?: unknown;
+        }>;
+        for (const { id } of signatures) {
+          if (typeof id === 'string') signed.add(id.split(':')[0]!);
+        }
+      }
+      const lists = new Map<string, string[]>();
+      for (const [name, list] of objects) {
+        const widget = list.find(needsListValue);
+        if (!widget) continue;
+        const data = (await this.#widgetAnnotations(widget.page as number)).find(
+          (annotation) => annotation.id === widget.id,
+        );
+        if (Array.isArray(data?.fieldValue)) {
+          lists.set(
+            name,
+            data.fieldValue.filter((value): value is string => typeof value === 'string'),
+          );
+        }
+      }
+      const entries = indexFields(objects, signed, lists);
+      this.#fields = new Map(entries.map((entry) => [entry.name, entry]));
+      return entries;
+    } catch {
+      // A form PDF.js cannot read stays on the pages as it was saved.
+      return [];
+    }
+  }
+
+  #widgetAnnotations(pageIndex: number): Promise<WidgetAnnotationLike[]> {
+    const cached = this.#widgets.get(pageIndex);
+    if (cached) return cached;
+    const widgets = this.#getPage(pageIndex).then(async (page) => {
+      const annotations = (await page.getAnnotations({ intent: 'display' })) as Array<
+        WidgetAnnotationLike & { annotationType?: unknown }
+      >;
+      return annotations.filter(
+        (annotation) =>
+          annotation.annotationType === AnnotationType.WIDGET && typeof annotation.id === 'string',
+      );
+    });
+    widgets.catch(() => this.#widgets.delete(pageIndex));
+    this.#widgets.set(pageIndex, widgets);
+    return widgets;
+  }
+
+  async getFormWidgets(pageIndex: number): Promise<FormWidget[]> {
+    const [page, annotations] = await Promise.all([
+      this.#getPage(pageIndex),
+      this.#widgetAnnotations(pageIndex),
+    ]);
+    // Page space starts at the lower-left corner of the visible area.
+    const [x = 0, y = 0] = page.view;
+    return annotations.flatMap((annotation) => widgetFrom(annotation, { x, y }) ?? []);
+  }
+
+  setFormValues(values: Iterable<readonly [string, FormFieldValue]>): number[] {
+    const fields = this.#fields;
+    if (!fields || this.#destroyed) return [];
+    const storage = this.#document.annotationStorage;
+    const pages = new Set<number>();
+    for (const [name, value] of values) {
+      const field = fields.get(name);
+      const stored = field && !field.readOnly ? storedValues(field, value) : null;
+      if (!field || !stored) continue;
+      // The file's own values are left to the file: with nothing stored, pages
+      // render and save exactly as the file has them.
+      const unchanged = sameFieldValue(value, field.value);
+      for (const [id, entry] of stored) {
+        if (unchanged) storage.remove(id);
+        else storage.setValue(id, entry);
+      }
+      for (const widget of field.widgets) if (widget.pageIndex >= 0) pages.add(widget.pageIndex);
+    }
+    return [...pages].sort((a, b) => a - b);
+  }
+
+  async saveFormValues(): Promise<Uint8Array | null> {
+    if (this.#destroyed || this.#document.annotationStorage.size === 0) return null;
+    return this.#document.saveDocument();
+  }
+
   releasePage(pageIndex: number): void {
     if (this.#destroyed || !this.#loaded.has(pageIndex)) return;
     // getPage resolves from PDF.js' cache; cleanup() is a no-op while rendering.
@@ -452,6 +593,7 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
     this.#destroyed = true;
     this.#listeners.clear();
     this.#textCache.clear();
+    this.#widgets.clear();
     await this.#task.destroy();
   }
 }

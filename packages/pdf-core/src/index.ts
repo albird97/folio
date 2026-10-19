@@ -1,5 +1,6 @@
 export * from './engine';
 export * from './errors';
+export * from './forms';
 export * from './sniff';
 export * from './hash';
 export * from './metadata';

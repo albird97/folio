@@ -106,6 +106,154 @@ async function filledForm(): Promise<Uint8Array> {
   return pdf.save({ useObjectStreams: false });
 }
 
+/**
+ * An empty form over two pages with one field of every kind Folio fills in.
+ * Page 1: "name" (text, described as "Full name"), "notes" (multi-line),
+ * "code" (five comb cells), "pin" (password), "agree" (check box) and "size"
+ * (radio buttons S, M and L). Page 2: "country" (drop-down: Indonesia,
+ * Japan, Netherlands), "colors" (list box taking several of Red, Green,
+ * Blue and Yellow), "id" (read-only text "A-17") and "signature" (an
+ * unsigned signature field).
+ */
+async function formFields(): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create({ updateMetadata: false });
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const [one, two] = [pdf.addPage([612, 792]), pdf.addPage([612, 792])] as [PDFPage, PDFPage];
+  const label = (page: PDFPage, text: string, y: number) =>
+    page.drawText(text, { x: 72, y, size: 11, font });
+  one.drawText('Folio form fields, page 1', { x: 72, y: 720, size: 22, font });
+  two.drawText('Folio form fields, page 2', { x: 72, y: 720, size: 22, font });
+  const form = pdf.getForm();
+
+  label(one, 'Full name', 672);
+  const name = form.createTextField('name');
+  name.addToPage(one, { x: 72, y: 640, width: 260, height: 24, font });
+  // The field's description, also on its widget, where PDF.js reads it.
+  for (const dict of [name.acroField.dict, name.acroField.getWidgets()[0]!.dict]) {
+    dict.set(PDFName.of('TU'), PDFHexString.fromText('Full name'));
+  }
+  name.setFontSize(12);
+  label(one, 'Notes', 616);
+  const notes = form.createTextField('notes');
+  notes.enableMultiline();
+  notes.addToPage(one, { x: 72, y: 520, width: 260, height: 88, font });
+  notes.setFontSize(11);
+  label(one, 'Code (five characters)', 496);
+  const code = form.createTextField('code');
+  code.setMaxLength(5);
+  code.enableCombing();
+  code.addToPage(one, { x: 72, y: 464, width: 150, height: 24, font });
+  code.setFontSize(14);
+  label(one, 'PIN', 440);
+  const pin = form.createTextField('pin');
+  pin.enablePassword();
+  pin.addToPage(one, { x: 72, y: 408, width: 100, height: 24, font });
+  pin.setFontSize(12);
+  const agree = form.createCheckBox('agree');
+  agree.addToPage(one, { x: 72, y: 368, width: 18, height: 18 });
+  one.drawText('I agree', { x: 98, y: 372, size: 11, font });
+  label(one, 'Size', 332);
+  const size = form.createRadioGroup('size');
+  ['S', 'M', 'L'].forEach((option, index) => {
+    size.addOptionToPage(option, one, { x: 72 + index * 48, y: 300, width: 18, height: 18 });
+    one.drawText(option, { x: 96 + index * 48, y: 304, size: 11, font });
+  });
+
+  label(two, 'Country', 672);
+  const country = form.createDropdown('country');
+  country.addOptions(['Indonesia', 'Japan', 'Netherlands']);
+  country.addToPage(two, { x: 72, y: 640, width: 200, height: 24, font });
+  country.setFontSize(12);
+  label(two, 'Colours', 616);
+  const colors = form.createOptionList('colors');
+  colors.addOptions(['Red', 'Green', 'Blue', 'Yellow']);
+  colors.enableMultiselect();
+  colors.addToPage(two, { x: 72, y: 528, width: 200, height: 80, font });
+  colors.setFontSize(12);
+  label(two, 'Reference', 504);
+  const id = form.createTextField('id');
+  id.setText('A-17');
+  id.enableReadOnly();
+  id.addToPage(two, { x: 72, y: 472, width: 150, height: 24, font });
+  id.setFontSize(12);
+  form.updateFieldAppearances(font);
+
+  // pdf-lib does not create signature fields: this one is a plain widget
+  // without an appearance, over a box drawn on the page.
+  label(two, 'Signature', 448);
+  two.drawRectangle({
+    x: 72,
+    y: 376,
+    width: 220,
+    height: 64,
+    borderColor: rgb(0.6, 0.6, 0.6),
+    borderWidth: 1,
+  });
+  const { context } = pdf;
+  const signature = context.register(
+    context.obj({
+      Type: 'Annot',
+      Subtype: 'Widget',
+      FT: 'Sig',
+      T: PDFString.of('signature'),
+      Rect: [72, 376, 292, 440],
+      F: 4,
+      P: two.ref,
+    }),
+  );
+  two.node.addAnnot(signature);
+  form.acroForm.addField(signature);
+
+  pdf.setTitle('Folio Form Fields Fixture');
+  pdf.setCreationDate(CREATED);
+  pdf.setModificationDate(MODIFIED);
+  return pdf.save({ useObjectStreams: false, updateFieldAppearances: false });
+}
+
+/**
+ * A form with an XFA part (as Adobe LiveCycle Designer writes them) and an
+ * AcroForm field with a stored appearance standing in for it, so PDF.js
+ * reports XFA and the page shows the field's value as it was saved.
+ */
+async function xfaForm(): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create({ updateMetadata: false });
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const page = pdf.addPage([612, 792]);
+  page.drawText('Folio XFA form fixture', { x: 72, y: 720, size: 22, font });
+  page.drawText('Name', { x: 72, y: 672, size: 11, font });
+  const form = pdf.getForm();
+  const name = form.createTextField('form1[0].name[0]');
+  name.setText('Grace Hopper');
+  name.addToPage(page, { x: 72, y: 640, width: 260, height: 24, font });
+  name.setFontSize(12);
+  form.updateFieldAppearances(font);
+  const { context } = pdf;
+  const packet = (xml: string) => context.register(context.stream(xml));
+  form.acroForm.dict.set(
+    PDFName.of('XFA'),
+    context.obj([
+      PDFString.of('preamble'),
+      packet('<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">'),
+      PDFString.of('template'),
+      packet(
+        '<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">' +
+          '<subform name="form1"><field name="name"/></subform></template>',
+      ),
+      PDFString.of('datasets'),
+      packet(
+        '<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">' +
+          '<xfa:data><form1><name>Grace Hopper</name></form1></xfa:data></xfa:datasets>',
+      ),
+      PDFString.of('postamble'),
+      packet('</xdp:xdp>'),
+    ]),
+  );
+  pdf.setTitle('Folio XFA Form Fixture');
+  pdf.setCreationDate(CREATED);
+  pdf.setModificationDate(MODIFIED);
+  return pdf.save({ useObjectStreams: false, updateFieldAppearances: false });
+}
+
 interface OutlineNode {
   title: string;
   dest?: PDFObject;
@@ -239,6 +387,8 @@ async function main(): Promise<void> {
   writeFileSync(join(OUT, 'rotated-pages.pdf'), await rotated());
   writeFileSync(join(OUT, 'outline-and-text.pdf'), await outlineAndText());
   writeFileSync(join(OUT, 'filled-form.pdf'), await filledForm());
+  writeFileSync(join(OUT, 'form-fields.pdf'), await formFields());
+  writeFileSync(join(OUT, 'xfa-form.pdf'), await xfaForm());
 
   // AES-256, user password required to open.
   qpdf([
