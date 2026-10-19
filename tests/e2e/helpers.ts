@@ -80,3 +80,34 @@ export const recoveryRecords = (page: Page) =>
         };
       }),
   );
+
+/** Runs `action` and returns the name and bytes of the file it downloads. */
+export async function download(page: Page, action: () => Promise<unknown>) {
+  const pending = page.waitForEvent('download');
+  await action();
+  const file = await pending;
+  return { name: file.suggestedFilename(), bytes: readFileSync((await file.path())!) };
+}
+
+/** Entries of a stored (uncompressed) ZIP archive, read from its central directory. */
+export function unzip(zip: Buffer): Array<{ name: string; bytes: Buffer }> {
+  const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = zip.readUInt16LE(end + 10);
+  let offset = zip.readUInt32LE(end + 16);
+  const entries: Array<{ name: string; bytes: Buffer }> = [];
+  for (let index = 0; index < count; index += 1) {
+    const size = zip.readUInt32LE(offset + 24);
+    const nameLength = zip.readUInt16LE(offset + 28);
+    const extraLength = zip.readUInt16LE(offset + 30);
+    const commentLength = zip.readUInt16LE(offset + 32);
+    const local = zip.readUInt32LE(offset + 42);
+    const name = zip.toString('utf8', offset + 46, offset + 46 + nameLength);
+    const data = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+    entries.push({ name, bytes: zip.subarray(data, data + size) });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+/** Width and height from a PNG's header. */
+export const pngSize = (png: Buffer) => [png.readUInt32BE(16), png.readUInt32BE(20)];

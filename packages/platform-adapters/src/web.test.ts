@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createMemoryStorage } from './memory';
-import { Channel, createLocalStorage, detectOperatingSystem, isPdfFileName } from './web';
+import {
+  Channel,
+  createLocalStorage,
+  detectOperatingSystem,
+  downloadBytes,
+  fileNameFor,
+  isPdfFileName,
+} from './web';
 
 describe('web adapter helpers', () => {
   it('detects operating systems from navigator hints', () => {
@@ -54,6 +61,58 @@ describe('web adapter helpers', () => {
     } as unknown as Storage);
     await expect(throwing.set('x', 1)).resolves.toBeUndefined();
     expect(await throwing.get('x')).toBeUndefined();
+  });
+
+  it('names downloads after the kind of file they are', () => {
+    expect(fileNameFor('pdf', 'Report')).toBe('Report.pdf');
+    expect(fileNameFor('png', 'Report-page-1')).toBe('Report-page-1.png');
+    expect(fileNameFor('jpeg', 'Report-page-1')).toBe('Report-page-1.jpg');
+    expect(fileNameFor('jpeg', 'Photo.JPEG')).toBe('Photo.JPEG');
+    expect(fileNameFor('jpeg', 'Photo.jpg')).toBe('Photo.jpg');
+    expect(fileNameFor('zip', 'Report (images)')).toBe('Report (images).zip');
+    expect(fileNameFor('text', 'Report (text).txt')).toBe('Report (text).txt');
+    // Names stay names (no folders) and keep the kind's extension.
+    expect(fileNameFor('png', 'a/b\\c:d.exe')).toBe('a b c d.exe.png');
+    expect(fileNameFor('text', '')).toBe('Document.txt');
+  });
+
+  it('downloads files with the MIME type of their kind', async () => {
+    const clicked: Array<{ name: string; type: string }> = [];
+    const blobs = new Map<string, Blob>();
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = (blob: Blob) => {
+      const url = `blob:test/${blobs.size}`;
+      blobs.set(url, blob);
+      return url;
+    };
+    URL.revokeObjectURL = () => undefined;
+    const doc = {
+      body: { append: () => undefined },
+      createElement: () => {
+        const link = {
+          href: '',
+          download: '',
+          rel: '',
+          style: {},
+          click: () => clicked.push({ name: link.download, type: blobs.get(link.href)!.type }),
+          remove: () => undefined,
+        };
+        return link;
+      },
+    } as unknown as Document;
+    try {
+      downloadBytes('a.zip', new Uint8Array([1]), 'zip', doc);
+      downloadBytes('a.txt', new Uint8Array([1]), 'text', doc);
+      downloadBytes('a.pdf', new Uint8Array([1]), undefined, doc);
+    } finally {
+      URL.createObjectURL = original.create;
+      URL.revokeObjectURL = original.revoke;
+    }
+    expect(clicked).toEqual([
+      { name: 'a.zip', type: 'application/zip' },
+      { name: 'a.txt', type: 'text/plain;charset=utf-8' },
+      { name: 'a.pdf', type: 'application/pdf' },
+    ]);
   });
 
   it('isolates memory storage values', async () => {

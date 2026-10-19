@@ -213,6 +213,49 @@ pub async fn save_pdf_as(
     Ok(Some(SavedFile { name, token }))
 }
 
+/// Exports that are not PDFs (page images, a ZIP archive of them, text):
+/// shows the native save dialog for the kind named in `x-folio-kind` and
+/// writes the raw request body to the file the user chose. The data must be
+/// of that kind, which is checked before a dialog appears; the proposed name
+/// comes in `x-folio-name` and gets the kind's extension. Such files are not
+/// granted or listed among recent files (Folio opens PDFs only). Resolves to
+/// `null` when the user cancels; the webview only learns the chosen name.
+#[tauri::command]
+pub async fn save_file_as(
+    app: AppHandle,
+    window: WebviewWindow,
+    grants: State<'_, FileGrants>,
+    request: Request<'_>,
+) -> Result<Option<SavedFile>, CommandError> {
+    let bytes = raw_body(&request)?;
+    let kind = save::ExportKind::parse(header(&request, save::KIND_HEADER))?;
+    kind.check(bytes)?;
+    let proposed = kind.suggested_file_name(header(&request, save::NAME_HEADER));
+    let (sender, receiver) = tokio::sync::oneshot::channel::<Option<PathBuf>>();
+    app.dialog()
+        .file()
+        .set_parent(&window)
+        .set_title(kind.dialog_title())
+        .set_file_name(&proposed)
+        .add_filter(kind.filter_name(), kind.extensions())
+        .save_file(move |path| {
+            let _ = sender.send(path.and_then(|path| path.into_path().ok()));
+        });
+    let Some(target) = receiver.await.ok().flatten() else {
+        return Ok(None);
+    };
+    // Never into Folio's own data, like PDFs.
+    if block_in_place(|| grants.is_reserved(&target)) {
+        return Err(SaveError::Reserved.into());
+    }
+    block_in_place(|| save::write_atomically(&target, bytes))?;
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or(proposed);
+    Ok(Some(SavedFile { name, token: None }))
+}
+
 /// "Save": writes the PDF data in the raw request body back to the file a
 /// token grants (`x-folio-token`), unless the file no longer has the content
 /// whose SHA-256 is in `x-folio-expected-sha256`. `x-folio-overwrite: 1`

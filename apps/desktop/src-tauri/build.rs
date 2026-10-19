@@ -9,6 +9,7 @@ fn main() {
             "release_file",
             "take_pending_files",
             "save_pdf_as",
+            "save_file_as",
             "write_granted_file",
             "print_window",
             "app_info",

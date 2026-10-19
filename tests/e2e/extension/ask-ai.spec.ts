@@ -25,6 +25,9 @@ test('asks Claude through the service worker, which alone holds the key', async 
   serviceWorker,
   extensionUrl,
 }) => {
+  // Routing service-worker requests makes the worker's extension APIs arrive late,
+  // and the test waits for them: under a loaded machine that alone can take 20 s.
+  test.slow();
   const sent: Array<{ path: string; key: string | undefined; fromWorker: boolean }> = [];
   await context.route('https://api.anthropic.com/**', async (route) => {
     const request = route.request();

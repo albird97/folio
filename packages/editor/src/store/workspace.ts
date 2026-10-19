@@ -46,7 +46,7 @@ import {
   type PdfEngine,
   type PdfErrorCode,
 } from '@folio/pdf-core';
-import type { ExportResult } from '@folio/pdf-core/export';
+import type { CompressionOptions, ExportResult, Protection } from '@folio/pdf-core/export';
 import type { IncomingFile } from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { pageTextWithRecognized } from '../ocr/page-text';
@@ -166,11 +166,23 @@ export interface ExportRequest {
   flatten?: boolean;
   /**
    * Leave out the original's password protection. Only for bytes that never
-   * leave memory (printing); saved files always keep it.
+   * leave memory (printing, page images); saved files keep it unless the
+   * user chose otherwise (`protection`).
    */
   unprotected?: boolean;
+  /**
+   * The protection the user chose for a saved copy (Password protection):
+   * 'none' removes it. Default: the opened file's.
+   */
+  protection?: Protection | 'none';
+  /** Make the file smaller (Reduce file size). */
+  compression?: CompressionOptions;
   /** Leave out Folio's annotations (printing without comments). */
   withoutAnnotations?: boolean;
+  /** Leave out the page numbers and the watermark. */
+  withoutStamps?: boolean;
+  /** Leave out values filled in with Folio: the form shows the file's own. */
+  withoutFormValues?: boolean;
   /** Burn the form's fields into the pages; the copy has no form left to fill in. */
   flattenForms?: boolean;
 }
@@ -986,7 +998,9 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       const primary = [...entry.sources.values()][0];
       // Values filled in become the opened file's own form values (with their
       // appearances), on which the rest of the document is assembled.
-      const filled = (await primary?.handle.saveFormValues()) ?? null;
+      const filled = request.withoutFormValues
+        ? null
+        : ((await primary?.handle.saveFormValues()) ?? null);
       const sources = new Map(
         [...entry.sources].map(([id, source]) => {
           const bytes = filled && source === primary ? filled : source.bytes;
@@ -998,19 +1012,25 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       );
       const model = doc.editor.model;
       return exportPdf({
-        model: request.withoutAnnotations
-          ? { ...model, annotations: {} as typeof model.annotations }
-          : model,
+        model: {
+          ...model,
+          ...(request.withoutAnnotations ? { annotations: {} as typeof model.annotations } : {}),
+          ...(request.withoutStamps ? { stamps: { pageNumbers: null, watermark: null } } : {}),
+        },
         sources,
         assets: entry.assets,
         ...(request.pageIds ? { pageIds: request.pageIds } : {}),
         ...(request.flatten === undefined ? {} : { flatten: request.flatten }),
         ...(request.flattenForms ? { flattenForms: true } : {}),
-        // Saved copies stay as protected as the opened file.
+        // Saved copies stay as protected as the opened file, unless the user chose otherwise.
         protection:
-          doc.info.encryption === 'none' || request.unprotected
+          request.protection === 'none' || request.unprotected
             ? null
-            : { userPassword: primary?.password ?? '', permissions: doc.info.permissions },
+            : (request.protection ??
+              (doc.info.encryption === 'none'
+                ? null
+                : { userPassword: primary?.password ?? '', permissions: doc.info.permissions })),
+        ...(request.compression ? { compression: request.compression } : {}),
       });
     }
 
