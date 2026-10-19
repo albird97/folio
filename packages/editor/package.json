@@ -19,6 +19,7 @@
     "@folio/pdf-core": "workspace:*",
     "@folio/platform-adapters": "workspace:*",
     "@folio/shared-ui": "workspace:*",
+    "@fontsource-variable/dancing-script": "^5.3.0",
     "lucide-react": "^1.59.0",
     "radix-ui": "^1.8.1",
     "zustand": "^5.0.15"
@@ -31,6 +32,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "vite": "^8.3.4"
   }
 }

@@ -123,6 +123,33 @@ describe('ui store', () => {
     expect(storage.data.get(UI_STORAGE_KEY)).not.toHaveProperty('tool');
   });
 
+  it('holds a signature to place only while the Signature tool is picked', async () => {
+    const storage = createMemoryStorage();
+    const store = createUiStore(storage);
+    await settle();
+    const signature = {
+      docKey: 'a',
+      image: { bytes: new Uint8Array([1, 2, 3]), width: 30, height: 10 },
+    };
+    // Without a signature there is nothing to place.
+    store.getState().setTool('signature');
+    expect(store.getState().tool).toBe('select');
+    store.getState().startPlacingSignature(signature);
+    expect(store.getState()).toMatchObject({ tool: 'signature', pendingSignature: signature });
+    store.getState().setTool('signature');
+    expect(store.getState().pendingSignature).toBe(signature);
+    // Picking another tool drops it.
+    store.getState().setTool('ink');
+    expect(store.getState()).toMatchObject({ tool: 'ink', pendingSignature: null });
+    // Neither is ever stored.
+    store.getState().startPlacingSignature(signature);
+    store.getState().setTheme('dark');
+    await settle();
+    expect(storage.data.get(UI_STORAGE_KEY)).toMatchObject({ theme: 'dark' });
+    expect(storage.data.get(UI_STORAGE_KEY)).not.toHaveProperty('tool');
+    expect(storage.data.get(UI_STORAGE_KEY)).not.toHaveProperty('pendingSignature');
+  });
+
   it('opens the sidebar on a tab and remembers the tab', async () => {
     const storage = createMemoryStorage({
       [UI_STORAGE_KEY]: { leftPanelOpen: false, sidebarTab: 'bookmarks' },

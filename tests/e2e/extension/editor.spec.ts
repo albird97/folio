@@ -259,4 +259,53 @@ test.describe('extension editor', () => {
     await last.waitForTimeout(1000);
     await expect(last.getByRole('dialog')).toHaveCount(0);
   });
+
+  test('signs with a typed name in the bundled handwriting font', async ({ page }) => {
+    await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
+      'basic-3-pages.pdf',
+    ]);
+    await pageRendered(page);
+    // The font comes from the extension itself, which its CSP allows (and nothing else).
+    await page.evaluate(() => {
+      const seen: string[] = [];
+      Object.assign(window, { folioViolations: seen });
+      document.addEventListener('securitypolicyviolation', (event) =>
+        seen.push(`${event.effectiveDirective} ${event.blockedURI}`),
+      );
+    });
+    await page
+      .getByRole('toolbar', { name: 'Comment and drawing tools' })
+      .getByRole('radio', { name: 'Sign' })
+      .click();
+    const dialog = page.getByRole('dialog', { name: 'Add a signature' });
+    await dialog.getByRole('tab', { name: 'Type' }).click();
+    await dialog.getByRole('textbox', { name: 'Your name' }).fill('Ada Lovelace');
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          [...document.fonts]
+            .filter((face) => face.family === 'Folio Signature')
+            .map((face) => face.status),
+        ),
+      )
+      .toContain('loaded');
+    expect(
+      await page.evaluate(
+        () => (window as unknown as { folioViolations: string[] }).folioViolations,
+      ),
+    ).toEqual([]);
+    await dialog.getByRole('button', { name: 'Place on page' }).click();
+    await expect(dialog).toBeHidden();
+    const box = (await page.locator('[data-page="1"]').boundingBox())!;
+    await page.mouse.click(box.x + 300, box.y + 400);
+    await expect(page.locator('[data-annotation-layer="1"] [data-annotation-id]')).toHaveCount(1);
+
+    const saved = await PDFDocument.load(
+      await download(page, () => page.getByRole('button', { name: 'Download PDF' }).click()),
+    );
+    const annots = saved.getPage(0).node.lookupMaybe(PDFName.of('Annots'), PDFArray);
+    const stamp = annots?.lookup(0, PDFDict);
+    expect(stamp?.get(PDFName.of('Subtype'))?.toString()).toBe('/Stamp');
+    expect(stamp?.get(PDFName.of('Name'))?.toString()).toBe('/FolioSignature');
+  });
 });

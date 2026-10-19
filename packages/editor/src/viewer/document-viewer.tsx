@@ -54,6 +54,7 @@ import {
 import { PageView, type PageHits } from './page-view';
 import { PRIORITY, renderCacheKey } from './resources';
 import type { PageOverlayProps } from './page-overlays';
+import { SignatureLayer } from './signature-layer';
 import { StampLayer } from './stamp-layer';
 import { selectedText } from './text-markup';
 import { useDevicePixelRatio } from './use-device-pixel-ratio';
@@ -854,6 +855,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
                   tool={tool}
                   editable={editable}
                 />
+                <SignatureLayer {...overlay} />
               </Fragment>
             );
           })}
