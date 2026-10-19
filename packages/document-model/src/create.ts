@@ -1,17 +1,31 @@
 import { normalizeRotation, type Size } from './geometry';
-import { newDocumentId, newPageId, newSourceId, type SourceId } from './ids';
+import { newDocumentId, newFormFieldId, newPageId, newSourceId, type SourceId } from './ids';
 import {
   DEFAULT_EXPORT_CONFIG,
   DOCUMENT_SCHEMA_VERSION,
   EMPTY_METADATA,
+  NO_STAMPS,
   type DocumentMetadata,
   type DocumentModel,
   type DocumentOrigin,
   type DocumentViewState,
   type EncryptionState,
+  type FormField,
+  type FormFieldType,
+  type FormFieldValue,
   type PageModel,
   type SourceDocument,
 } from './types';
+
+/** A form field as the engine reads it from a file. */
+export interface FormFieldDescriptor {
+  name: string;
+  type: FormFieldType;
+  /** Page of the field's first widget in the file, or null. */
+  pageIndex: number | null;
+  value: FormFieldValue;
+  readOnly: boolean;
+}
 
 /** What a PDF engine reports about a freshly opened file. */
 export interface SourceDescriptor {
@@ -24,6 +38,8 @@ export interface SourceDescriptor {
   metadata: Partial<DocumentMetadata>;
   /** `userUnit` defaults to 1. */
   pages: ReadonlyArray<{ size: Size; rotation: number; userUnit?: number }>;
+  /** The file's interactive form fields (none when omitted). */
+  formFields?: readonly FormFieldDescriptor[];
 }
 
 export function createSourceDocument(descriptor: SourceDescriptor, id: SourceId = newSourceId()) {
@@ -54,6 +70,18 @@ export function createDocumentModel(descriptor: SourceDescriptor): DocumentModel
     throw new RangeError('A PDF document must contain at least one page.');
   }
   const { source, pages } = createSourceDocument(descriptor);
+  const formFields = {} as DocumentModel['formFields'];
+  for (const field of descriptor.formFields ?? []) {
+    const entry: FormField = {
+      id: newFormFieldId(),
+      name: field.name,
+      type: field.type,
+      pageId: field.pageIndex === null ? null : (pages[field.pageIndex]?.id ?? null),
+      value: field.value,
+      readOnly: field.readOnly,
+    };
+    formFields[entry.id] = entry;
+  }
   return {
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
     id: newDocumentId(),
@@ -61,9 +89,11 @@ export function createDocumentModel(descriptor: SourceDescriptor): DocumentModel
     pages,
     metadata: { ...EMPTY_METADATA, ...descriptor.metadata },
     annotations: {} as DocumentModel['annotations'],
-    formFields: {} as DocumentModel['formFields'],
+    formFields,
     assets: {} as DocumentModel['assets'],
     exportConfig: { ...DEFAULT_EXPORT_CONFIG },
+    stamps: NO_STAMPS,
+    textLayers: {},
   };
 }
 

@@ -49,7 +49,17 @@ export type AppCommand =
   | 'rotate-pages-clockwise'
   | 'rotate-pages-counterclockwise'
   | 'delete-pages'
-  | 'extract-pages';
+  | 'extract-pages'
+  // Tools
+  | 'sign'
+  | 'page-numbers'
+  | 'watermark'
+  | 'recognize-text'
+  | 'export-images'
+  | 'export-text'
+  | 'reduce-file-size'
+  | 'protect'
+  | 'ask-ai';
 
 export const APP_COMMANDS: readonly AppCommand[] = [
   'open',
@@ -83,6 +93,15 @@ export const APP_COMMANDS: readonly AppCommand[] = [
   'rotate-pages-counterclockwise',
   'delete-pages',
   'extract-pages',
+  'sign',
+  'page-numbers',
+  'watermark',
+  'recognize-text',
+  'export-images',
+  'export-text',
+  'reduce-file-size',
+  'protect',
+  'ask-ai',
 ];
 
 export interface SaveFileRequest {

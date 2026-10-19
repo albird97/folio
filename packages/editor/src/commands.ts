@@ -39,6 +39,15 @@ const SHARED: Omit<
   'rotate-pages-counterclockwise': [],
   'delete-pages': [],
   'extract-pages': [],
+  sign: [],
+  'page-numbers': [],
+  watermark: [],
+  'recognize-text': [],
+  'export-images': [],
+  'export-text': [],
+  'reduce-file-size': [],
+  protect: [],
+  'ask-ai': [],
 };
 
 export const COMMAND_SHORTCUTS: Record<ShortcutProfile, Record<AppCommand, readonly string[]>> = {
@@ -91,6 +100,15 @@ export const COMMAND_LABELS: Record<AppCommand, string> = {
   'rotate-pages-counterclockwise': 'Rotate pages counterclockwise',
   'delete-pages': 'Delete pages',
   'extract-pages': 'Extract pages…',
+  sign: 'Add a signature…',
+  'page-numbers': 'Page numbers…',
+  watermark: 'Watermark…',
+  'recognize-text': 'Recognize text (OCR)…',
+  'export-images': 'Export pages as images…',
+  'export-text': 'Export text…',
+  'reduce-file-size': 'Reduce file size…',
+  protect: 'Password protection…',
+  'ask-ai': 'Ask Claude about this document…',
 };
 
 /**

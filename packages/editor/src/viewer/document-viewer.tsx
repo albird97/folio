@@ -29,6 +29,7 @@ import type { TextMatch } from '../search/match';
 import { MARKUP_TOOLS } from '../store/ui';
 import type { NavigationTarget, WorkspaceDocument } from '../store/workspace';
 import { AnnotationLayer } from './annotation-layer';
+import { FormLayer } from './form-layer';
 import {
   applyMatrix,
   displaySize,
@@ -52,6 +53,8 @@ import {
 } from './layout';
 import { PageView, type PageHits } from './page-view';
 import { PRIORITY, renderCacheKey } from './resources';
+import type { PageOverlayProps } from './page-overlays';
+import { StampLayer } from './stamp-layer';
 import { selectedText } from './text-markup';
 import { useDevicePixelRatio } from './use-device-pixel-ratio';
 import { clampZoom, fitZoom, stepZoom } from './zoom';
@@ -810,11 +813,23 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
             const hits =
               activeMatch?.pageIndex === index ? activeHits : (groups.get(index)?.hits ?? null);
             const source = pageSource(page);
+            const handle = source ? sourceHandle(source.sourceId) : null;
+            const overlay: PageOverlayProps = {
+              doc,
+              page,
+              position: index,
+              pageCount: pages.length,
+              box,
+              scale: layout.scale,
+              viewRotation: view.rotation,
+              handle,
+              tool,
+            };
             return (
               <Fragment key={page.id}>
                 <PageView
                   cacheKey={renderCacheKey(key, source?.sourceId ?? 'blank')}
-                  handle={source ? sourceHandle(source.sourceId) : null}
+                  handle={handle}
                   position={index}
                   pageCount={pages.length}
                   sourceIndex={source?.pageIndex ?? 0}
@@ -826,6 +841,8 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
                   priority={(visible ? PRIORITY.visiblePage : PRIORITY.nearbyPage) + distance}
                   hits={hits}
                 />
+                <StampLayer {...overlay} />
+                <FormLayer {...overlay} />
                 <AnnotationLayer
                   docKey={key}
                   page={page}

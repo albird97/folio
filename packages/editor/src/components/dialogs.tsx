@@ -19,6 +19,15 @@ import { usePrint } from '../hooks/use-print';
 import { useSave } from '../hooks/use-save';
 import type { DialogRequest } from '../store/ui';
 import { OpenUrlDialog } from './open-url-dialog';
+import { AskAiDialog } from './tools/ask-ai-dialog';
+import { ExportImagesDialog } from './tools/export-images-dialog';
+import { ExportTextDialog } from './tools/export-text-dialog';
+import { PageNumbersDialog } from './tools/page-numbers-dialog';
+import { ProtectDialog } from './tools/protect-dialog';
+import { RecognizeTextDialog } from './tools/recognize-text-dialog';
+import { ReduceFileSizeDialog } from './tools/reduce-file-size-dialog';
+import { SignatureDialog } from './tools/signature-dialog';
+import { WatermarkDialog } from './tools/watermark-dialog';
 import { claimRecord, releaseRecord } from '../store/recovery-locks';
 
 type Of<K extends DialogRequest['kind']> = Extract<DialogRequest, { kind: K }>;
@@ -630,6 +639,24 @@ export function Dialogs() {
         <OpenUrlDialog request={dialog} />
       ) : dialog?.kind === 'desktop-missing' ? (
         <DesktopMissingDialog />
+      ) : dialog?.kind === 'signature' ? (
+        <SignatureDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'page-numbers' ? (
+        <PageNumbersDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'watermark' ? (
+        <WatermarkDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'recognize-text' ? (
+        <RecognizeTextDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'export-images' ? (
+        <ExportImagesDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'export-text' ? (
+        <ExportTextDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'reduce-file-size' ? (
+        <ReduceFileSizeDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'protect' ? (
+        <ProtectDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'ask-ai' ? (
+        <AskAiDialog key={dialog.docKey} request={dialog} />
       ) : null}
     </Dialog>
   );

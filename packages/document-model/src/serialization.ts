@@ -142,21 +142,77 @@ const annotation = z.discriminatedUnion('kind', [
   }),
 ]);
 
+const formFieldValue = z.union([z.string(), z.boolean(), z.array(z.string()), z.null()]);
+
 const formField = z.object({
   id: id('formField'),
   name: z.string(),
   type: z.enum(['text', 'checkbox', 'radio', 'choice', 'signature', 'button']),
   pageId: id('page').nullable(),
-  value: z.union([z.string(), z.boolean(), z.array(z.string()), z.null()]),
+  value: formFieldValue,
   readOnly: z.boolean(),
 });
 
 const asset = z.object({
   id: id('asset'),
-  mimeType: z.enum(['image/png', 'image/jpeg']),
+  mimeType: z.enum(['image/png', 'image/jpeg', 'application/json']),
   byteLength: z.number().int().nonnegative(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
+
+const stampPosition = z.enum([
+  'top-left',
+  'top-center',
+  'top-right',
+  'middle-left',
+  'center',
+  'middle-right',
+  'bottom-left',
+  'bottom-center',
+  'bottom-right',
+]);
+const stampPages = z.object({
+  from: z.number().int().positive(),
+  to: z.number().int().positive().nullable(),
+});
+const fontFamily = z.enum(['sans', 'serif', 'mono']);
+
+const pageNumberStamp = z.object({
+  format: z.string().max(200),
+  position: stampPosition,
+  fontFamily,
+  fontSize: finite.positive().max(500),
+  color,
+  margin: finite.nonnegative(),
+  startNumber: z.number().int(),
+  pages: stampPages,
+});
+
+const watermarkStamp = z.object({
+  text: z.string().max(1000),
+  position: stampPosition,
+  fontFamily,
+  fontSize: finite.positive().max(1000),
+  color,
+  opacity: z.number().min(0).max(1),
+  angle: finite.min(-90).max(90),
+  layer: z.enum(['over', 'under']),
+  margin: finite.nonnegative(),
+  pages: stampPages,
+});
+
+const stamps = z.object({
+  pageNumbers: pageNumberStamp.nullable(),
+  watermark: watermarkStamp.nullable(),
+});
+
+const recognizedText = z.object({
+  assetId: id('asset'),
+  languages: z.string().regex(/^[a-z_]+(\+[a-z_]+)*$/),
+  wordCount: z.number().int().nonnegative(),
+});
+
+const sourcePageKey = z.string().regex(new RegExp(`^${ID_PREFIXES.source}_[0-9a-f]{24}:\\d+$`));
 
 const documentModel = z.object({
   schemaVersion: z.literal(1),
@@ -168,6 +224,9 @@ const documentModel = z.object({
   formFields: z.record(z.string(), formField),
   assets: z.record(z.string(), asset),
   exportConfig: z.object({ flattenAnnotations: z.boolean(), writeMetadata: z.boolean() }),
+  // Added after the first release of the format: older snapshots have neither.
+  stamps: stamps.default({ pageNumbers: null, watermark: null }),
+  textLayers: z.record(sourcePageKey, recognizedText).default({}),
 });
 
 const operation: z.ZodType = z.lazy(() =>
@@ -189,6 +248,16 @@ const operation: z.ZodType = z.lazy(() =>
     }),
     z.object({ type: z.literal('annotations/replace'), annotations: z.array(annotation) }),
     z.object({ type: z.literal('annotations/remove'), ids: z.array(id('annotation')) }),
+    z.object({
+      type: z.literal('forms/set-values'),
+      values: z.array(z.object({ id: id('formField'), value: formFieldValue })),
+    }),
+    z.object({ type: z.literal('stamps/set'), stamps: stamps.partial() }),
+    z.object({
+      type: z.literal('text-layers/set'),
+      entries: z.array(z.object({ key: sourcePageKey, layer: recognizedText.nullable() })),
+      assets: z.array(asset).optional(),
+    }),
     z.object({ type: z.literal('batch'), operations: z.array(operation) }),
   ]),
 );
@@ -262,6 +331,17 @@ function assertConsistent(value: RecoverySnapshot): void {
   }
   for (const [key, entry] of Object.entries(model.assets)) {
     if (key !== entry.id) throw new SnapshotError('inconsistent', 'Asset keys do not match IDs.');
+  }
+  // A field's page may have been deleted since: `pageId` only says where it was first.
+  for (const [key, entry] of Object.entries(model.formFields)) {
+    if (key !== entry.id) throw new SnapshotError('inconsistent', 'Field keys do not match IDs.');
+  }
+  for (const [key, entry] of Object.entries(model.textLayers)) {
+    const sourceId = key.slice(0, key.indexOf(':'));
+    const known = Object.prototype.hasOwnProperty.call(model.sources, sourceId);
+    if (!known || !model.assets[entry.assetId]) {
+      throw new SnapshotError('inconsistent', 'Recognized text references unknown data.');
+    }
   }
   if (value.view.currentPageId !== null && !pageIds.has(value.view.currentPageId)) {
     throw new SnapshotError('inconsistent', 'The current page does not exist.');

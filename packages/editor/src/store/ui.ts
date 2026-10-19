@@ -1,5 +1,5 @@
 import { isThemePreference, type ThemePreference } from '@folio/shared-ui';
-import type { FontFamily, HexColor } from '@folio/document-model';
+import type { FontFamily, HexColor, PageId, Rect } from '@folio/document-model';
 import type {
   IncomingFile,
   KeyValueStorage,
@@ -121,7 +121,53 @@ export type DialogRequest =
       kind: 'open-url';
       url?: string;
       error?: { code: OpenUrlErrorCode; message: string };
-    };
+    }
+  // Tools. Each works on one open document.
+  | {
+      kind: 'signature';
+      docKey: string;
+      /** A signature field to sign: the signature goes into its box (page space). */
+      field?: { pageId: PageId; rect: Rect };
+    }
+  | { kind: 'page-numbers'; docKey: string }
+  | { kind: 'watermark'; docKey: string }
+  | { kind: 'recognize-text'; docKey: string }
+  | { kind: 'export-images'; docKey: string }
+  | { kind: 'export-text'; docKey: string }
+  | { kind: 'reduce-file-size'; docKey: string }
+  | { kind: 'protect'; docKey: string }
+  | { kind: 'ask-ai'; docKey: string };
+
+/** The request of one kind of dialog. */
+export type DialogOf<K extends DialogRequest['kind']> = Extract<DialogRequest, { kind: K }>;
+
+/** Commands that open a tool's dialog for the active document. */
+export const TOOL_DIALOGS = [
+  'sign',
+  'page-numbers',
+  'watermark',
+  'recognize-text',
+  'export-images',
+  'export-text',
+  'reduce-file-size',
+  'protect',
+  'ask-ai',
+] as const;
+
+export type ToolDialogCommand = (typeof TOOL_DIALOGS)[number];
+
+/** The dialog each tool command opens. */
+export const TOOL_DIALOG_KINDS = {
+  sign: 'signature',
+  'page-numbers': 'page-numbers',
+  watermark: 'watermark',
+  'recognize-text': 'recognize-text',
+  'export-images': 'export-images',
+  'export-text': 'export-text',
+  'reduce-file-size': 'reduce-file-size',
+  protect: 'protect',
+  'ask-ai': 'ask-ai',
+} as const satisfies Record<ToolDialogCommand, DialogRequest['kind']>;
 
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {

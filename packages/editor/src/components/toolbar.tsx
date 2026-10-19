@@ -26,10 +26,11 @@ import {
   Save,
   Search,
   Sun,
+  Wrench,
 } from 'lucide-react';
 import { Toolbar as ToolbarPrimitive } from 'radix-ui';
 import type { AppCommand } from '@folio/platform-adapters';
-import { COMMAND_SHORTCUTS } from '../commands';
+import { COMMAND_LABELS, COMMAND_SHORTCUTS } from '../commands';
 import { useActiveDocument, useUi, useWorkspaceContext } from '../context';
 import { formatBytes } from '../format';
 import { useSaveAs } from '../hooks/use-save-as';
@@ -43,6 +44,50 @@ const THEME_META: Record<ThemePreference, { label: string; Icon: typeof Sun }> =
 };
 
 const Separator = () => <ToolbarPrimitive.Separator className="mx-1 h-5 w-px bg-line" />;
+
+/** The Tools menu, in groups (the same as the desktop app's Tools menu). */
+const TOOL_GROUPS: readonly (readonly AppCommand[])[] = [
+  ['sign'],
+  ['page-numbers', 'watermark'],
+  ['recognize-text'],
+  ['export-images', 'export-text', 'reduce-file-size', 'protect'],
+  ['ask-ai'],
+];
+
+/** Menu labels end in "…" like the commands; sentence case like the rest of the UI. */
+function ToolsMenu({
+  disabled,
+  onCommand,
+}: {
+  disabled: boolean;
+  onCommand(command: AppCommand): void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild disabled={disabled}>
+        <ToolbarPrimitive.Button asChild>
+          <Button variant="ghost" disabled={disabled}>
+            <Wrench size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />
+            Tools
+            <ChevronDown size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
+          </Button>
+        </ToolbarPrimitive.Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        {TOOL_GROUPS.map((group, index) => (
+          <div key={group[0]}>
+            {index > 0 ? <DropdownMenuSeparator /> : null}
+            {group.map((command) => (
+              <DropdownMenuItem key={command} onSelect={() => onCommand(command)}>
+                {COMMAND_LABELS[command]}
+              </DropdownMenuItem>
+            ))}
+          </div>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand): void }) {
   const { adapter, workspace, profile, shortcutPlatform } = useWorkspaceContext();
@@ -200,6 +245,7 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
           />
         </ToolbarPrimitive.Button>
       ) : null}
+      <ToolsMenu disabled={!ready} onCommand={onCommand} />
 
       <div className="mx-2 flex min-w-0 flex-1 items-baseline gap-2">
         {doc ? (

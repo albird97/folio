@@ -28,5 +28,14 @@
   "rotate-pages-clockwise",
   "rotate-pages-counterclockwise",
   "delete-pages",
-  "extract-pages"
+  "extract-pages",
+  "sign",
+  "page-numbers",
+  "watermark",
+  "recognize-text",
+  "export-images",
+  "export-text",
+  "reduce-file-size",
+  "protect",
+  "ask-ai"
 ]

@@ -146,24 +146,126 @@ export type Annotation =
 
 export type AnnotationKind = Annotation['kind'];
 
+/**
+ * A form field's value: text for text fields, `true`/`false` for check
+ * boxes, the chosen option's export value (or null for none) for radio
+ * buttons, and the chosen option(s) for choice fields. Signature fields and
+ * buttons hold null.
+ */
 export type FormFieldValue = string | boolean | string[] | null;
 
+export type FormFieldType = 'text' | 'checkbox' | 'radio' | 'choice' | 'signature' | 'button';
+
+/**
+ * A field of the document's interactive form (AcroForm), from the file the
+ * document was opened from. Its widgets (where it shows on the pages) are
+ * read from the file when shown; the model holds the field's value.
+ */
 export interface FormField {
   id: FormFieldId;
   /** Fully qualified field name from the AcroForm. */
   name: string;
-  type: 'text' | 'checkbox' | 'radio' | 'choice' | 'signature' | 'button';
+  type: FormFieldType;
+  /** Page of the field's first widget, or null when it has none. */
   pageId: PageId | null;
   value: FormFieldValue;
   readOnly: boolean;
 }
 
-/** Binary assets (images, signatures) are stored by reference, never inline. */
+/**
+ * Binary assets are stored by reference, never inline: images (added
+ * images, signatures) and data Folio produced, such as recognized text.
+ */
 export interface AssetRef {
   id: AssetId;
-  mimeType: 'image/png' | 'image/jpeg';
+  mimeType: 'image/png' | 'image/jpeg' | 'application/json';
   byteLength: number;
   sha256: string;
+}
+
+/** Where a stamp sits on a page, as the page is shown (after its saved rotation). */
+export type StampPosition =
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'middle-left'
+  | 'center'
+  | 'middle-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right';
+
+export const STAMP_POSITIONS: readonly StampPosition[] = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'middle-left',
+  'center',
+  'middle-right',
+  'bottom-left',
+  'bottom-center',
+  'bottom-right',
+];
+
+/** The pages a stamp goes on: 1-based positions in the document; `to` null means the last page. */
+export interface StampPageRange {
+  from: number;
+  to: number | null;
+}
+
+/**
+ * Numbers printed on the pages. Like watermarks, they are new content drawn
+ * on top of the pages when the document is saved, never an edit of the
+ * pages' own text.
+ */
+export interface PageNumberStamp {
+  /** `{page}` becomes the page's number and `{total}` the last page's number. */
+  format: string;
+  position: StampPosition;
+  fontFamily: 'sans' | 'serif' | 'mono';
+  fontSize: number;
+  color: HexColor;
+  /** Distance from the edges of the page, in points. */
+  margin: number;
+  /** The number the first stamped page shows. */
+  startNumber: number;
+  pages: StampPageRange;
+}
+
+export interface WatermarkStamp {
+  text: string;
+  position: StampPosition;
+  fontFamily: 'sans' | 'serif' | 'mono';
+  fontSize: number;
+  color: HexColor;
+  /** 0–1 */
+  opacity: number;
+  /** Counterclockwise angle of the text as the page is shown, in degrees (−90 to 90). */
+  angle: number;
+  /** Drawn behind the page's content or over it. */
+  layer: 'over' | 'under';
+  /** Distance from the edges of the page, in points (positions other than the centre). */
+  margin: number;
+  pages: StampPageRange;
+}
+
+/** Page numbers and a watermark, applied to the pages when the document is saved or printed. */
+export interface DocumentStamps {
+  pageNumbers: PageNumberStamp | null;
+  watermark: WatermarkStamp | null;
+}
+
+/**
+ * Text recognized in the image of a page (OCR). The words and their boxes
+ * are a JSON asset (see `RecognizedTextData`); saving adds them to the page
+ * as invisible text, so the page can be searched and copied from.
+ */
+export interface RecognizedText {
+  assetId: AssetId;
+  /** Tesseract language codes the text was read with, e.g. "eng+chi_sim". */
+  languages: string;
+  /** How many words were found. */
+  wordCount: number;
 }
 
 export interface ExportConfig {
@@ -188,6 +290,13 @@ export interface DocumentModel {
   formFields: Record<FormFieldId, FormField>;
   assets: Record<AssetId, AssetRef>;
   exportConfig: ExportConfig;
+  /** Page numbers and watermark. */
+  stamps: DocumentStamps;
+  /**
+   * Recognized text by source page (see `sourcePageKey`): the text belongs
+   * to the page's image, so copies of a page share it.
+   */
+  textLayers: Record<string, RecognizedText>;
 }
 
 /**
@@ -216,6 +325,11 @@ export const DEFAULT_EXPORT_CONFIG: ExportConfig = {
   flattenAnnotations: false,
   writeMetadata: true,
 };
+
+export const NO_STAMPS: DocumentStamps = { pageNumbers: null, watermark: null };
+
+/** Identifies a page of a source file, whichever positions show it ("src_…:3"). */
+export const sourcePageKey = (sourceId: SourceId, pageIndex: number) => `${sourceId}:${pageIndex}`;
 
 export const EMPTY_METADATA: DocumentMetadata = {
   title: '',

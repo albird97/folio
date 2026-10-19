@@ -63,6 +63,15 @@ function coalesce(top: HistoryEntry, next: Operation, nextInverse: Operation): H
       return { ...top, operation: next };
     }
   }
+  if (a.type === 'forms/set-values' && next.type === 'forms/set-values') {
+    // Typing into one field: the latest values, undone back to the first "before".
+    const ids = (values: typeof a.values) =>
+      values
+        .map((entry) => entry.id)
+        .sort()
+        .join();
+    if (ids(a.values) === ids(next.values)) return { ...top, operation: next };
+  }
   if (a.type === 'metadata/update' && next.type === 'metadata/update') {
     const inverse = top.inverse.type === 'metadata/update' ? top.inverse.patch : {};
     const nextPrevious = nextInverse.type === 'metadata/update' ? nextInverse.patch : {};

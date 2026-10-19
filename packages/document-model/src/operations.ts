@@ -1,11 +1,15 @@
 import { addRotation, normalizeRotation, type Rotation } from './geometry';
-import type { AnnotationId, PageId } from './ids';
+import type { AnnotationId, FormFieldId, PageId } from './ids';
 import type {
   Annotation,
   AssetRef,
   DocumentMetadata,
   DocumentModel,
+  DocumentStamps,
+  FormFieldType,
+  FormFieldValue,
   PageModel,
+  RecognizedText,
   SourceDocument,
 } from './types';
 
@@ -40,6 +44,20 @@ export type Operation =
     }
   | { type: 'annotations/replace'; annotations: Annotation[] }
   | { type: 'annotations/remove'; ids: AnnotationId[] }
+  /** Fills in form fields. */
+  | { type: 'forms/set-values'; values: Array<{ id: FormFieldId; value: FormFieldValue }> }
+  /** Sets or clears the page numbers and the watermark (keys left out stay as they are). */
+  | { type: 'stamps/set'; stamps: Partial<DocumentStamps> }
+  /**
+   * Sets or removes (null) the recognized text of source pages, keyed by
+   * `sourcePageKey`. `assets` registers the JSON the text is stored in; like
+   * images, assets stay registered after an undo.
+   */
+  | {
+      type: 'text-layers/set';
+      entries: Array<{ key: string; layer: RecognizedText | null }>;
+      assets?: AssetRef[];
+    }
   | { type: 'batch'; operations: Operation[] };
 
 export type OperationType = Operation['type'];
@@ -49,6 +67,9 @@ export type OperationErrorCode =
   | 'unknown-annotation'
   | 'unknown-source'
   | 'unknown-asset'
+  | 'unknown-field'
+  | 'read-only-field'
+  | 'invalid-value'
   | 'duplicate-id'
   | 'invalid-order'
   | 'invalid-index'
@@ -268,6 +289,105 @@ function removeAnnotations(model: DocumentModel, ids: AnnotationId[]): Operation
   };
 }
 
+/** Whether a value has the shape a field of this type holds. */
+function fitsField(type: FormFieldType, value: FormFieldValue): boolean {
+  switch (type) {
+    case 'text':
+      return typeof value === 'string';
+    case 'checkbox':
+      return typeof value === 'boolean';
+    case 'radio':
+      return typeof value === 'string' || value === null;
+    case 'choice':
+      return (
+        typeof value === 'string' ||
+        value === null ||
+        (Array.isArray(value) && value.every((entry) => typeof entry === 'string'))
+      );
+    case 'signature':
+    case 'button':
+      return false;
+  }
+}
+
+function setFormValues(
+  model: DocumentModel,
+  values: Array<{ id: FormFieldId; value: FormFieldValue }>,
+): OperationResult {
+  if (values.length === 0) throw new OperationError('empty-operation', 'No fields were given.');
+  const formFields = { ...model.formFields };
+  const previous: Array<{ id: FormFieldId; value: FormFieldValue }> = [];
+  const seen = new Set<FormFieldId>();
+  for (const { id, value } of values) {
+    const field = formFields[id];
+    if (!field) throw new OperationError('unknown-field', `Unknown form field ${id}.`);
+    if (seen.has(id)) throw new OperationError('duplicate-id', `Field ${id} was listed twice.`);
+    seen.add(id);
+    if (field.readOnly) throw new OperationError('read-only-field', `Field ${id} is read-only.`);
+    if (!fitsField(field.type, value)) {
+      throw new OperationError('invalid-value', `That value does not fit field ${id}.`);
+    }
+    previous.push({ id, value: field.value });
+    formFields[id] = { ...field, value: Array.isArray(value) ? [...value] : value };
+  }
+  return {
+    model: { ...model, formFields },
+    inverse: { type: 'forms/set-values', values: previous },
+  };
+}
+
+function setStamps(model: DocumentModel, patch: Partial<DocumentStamps>): OperationResult {
+  const keys = (Object.keys(patch) as Array<keyof DocumentStamps>).filter(
+    (key) => patch[key] !== undefined,
+  );
+  if (keys.length === 0) throw new OperationError('empty-operation', 'Nothing to update.');
+  const previous: Partial<DocumentStamps> = {};
+  const stamps = { ...model.stamps };
+  for (const key of keys) {
+    (previous as Record<string, unknown>)[key] = model.stamps[key];
+    (stamps as Record<string, unknown>)[key] = patch[key];
+  }
+  return {
+    model: { ...model, stamps },
+    inverse: { type: 'stamps/set', stamps: previous },
+  };
+}
+
+const SOURCE_PAGE_KEY = /^(src_[0-9a-f]{24}):(\d+)$/;
+
+function setTextLayers(
+  model: DocumentModel,
+  op: Extract<Operation, { type: 'text-layers/set' }>,
+): OperationResult {
+  if (op.entries.length === 0) throw new OperationError('empty-operation', 'No pages were given.');
+  const assets = { ...model.assets };
+  for (const asset of op.assets ?? []) assets[asset.id] ??= asset;
+  const textLayers = { ...model.textLayers };
+  const previous: Array<{ key: string; layer: RecognizedText | null }> = [];
+  const seen = new Set<string>();
+  for (const { key, layer } of op.entries) {
+    const match = SOURCE_PAGE_KEY.exec(key);
+    const source = match ? model.sources[match[1] as keyof DocumentModel['sources']] : undefined;
+    if (!match || !source)
+      throw new OperationError('unknown-source', `Unknown source page ${key}.`);
+    if (Number(match[2]) >= source.pageCount) {
+      throw new OperationError('invalid-index', `Source page ${key} does not exist.`);
+    }
+    if (seen.has(key)) throw new OperationError('duplicate-id', `Page ${key} was listed twice.`);
+    seen.add(key);
+    if (layer && !assets[layer.assetId]) {
+      throw new OperationError('unknown-asset', `Unknown text data ${layer.assetId}.`);
+    }
+    previous.push({ key, layer: textLayers[key] ?? null });
+    if (layer) textLayers[key] = layer;
+    else delete textLayers[key];
+  }
+  return {
+    model: { ...model, assets, textLayers },
+    inverse: { type: 'text-layers/set', entries: previous },
+  };
+}
+
 function applyBatch(model: DocumentModel, operations: Operation[]): OperationResult {
   if (operations.length === 0) throw new OperationError('empty-operation', 'Empty batch.');
   let current = model;
@@ -303,6 +423,12 @@ export function applyOperation(model: DocumentModel, operation: Operation): Oper
       return replaceAnnotations(model, operation.annotations);
     case 'annotations/remove':
       return removeAnnotations(model, operation.ids);
+    case 'forms/set-values':
+      return setFormValues(model, operation.values);
+    case 'stamps/set':
+      return setStamps(model, operation.stamps);
+    case 'text-layers/set':
+      return setTextLayers(model, operation);
     case 'batch':
       return applyBatch(model, operation.operations);
   }

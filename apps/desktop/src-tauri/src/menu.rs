@@ -3,8 +3,8 @@
 //! the window, quitting, the Open Recent submenu and Connect to Chrome are
 //! handled natively.
 //!
-//! macOS: Folio, File, Edit, View, Pages and Window menus. Windows and Linux:
-//! File, Edit, View, Pages and Help menus.
+//! macOS: Folio, File, Edit, View, Pages, Tools and Window menus. Windows and
+//! Linux: File, Edit, View, Pages, Tools and Help menus.
 
 use crate::recent;
 #[cfg(not(target_os = "macos"))]
@@ -61,6 +61,15 @@ pub const MENU_COMMANDS: &[MenuEntry] = &[
     ),
     ("delete-pages", "Delete Pages", None),
     ("extract-pages", "Extract Pages…", None),
+    ("sign", "Add Signature…", None),
+    ("page-numbers", "Page Numbers…", None),
+    ("watermark", "Watermark…", None),
+    ("recognize-text", "Recognize Text (OCR)…", None),
+    ("export-images", "Export Pages as Images…", None),
+    ("export-text", "Export Text…", None),
+    ("reduce-file-size", "Reduce File Size…", None),
+    ("protect", "Password Protection…", None),
+    ("ask-ai", "Ask Claude…", None),
 ];
 
 /// macOS Window > Close Window, handled in Rust rather than forwarded. ⌘W
@@ -264,6 +273,22 @@ pub fn build<R: Runtime>(
         .item(&item(app, "extract-pages")?)
         .build()?;
 
+    let tools = SubmenuBuilder::new(app, "Tools")
+        .item(&item(app, "sign")?)
+        .separator()
+        .item(&item(app, "page-numbers")?)
+        .item(&item(app, "watermark")?)
+        .separator()
+        .item(&item(app, "recognize-text")?)
+        .separator()
+        .item(&item(app, "export-images")?)
+        .item(&item(app, "export-text")?)
+        .item(&item(app, "reduce-file-size")?)
+        .item(&item(app, "protect")?)
+        .separator()
+        .item(&item(app, "ask-ai")?)
+        .build()?;
+
     #[cfg(target_os = "macos")]
     let menu = {
         let app_menu = SubmenuBuilder::new(app, "Folio")
@@ -283,7 +308,10 @@ pub fn build<R: Runtime>(
             .separator()
             .item(&entry_item(app, &CLOSE_WINDOW)?)
             .build()?;
-        Menu::with_items(app, &[&app_menu, &file, &edit, &view, &pages, &window])?
+        Menu::with_items(
+            app,
+            &[&app_menu, &file, &edit, &view, &pages, &tools, &window],
+        )?
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -292,7 +320,7 @@ pub fn build<R: Runtime>(
         let help = SubmenuBuilder::new(app, "Help")
             .about_with_text(about, Some(about_metadata(app)))
             .build()?;
-        Menu::with_items(app, &[&file, &edit, &view, &pages, &help])?
+        Menu::with_items(app, &[&file, &edit, &view, &pages, &tools, &help])?
     };
 
     Ok((menu, open_recent))

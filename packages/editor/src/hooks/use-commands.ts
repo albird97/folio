@@ -6,6 +6,7 @@ import { COMMAND_DEDUPE_MS, COMMAND_SHORTCUTS } from '../commands';
 import { FIND_INPUT_ID } from '../components/find-bar';
 import { PAGE_INPUT_ID } from '../components/viewer-controls';
 import { useActiveDocument, useWorkspaceContext } from '../context';
+import { TOOL_DIALOG_KINDS } from '../store/ui';
 import { useCloseDocument } from './use-close-document';
 import { usePageCommands } from './use-page-commands';
 import { useSave } from './use-save';
@@ -105,6 +106,17 @@ export function useCommands(): (command: AppCommand) => void {
           break;
         case 'extract-pages':
           pageCommands.extract();
+          break;
+        case 'sign':
+        case 'page-numbers':
+        case 'watermark':
+        case 'recognize-text':
+        case 'export-images':
+        case 'export-text':
+        case 'reduce-file-size':
+        case 'protect':
+        case 'ask-ai':
+          if (key) ui.getState().openDialog({ kind: TOOL_DIALOG_KINDS[command], docKey: key });
           break;
         case 'open':
           void adapter.pickPdfFiles({ multiple: true }).then(
