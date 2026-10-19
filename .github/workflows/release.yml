@@ -1,0 +1,189 @@
+name: Release
+
+# A version tag (v1.2.3) builds Folio for macOS (universal) and Windows with
+# signed updater artifacts and the update feed (latest.json), packages the
+# Chrome extension, and collects everything in a draft GitHub release. Nothing
+# is published: check the draft, then publish it by hand. Copies of Folio read
+# the feed from releases/latest, so an update reaches users only once its
+# release is published, and only if they can reach this repository's releases.
+#
+# The release notes Folio shows when it offers the update are the message of
+# the annotated tag: git tag -a v1.2.3 -m "What changed" && git push origin v1.2.3
+#
+# Repository secrets (Settings > Secrets and variables > Actions):
+# - TAURI_SIGNING_PRIVATE_KEY: the updater's private key, the contents of the
+#   file `pnpm --filter @folio/desktop tauri signer generate` wrote. Its public
+#   key is `plugins.updater.pubkey` in apps/desktop/src-tauri/tauri.conf.json;
+#   copies of Folio install only updates signed with it.
+# - TAURI_SIGNING_PRIVATE_KEY_PASSWORD: the key's password.
+#
+# Every action is pinned to a commit, and nothing is restored from a cache:
+# this workflow signs what users install.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    name: Draft release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      id: ${{ steps.release.outputs.id }}
+      notes: ${{ steps.notes.outputs.text }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      # Each part reports its version: the app compares it with the feed's, the
+      # native messaging host tells the extension, and the zip is named by it.
+      - name: Check that the tag is the version of every part
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for file in apps/desktop/package.json apps/chrome-extension/package.json; do
+            found="$(jq -r .version "$file")"
+            if [ "$found" != "$version" ]; then
+              echo "::error file=$file::Version $found does not match the tag ${GITHUB_REF_NAME}."
+              exit 1
+            fi
+          done
+          found="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "$found" != "$version" ]; then
+            echo "::error file=Cargo.toml::Version $found does not match the tag ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+      - name: Check that the updater signing key is set up
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$PASSWORD" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets (see the top of .github/workflows/release.yml)."
+            exit 1
+          fi
+      - name: Read the release notes from the tag
+        id: notes
+        run: |
+          # The checkout has the tagged commit, not the tag's message.
+          git fetch --force --depth=1 origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          notes=""
+          if [ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = tag ]; then
+            notes="$(git tag --list --format='%(contents:subject)%0a%0a%(contents:body)' "${GITHUB_REF_NAME}")"
+          fi
+          delimiter="notes-$(openssl rand -hex 16)"
+          {
+            echo "text<<${delimiter}"
+            printf '%s\n' "${notes}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+      # A rerun for the same tag uploads to the draft it made before.
+      - name: Create the draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ steps.notes.outputs.text }}
+        run: |
+          id="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq ".[] | select(.draft and .tag_name == \"${GITHUB_REF_NAME}\") | .id" | head -n 1)"
+          if [ -z "$id" ]; then
+            id="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" \
+              -f tag_name="${GITHUB_REF_NAME}" \
+              -f name="Folio ${GITHUB_REF_NAME#v}" \
+              -f body="${NOTES}" \
+              -F draft=true \
+              --jq .id)"
+          fi
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    name: ${{ matrix.name }}
+    needs: draft
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      # One at a time: each job merges its platforms into the draft's
+      # latest.json, and two jobs at once could overwrite each other's.
+      max-parallel: 1
+      matrix:
+        include:
+          - name: macOS (universal)
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg
+          - name: Windows (x64)
+            os: windows-latest
+            rust-targets: x86_64-pc-windows-msvc
+            args: --bundles nsis,msi
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:desktop:web
+      - run: cargo test --workspace --locked
+      # The overlay adds the updater artifacts (signed with the secret key),
+      # which only release builds make. Unsigned like desktop.yml's builds
+      # otherwise (see README, "Code signing and notarization").
+      - name: Build, sign the updates and add them to the draft
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+          releaseId: ${{ needs.draft.outputs.id }}
+          releaseBody: ${{ needs.draft.outputs.notes }}
+          # The NSIS installer installs per user, so it updates without
+          # asking for an administrator.
+          updaterJsonPreferNsis: true
+
+  extension:
+    name: Chrome extension
+    needs: draft
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @folio/chrome-extension package
+      - name: Add the Web Store zip to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.draft.outputs.id }}
+        run: |
+          for zip in apps/chrome-extension/folio-chrome-*.zip; do
+            name="$(basename "${zip}")"
+            # A rerun replaces the zip uploaded before.
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+              --jq ".[] | select(.name == \"${name}\") | .id" |
+              while read -r asset; do
+                gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset}"
+              done
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/zip" \
+              --data-binary "@${zip}" \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${name}"
+          done
