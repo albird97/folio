@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { ocrAssets } from '@folio/editor/vite-plugin';
 import { pdfjsAssets } from '@folio/pdf-core/vite-plugin';
 import { defineConfig } from 'vite';
 
@@ -7,7 +8,7 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://v2.tauri.app/start/frontend/vite/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), pdfjsAssets()],
+  plugins: [react(), tailwindcss(), pdfjsAssets(), ocrAssets()],
   clearScreen: false,
   server: {
     port: 1420,

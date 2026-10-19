@@ -4,5 +4,5 @@
     // Node types are for the store tests that read fixture files.
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src", "vite"]
 }
