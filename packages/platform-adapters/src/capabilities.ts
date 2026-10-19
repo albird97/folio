@@ -817,11 +817,11 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   {
     id: 'local-first',
     area: 'Privacy',
-    feature: 'Local-only processing (no uploads, no analytics on content)',
+    feature: 'Local-only processing (no uploads unless you ask Claude, no analytics on content)',
     plannedPhase: null,
     targets: all(
       full(
-        'No document data is ever sent anywhere. The extension downloads PDFs only from sites you allow, in its service worker; its pages cannot connect to other servers at all.',
+        'Documents are processed on this device. Nothing about them is sent anywhere unless you turn on Ask Claude and ask a question, which sends the text of the chosen pages to Anthropic with your own key. The extension downloads PDFs only from sites you allow, in its service worker; its pages cannot connect to other servers at all.',
       ),
     ),
     verification:
