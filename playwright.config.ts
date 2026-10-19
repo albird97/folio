@@ -14,6 +14,9 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export const BROWSER_ENV = { ...process.env, LANG: process.env.LANG || 'C.UTF-8' };
 
+/** Port of the desktop UI's preview server; set it to run several checkouts at once. */
+const PREVIEW_PORT = Number(process.env.FOLIO_E2E_PORT ?? 4173);
+
 export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 30_000,
@@ -31,14 +34,14 @@ export default defineConfig({
       testDir: 'tests/e2e/desktop-web',
       use: {
         ...devices['Desktop Chrome'],
-        baseURL: 'http://localhost:4173',
+        baseURL: `http://localhost:${PREVIEW_PORT}`,
         viewport: { width: 1280, height: 800 },
       },
     },
   ],
   webServer: {
-    command: 'pnpm --filter @folio/desktop exec vite preview --port 4173 --strictPort',
-    url: 'http://localhost:4173',
+    command: `pnpm --filter @folio/desktop exec vite preview --port ${PREVIEW_PORT} --strictPort`,
+    url: `http://localhost:${PREVIEW_PORT}`,
     reuseExistingServer: !process.env.CI,
   },
 });

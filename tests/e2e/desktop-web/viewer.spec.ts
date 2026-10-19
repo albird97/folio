@@ -292,7 +292,7 @@ test.describe('document viewer', () => {
     expect(await page.evaluate(() => window.getSelection()?.toString())).toContain(
       'Quick brown fox opens this guide',
     );
-    await page.keyboard.press('Control+C');
+    await page.keyboard.press('ControlOrMeta+C');
     await expect
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))
       .toContain('Quick brown fox opens this guide');

@@ -193,7 +193,7 @@ test.describe('editing', () => {
     await page.mouse.dblclick(box.x + 110, box.y + 460);
     const editor = page.getByRole('textbox', { name: 'Text box' });
     await expect(editor).toBeFocused();
-    await page.keyboard.press('End');
+    // The caret starts at the end of the text.
     await page.keyboard.type(', revised');
     await page.keyboard.press('Control+Enter');
     await expect(annotationGroups(page).first()).toContainText('First draft, revised');
@@ -201,9 +201,13 @@ test.describe('editing', () => {
     // Undo while typing in a field undoes the typing, not the document.
     const title = page.getByRole('textbox', { name: 'Title' });
     await title.click();
-    await title.press('End');
+    // (On a Mac, End scrolls the document instead of moving the caret.)
+    await title.evaluate((field: HTMLInputElement) =>
+      field.setSelectionRange(field.value.length, field.value.length),
+    );
     await title.pressSequentially('!');
-    await title.press('Control+Z');
+    // The browser's own undo for text fields (⌘Z on a Mac).
+    await title.press('ControlOrMeta+Z');
     await expect(annotationGroups(page)).toHaveCount(1);
     await expect(annotationGroups(page).first()).toContainText('First draft, revised');
   });
@@ -371,10 +375,11 @@ test.describe('editing', () => {
     await page.mouse.click(box.x + 100, box.y + 100);
     await page.keyboard.type('Level');
     await page.keyboard.press('Control+Enter');
-    // On screen the text runs left to right: its box is wider than tall.
+    // On screen the text runs left to right: its box is wider than tall
+    // (by how much depends on the fonts the system has).
     const text = annotationGroups(page).first().locator('text').first();
     const textBox = (await text.boundingBox())!;
-    expect(textBox.width).toBeGreaterThan(textBox.height * 2);
+    expect(textBox.width).toBeGreaterThan(textBox.height * 1.5);
     const saved = await read((await saveAs(page)).bytes);
     expect(saved.pages[0]).toMatchObject({ rotation: 90, subtypes: ['FreeText'] });
   });
@@ -387,10 +392,11 @@ test.describe('editing', () => {
     await drag(page, [box.x + 100, box.y + 400], [box.x + 260, box.y + 480]);
     // The new shape is selected and keyboard focus is in the page view.
     await expect(page.getByRole('region', { name: 'Page view' })).toBeFocused();
-    await page.keyboard.press('Control+C');
+    // Copy, cut and paste are the browser's own (⌘ on a Mac); undo is Folio's.
+    await page.keyboard.press('ControlOrMeta+C');
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Rectangle');
-    await page.keyboard.press('Control+V');
-    await page.keyboard.press('Control+V');
+    await page.keyboard.press('ControlOrMeta+V');
+    await page.keyboard.press('ControlOrMeta+V');
     await expect(annotationGroups(page)).toHaveCount(3);
     // Each paste lands a little further down and to the right.
     const [first, second, third] = await Promise.all(
@@ -404,15 +410,15 @@ test.describe('editing', () => {
     expect(third!.x).toBeGreaterThan(second!.x);
 
     // Cut takes the selection (the last copy) away; undo brings it back.
-    await page.keyboard.press('Control+X');
+    await page.keyboard.press('ControlOrMeta+X');
     await expect(annotationGroups(page)).toHaveCount(2);
     await page.keyboard.press('Control+Z');
     await expect(annotationGroups(page)).toHaveCount(3);
 
     // Text from elsewhere is not pasted as comments.
     await page.evaluate(() => navigator.clipboard.writeText('Rectangle'));
-    await page.keyboard.press('Control+V');
-    await page.keyboard.press('Control+C');
+    await page.keyboard.press('ControlOrMeta+V');
+    await page.keyboard.press('ControlOrMeta+C');
     await expect(annotationGroups(page)).toHaveCount(3);
 
     // An image on the clipboard becomes an added image on the current page.
