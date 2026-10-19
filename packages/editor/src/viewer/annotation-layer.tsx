@@ -31,7 +31,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useWorkspaceContext } from '../context';
-import { MARKUP_TOOLS, type Tool } from '../store/ui';
+import { MARKUP_TOOLS, type AnnotationStyle, type Tool } from '../store/ui';
 import { AnnotationHitArea, AnnotationShape, FONT_STACKS } from './annotation-shapes';
 import {
   applyMatrix,
@@ -207,7 +207,7 @@ export const AnnotationLayer = memo(function AnnotationLayer({
       opacity: 1,
     };
   };
-  const colorFor = (kind: Exclude<Tool, 'select' | 'image'>) => ui.getState().style.colors[kind];
+  const colorFor = (kind: keyof AnnotationStyle['colors']) => ui.getState().style.colors[kind];
 
   /** A display-space rect (e.g. 200×40 on screen) as page space. */
   const fromDisplayRect = (rect: Rect) => mapRect(fromDisplay, rect);

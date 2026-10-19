@@ -7,9 +7,14 @@
  * apt install qpdf / winget install qpdf). The generated files are committed
  * so that tests never need qpdf. qpdf cannot combine encryption with
  * deterministic IDs, so the encrypted fixtures differ byte-wise per run.
+ *
+ * The scanned-page fixture also needs poppler's `pdftoppm` (brew install
+ * poppler / apt install poppler-utils); without it that file is left as it
+ * is (see `scannedPages`).
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   PDFDocument,
@@ -228,6 +233,91 @@ async function outlineAndText(): Promise<Uint8Array> {
   return pdf.save({ useObjectStreams: false });
 }
 
+/** Whether poppler's pdftoppm can be run. */
+function hasPdftoppm(): boolean {
+  try {
+    execFileSync('pdftoppm', ['-v'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Two scanned pages for OCR: images of text, without any text of their own.
+ * Known contents (16 pt body text, 24 pt headings):
+ * - Page 1, English: "Folio scanned page" / "The lighthouse keeper counts the
+ *   ships at dawn." / "Recognized words become searchable."
+ * - Page 2, Indonesian: "Halaman pindaian kedua" / "Kucing tidur di bawah
+ *   pohon mangga." / "Teks ini dibaca tanpa internet." It is stored turned
+ *   (/Rotate 90) with its image drawn sideways, like a page scanned in
+ *   landscape and turned upright, so it only reads upright as shown.
+ *
+ * The text is drawn as vector pages first, rasterized by pdftoppm at 150 dpi
+ * in grey and placed as one image per page. pdftoppm is not on CI: without
+ * it, the committed file is kept and null is returned.
+ */
+async function scannedPages(): Promise<Uint8Array | null> {
+  if (!hasPdftoppm()) return null;
+  const source = await PDFDocument.create({ updateMetadata: false });
+  const font = await source.embedFont(StandardFonts.Helvetica);
+  const bold = await source.embedFont(StandardFonts.HelveticaBold);
+  const texts = [
+    [
+      'Folio scanned page',
+      'The lighthouse keeper counts the ships at dawn.',
+      'Recognized words become searchable.',
+    ],
+    [
+      'Halaman pindaian kedua',
+      'Kucing tidur di bawah pohon mangga.',
+      'Teks ini dibaca tanpa internet.',
+    ],
+  ];
+  for (const [heading, ...lines] of texts) {
+    const page = source.addPage([612, 792]);
+    page.drawText(heading!, { x: 72, y: 690, size: 24, font: bold });
+    lines.forEach((line, index) => {
+      page.drawText(line, { x: 72, y: 640 - index * 30, size: 16, font });
+    });
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'folio-scan-'));
+  let images: Uint8Array[];
+  try {
+    writeFileSync(join(dir, 'source.pdf'), await source.save());
+    execFileSync('pdftoppm', [
+      '-r',
+      '150',
+      '-gray',
+      '-png',
+      join(dir, 'source.pdf'),
+      join(dir, 'page'),
+    ]);
+    images = [1, 2].map((number) => new Uint8Array(readFileSync(join(dir, `page-${number}.png`))));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const pdf = await PDFDocument.create({ updateMetadata: false });
+  const upright = pdf.addPage([612, 792]);
+  upright.drawImage(await pdf.embedPng(images[0]!), { x: 0, y: 0, width: 612, height: 792 });
+  // Drawn a quarter turn counterclockwise on a landscape page, which /Rotate
+  // 90 turns clockwise again when the page is shown.
+  const turned = pdf.addPage([792, 612]);
+  turned.drawImage(await pdf.embedPng(images[1]!), {
+    x: 792,
+    y: 0,
+    width: 612,
+    height: 792,
+    rotate: degrees(90),
+  });
+  turned.setRotation(degrees(90));
+  pdf.setTitle('Folio Scanned Fixture');
+  pdf.setCreationDate(CREATED);
+  pdf.setModificationDate(MODIFIED);
+  return pdf.save({ useObjectStreams: false });
+}
+
 function qpdf(args: string[]): void {
   execFileSync('qpdf', args, { stdio: 'inherit' });
 }
@@ -239,6 +329,9 @@ async function main(): Promise<void> {
   writeFileSync(join(OUT, 'rotated-pages.pdf'), await rotated());
   writeFileSync(join(OUT, 'outline-and-text.pdf'), await outlineAndText());
   writeFileSync(join(OUT, 'filled-form.pdf'), await filledForm());
+  const scanned = await scannedPages();
+  if (scanned) writeFileSync(join(OUT, 'scanned-pages.pdf'), scanned);
+  else console.warn('pdftoppm (poppler) was not found: scanned-pages.pdf was left unchanged.');
 
   // AES-256, user password required to open.
   qpdf([

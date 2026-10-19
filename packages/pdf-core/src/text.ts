@@ -20,6 +20,8 @@ export interface TextContentLike {
     | { str: string; hasEOL: boolean; transform: number[]; width: number; height: number }
     | { type: string }
   >;
+  /** The runs' font styles, by font name (for the text layer). */
+  styles?: Readonly<Record<string, unknown>>;
 }
 
 /**
