@@ -312,7 +312,7 @@ function Options({ ui }: { ui: StoreApi<UiState> }) {
 
           <Section
             title="Privacy"
-            description="Folio reads and renders PDFs inside your browser. Documents are never uploaded, and document contents are never stored in activity."
+            description="Folio reads and renders PDFs inside your browser. Documents are never uploaded unless you turn on Ask Claude and ask a question, and document contents are never stored in activity."
           >
             <ToggleRow
               label="Keep recent activity"

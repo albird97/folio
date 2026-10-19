@@ -130,7 +130,7 @@ export function Welcome({ onOpen, hovering }: { onOpen(): void; hovering: boolea
         ) : null}
         <p className="mt-10 flex items-center gap-1.5 text-xs text-ink-muted">
           <ShieldCheck size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />
-          Documents are processed on this device and never uploaded.
+          Documents are processed on this device and only leave it if you ask Claude.
         </p>
       </div>
       <RecentFiles />

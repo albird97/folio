@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Folio — PDF tools",
   "short_name": "Folio",
-  "description": "Open and inspect PDFs in Chrome. Documents are processed on your device and never uploaded.",
+  "description": "Read, fill, sign and edit PDFs in Chrome. Documents are processed on your device and only leave it if you ask Claude.",
   "version": "0.0.0",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqg94IOftAI1JDpu9TDM/K3Sv9Ag5zlW+3yK6HG5zuZGq2xjv4AX7Y1Q/nmwAWeBkOcc/SWic6PN3lTXiU231lM71K9i1wnQSlSst2OSWMm+4HnL3yR4pL8FSP63AsCGl2ZiFxpnu0QdEBOL7oNw67fd/KQVs55+qBaNriScbHnOX8GfVqY8QVEte0K1QNXKItD1ev34UcbLUzDlIW1g92E/x4ZjU5Cya+T/QGJ6FBywfutlbtPUXeZVVpJFkG71B2xO/7h2ZGPaPNmGhf3KSJF/2I54FhxigDASLhBpFTuf4R01zPho+CZy10JB+Zv+kaMJw1GRIs05/K5qPdLYQQQIDAQAB",

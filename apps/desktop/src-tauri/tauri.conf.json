@@ -49,7 +49,7 @@
     "copyright": "© 2026 Folio contributors",
     "category": "Productivity",
     "shortDescription": "A local-first PDF suite.",
-    "longDescription": "Folio opens, inspects and edits PDF documents on your computer. Documents are processed locally and are never uploaded.",
+    "longDescription": "Folio opens, edits, fills in and signs PDF documents on your computer. Documents are processed locally and only leave it if you turn on Ask Claude and ask a question.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -7,7 +7,7 @@ Folio is a local-first PDF suite for **macOS**, **Windows** and **Google Chrome*
 product: the document model, PDF engine, design system and workspace UI are shared, and each
 target adds a thin platform adapter.
 
-> **Status: Phase 5 (Chrome integration) complete.** Folio opens, reads, edits, saves and prints
+> **Status: Phase 6 (Advanced tools) complete; Phase 7 (Release quality) under way.** Folio opens, reads, edits, saves and prints
 > PDFs on all three targets, and the Chrome extension and the desktop app work together:
 >
 > - **Opening:** file picker, drag and drop, recent files, launch arguments and Finder events on
@@ -16,16 +16,21 @@ target adds a thin platform adapter.
 > - **Viewing:** a continuous, virtualized page viewer that stays fast with thousands of pages:
 >   thumbnails, bookmarks, page navigation, zoom (fit width, fit page, presets, Ctrl+wheel and
 >   pinch), view rotation, text selection and copying, and whole-document search with highlights.
->   Filled-in form fields show their values.
+>   Scanned pages become searchable with on-device OCR (English, Indonesian, Chinese).
 > - **Editing:** highlight, underline and strike through text, notes, freehand drawing, shapes,
 >   added text and images, with a Comments list and an inspector; copy, cut and paste of comments
 >   and pasting images. Pages can be reordered, rotated, duplicated, deleted, inserted, extracted
->   and split. Document properties are editable. Everything is undoable.
+>   and split. Document properties are editable. Forms are filled in on the page; signatures are
+>   drawn, typed or imported and placed; page numbers and watermarks are added. Everything is
+>   undoable.
 > - **Saving:** **Save** writes changes back to the opened file on desktop (atomically, and never
 >   over a file another program changed without asking); **Save as** writes a new file (a save
 >   dialog on desktop, a download in Chrome) with comments editable or flattened. Folio never
 >   overwrites the files you open on its own.
 > - **Printing** of all, current or chosen pages, with or without comments.
+> - **Tools:** export pages as images or text, reduce file size, save copies with or without a
+>   password, and, if you turn it on with your own Anthropic API key, ask Claude about a document.
+> - **Updates:** the desktop app can check for signed updates, only if you ask it to.
 > - **Crash recovery:** unsaved changes are kept on the device and offered again after a crash.
 > - **Chrome tools:** the side panel rotates and extracts pages, turns pages into images and
 >   extracts text; the popup saves the current page as PDF through Chrome's print dialog; any
@@ -37,8 +42,11 @@ target adds a thin platform adapter.
 > See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the roadmap and
 > [PLATFORM_CAPABILITIES.md](PLATFORM_CAPABILITIES.md) for the support matrix.
 
-Documents are processed on your device and never uploaded. The desktop app makes no network
-requests at all; the extension downloads a PDF only from a site you allow, when you ask it to.
+Documents are processed on your device and never uploaded, unless you turn on **Ask Claude** and
+ask a question (then the text of the chosen pages goes to Anthropic with your own API key). The
+desktop app makes no other network requests, except checking for updates when you choose **Check
+for Updates…** or turn on automatic checks; the extension downloads a PDF only from a site you
+allow, when you ask it to.
 
 ## Repository layout
 
@@ -133,16 +141,19 @@ Installers appear under `target/release/bundle/` (or `target/universal-apple-dar
 | Find next / previous     | ⌘G / ⇧⌘G (F3 / ⇧F3) | Ctrl+G / Ctrl+Shift+G (F3 / Shift+F3) |
 
 Single keys pick a drawing tool while the pages have focus: V Select, H Highlight, U Underline,
-K Strikethrough, N Note, P Draw, R Rectangle, O Ellipse, L Line, A Arrow, T Add text, I Add image.
+K Strikethrough, N Note, P Draw, R Rectangle, O Ellipse, L Line, A Arrow, T Add text, I Add image,
+S Sign.
 
 In the page view, arrow keys, Page Up/Down and Space scroll, ← and → turn pages when the page
 fits the window's width, and Home/End go to the first and last page. Ctrl+wheel and trackpad or
 touch pinches zoom around the pointer. Fit width and Fit page are in
 the zoom menu and the **View** menu. Rotation only changes the view; the file is not modified.
 
-The macOS menus are Folio, File, Edit, View, Pages and Window. ⌘W closes the current document, so
-**Window → Close Window** uses ⇧⌘W. Windows and Linux have File, Edit, View, Pages and
-Help (**Help → About Folio**). Switching the theme has no shortcut: use the toolbar button or
+The macOS menus are Folio, File, Edit, View, Pages, Tools and Window. ⌘W closes the current document, so
+**Window → Close Window** uses ⇧⌘W. Windows and Linux have File, Edit, View, Pages, Tools and
+Help (**Help → About Folio**). **Check for Updates…** and **Check for Updates Automatically** (off
+by default; at most once a day) are in the Folio menu on macOS and the Help menu elsewhere; updates
+must be signed with Folio's key, and unsaved work is asked about before Folio restarts. Switching the theme has no shortcut: use the toolbar button or
 **View → Switch Theme**. Letter shortcuts follow your keyboard layout (AZERTY included), and
 AltGr combinations never trigger shortcuts.
 
@@ -165,6 +176,22 @@ AltGr combinations never trigger shortcuts.
 - **Properties:** title, author, subject and keywords are editable in the Properties panel.
 - Folio follows the document's permission settings (for example, a PDF that does not allow
   comments), and saved copies of password-protected PDFs keep the same password and permissions.
+- **Forms:** fields of a PDF form are filled in on the page with the Select tool: text, check
+  boxes, radio buttons, drop-down and list boxes; a signature field offers to sign it. **Highlight
+  fields** in the bar above the pages turns their tint off. Saving keeps the values as the form's
+  own; **Save with form flattened** draws them into the pages. Password fields are never saved.
+  XFA forms are shown as saved but cannot be filled in.
+- **Signatures:** **Sign** (S, or Tools → Add a signature…) draws your signature with a mouse,
+  trackpad, pen or finger, types your name in a handwriting font, or uses a picture of your
+  signature with its paper made transparent. Click where it goes (Enter puts it in the middle of
+  the page, Esc cancels), then move or resize it like an image. This adds a picture of a
+  signature, not a digital (certificate) signature. **Remember on this device** (off by default)
+  keeps up to five for next time, on this device only.
+- **Page numbers and watermarks:** **Tools → Page numbers…** adds numbers such as “Page 1 of 12”
+  (or your own text with {page} and {total}) at the top or bottom of the pages; **Tools →
+  Watermark…** adds text across the pages at an angle and opacity, over or under their content.
+  Both apply to all pages or a range, show at once, can be undone, and are drawn into the pages
+  when you save or print, as new text in the standard PDF fonts. The Properties panel lists them.
 - **Clipboard:** with the pages focused, ⌘C/⌘X/⌘V (Ctrl+C/X/V) copy, cut and paste the selected
   comments, also into another open document; an image on the clipboard is pasted as an added
   image. Selected page text is copied as usual.
@@ -184,6 +211,27 @@ menu also offers a copy with comments flattened into the pages, and **Save a cop
 original**, which writes the opened file unchanged. The Rust layer accepts only PDF data. The
 webview never sees paths: files are reachable only through tokens issued by the Rust layer. Closing
 a document or the window with unsaved changes asks first.
+
+### Tools
+
+The **Tools** menu (a native menu on desktop, a toolbar menu everywhere) works on the open
+document; tools that write files save copies and never change the open document.
+
+- **Recognize text (OCR)…** reads scanned pages on this device (English, Indonesian, Chinese
+  Simplified and Traditional; nothing is downloaded). The text can then be searched, selected,
+  copied and highlighted, and is saved into the PDF as invisible text. Undo removes it.
+- **Export pages as images…** (PNG or JPEG at 72, 150 or 300 dpi; several pages as a ZIP) and
+  **Export text…** (including recognized text; copy or save as .txt).
+- **Reduce file size…** saves a smaller copy: lossless, or with large images re-encoded as JPEG.
+- **Password protection…** saves a copy with a password to open and/or restrictions on printing,
+  copying and changes (AES-256), or without the password of a document you opened with it. Folio
+  re-opens every protected copy to check it before saving it.
+- **Ask Claude…** (optional, off by default): with your own Anthropic API key, summarize a
+  document or ask about it; answers stream and cite the pages they come from. When you ask, Folio
+  sends the text of the chosen pages (never the file) and your questions to Anthropic;
+  Anthropic's terms and privacy policy apply. The desktop app keeps the key in the macOS Keychain
+  or Windows Credential Manager, where the page cannot read it; the extension keeps it in its
+  local storage (never synced). Turn it off and forget the key at any time.
 
 ### Crash recovery and Folio's data folder
 
@@ -365,17 +413,32 @@ pnpm build:desktop:windows
 This produces `target/release/bundle/msi/*.msi` and `target/release/bundle/nsis/*-setup.exe`.
 The NSIS installer installs per user. Unsigned installers trigger SmartScreen warnings.
 
+### Releases and updates
+
+`.github/workflows/release.yml` runs on `v*` tags (the tag must match the versions in
+`apps/desktop/package.json`, `apps/chrome-extension/package.json` and `Cargo.toml`): it builds
+the macOS and Windows installers with the release overlay `tauri.release.conf.json`, signs the
+updater artifacts with the `TAURI_SIGNING_PRIVATE_KEY` secrets, and attaches them, `latest.json`
+and the Chrome extension zip to a **draft** GitHub release that you publish by hand. The release
+notes come from the annotated tag's message. Normal builds need no key.
+
+The app's update feed is the single value `plugins.updater.endpoints` in
+`apps/desktop/src-tauri/tauri.conf.json` (this repository's latest release). **While the
+repository is private, users cannot reach it**: publish releases somewhere public (or make the
+repository public) before relying on updates. Keep the private key and its password backed up:
+installed copies only accept updates signed with that key.
+
 ## Code signing and notarization
 
 Distribution builds need credentials that are **not** in this repository:
 
-| Platform               | You need                                                                                          | How Tauri uses it                                                                                                                       |
-| ---------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS signing          | Apple Developer Program membership; a **Developer ID Application** certificate exported as `.p12` | Set `APPLE_CERTIFICATE` (base64 .p12), `APPLE_CERTIFICATE_PASSWORD` and `APPLE_SIGNING_IDENTITY`, or set `bundle.macOS.signingIdentity` |
-| macOS notarization     | An App Store Connect API key (or Apple ID + app-specific password)                                | `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH` (or `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`)                            |
-| Windows signing        | An Authenticode code-signing certificate (OV/EV, or Azure Trusted Signing)                        | `bundle.windows.certificateThumbprint` for a certificate in the store, or `bundle.windows.signCommand` for cloud/HSM signing            |
-| Auto-updates (Phase 7) | A Tauri updater key pair                                                                          | `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; public key in the updater config                                     |
-| Chrome Web Store       | A Chrome Web Store developer account                                                              | Upload `folio-chrome-<version>.zip`                                                                                                     |
+| Platform           | You need                                                                                          | How Tauri uses it                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS signing      | Apple Developer Program membership; a **Developer ID Application** certificate exported as `.p12` | Set `APPLE_CERTIFICATE` (base64 .p12), `APPLE_CERTIFICATE_PASSWORD` and `APPLE_SIGNING_IDENTITY`, or set `bundle.macOS.signingIdentity` |
+| macOS notarization | An App Store Connect API key (or Apple ID + app-specific password)                                | `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH` (or `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`)                            |
+| Windows signing    | An Authenticode code-signing certificate (OV/EV, or Azure Trusted Signing)                        | `bundle.windows.certificateThumbprint` for a certificate in the store, or `bundle.windows.signCommand` for cloud/HSM signing            |
+| Auto-updates       | A Tauri updater key pair (the public key is in `tauri.conf.json`)                                 | `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` for `.github/workflows/release.yml`                                   |
+| Chrome Web Store   | A Chrome Web Store developer account                                                              | Upload `folio-chrome-<version>.zip`                                                                                                     |
 
 Add these as GitHub Actions secrets and expose them as environment variables in the desktop
 workflow's build step to produce signed releases. Never commit them.
@@ -383,7 +446,13 @@ workflow's build step to produce signed releases. Never commit them.
 ## Privacy
 
 - Documents are read and rendered locally (PDF.js runs in a worker inside the app). Nothing is
-  uploaded, and there are no analytics or remote services.
+  uploaded, and there are no analytics. The only remote services are opt-in: **Ask Claude** sends
+  the text of the pages you choose and your questions to Anthropic's API with your own key, when
+  you ask; **Check for Updates** asks GitHub for the release feed (sending nothing about you or
+  your documents).
+- OCR runs on the device with the bundled Tesseract engine and language data.
+- Signatures you choose to remember are kept in Folio's settings on this device (up to five) and
+  can be deleted in the signature dialog.
 - The desktop app's CSP allows no remote code or connections. The extension's pages allow none
   either; only its service worker may reach web servers, and only to download a PDF you asked to
   open from a site you allowed, with no cookies (unless you agree for one request) and no
@@ -414,3 +483,7 @@ Folio's own code and artwork are original. Bundled third-party components:
   is not shipped. The text layer styles in `packages/editor/src/viewer/viewer.css` are adapted
   from PDF.js' viewer stylesheet (Apache-2.0).
 - React and Zustand (MIT), Radix UI (MIT), Lucide (ISC), Inter (OFL-1.1) and Tauri (MIT/Apache-2.0).
+- Tesseract.js and tesseract.js-core (Apache-2.0; their license files ship in `tesseract/`), with
+  language models from tessdata (Apache-2.0) packaged as `@tesseract.js-data` (MIT).
+- Dancing Script (OFL-1.1), the handwriting font for typed signatures.
+- The Anthropic TypeScript SDK (MIT), used only by Ask Claude.

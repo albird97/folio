@@ -4,8 +4,9 @@ Folio is one PDF product with three targets: a macOS app, a Windows app (both Ta
 Chrome extension (Manifest V3). Document logic is written once in shared packages; each target
 contributes only a thin platform adapter and its own shell.
 
-- **Status:** Phases 1 (Foundation), 2 (Shared PDF viewer) and 3 (Core editing) are complete.
-  See [Phase 3 results](#phase-3-results), [Phase 2 results](#phase-2-results) and
+- **Status:** Phases 1–6 are complete; Phase 7 (Release quality) is under way. See
+  [Phase 6 and 7 results](#phase-6-and-7-results), [Phase 4 and 5 results](#phase-4-and-5-results),
+  [Phase 3 results](#phase-3-results), [Phase 2 results](#phase-2-results) and
   [Phase 1 results](#phase-1-results).
 - **What works where:** [PLATFORM_CAPABILITIES.md](PLATFORM_CAPABILITIES.md) (generated, tested).
 - **How to build and run:** [README.md](README.md).
@@ -80,7 +81,8 @@ code.
 - **`DocumentViewState`:** current page and zoom. This is UI state, deliberately kept outside the
   model and outside undo history.
 - **Operations:** `pages/rotate|reorder|insert|remove`, `metadata/update`,
-  `annotations/add|replace|remove` and `batch`. Applying an operation is pure and returns its
+  `annotations/add|replace|remove`, `forms/set-values`, `stamps/set`, `text-layers/set` and
+  `batch`. Applying an operation is pure and returns its
   inverse, so undo and redo are exact.
 - **History:** undo and redo stacks of `{operation, inverse}`, with a size limit and coalescing
   (e.g. dragging an annotation, typing a title). Dirty state compares the top of the history with
@@ -88,7 +90,13 @@ code.
 - **PDF bytes:** never stored in the model or the history. Sources are referenced by ID and SHA-256;
   bytes live once in each target's resource registry.
 - **Recovery snapshots:** JSON that is version-tagged, validated with zod, checked for internal
-  consistency and never echoes content in its errors.
+  consistency and never echoes content in its errors. Fields added in Phase 6 (stamps, recognized
+  text) have defaults, so older snapshots still load.
+- **Phase 6 content:** form field values (fields come from the opened file; their widgets are read
+  from it when shown), page numbers and a watermark (`model.stamps`, laid out once in
+  `stamp-layout.ts` for the page view and the file), and recognized text per source page
+  (`model.textLayers`, the words in a JSON asset validated on read). Copies of a page share its
+  recognized text, because it belongs to the page's image.
 
 “Added text” is new content placed on a page. It is never presented as editing the PDF's
 existing text objects (see [§4](#4-pdf-engines-and-licensing)).
@@ -119,6 +127,20 @@ existing text objects (see [§4](#4-pdf-engines-and-licensing)).
 - The CSP permits `'self'`, `ipc:`, `blob:`/`data:` images and `'wasm-unsafe-eval'` (needed for
   PDF.js image decoders), and nothing remote. The tauri-driver test asserts zero CSP violations.
 - IPC errors are `{code, message}` with no paths.
+- **Exports that are not PDFs** (page images, ZIP archives of them, text) go through
+  `save_file_as`, which checks that the data is what its kind claims (PNG, JPEG, ZIP, UTF-8 text)
+  before the save dialog appears; such files are never granted or listed as recent.
+- **Ask Claude (opt-in)** keeps the user's Anthropic API key in the OS credential store (keyring),
+  which the webview cannot read. The webview's SDK sends requests through `ai_request`, which only
+  reaches `POST https://api.anthropic.com/v1/messages` and `/count_tokens`, allows only the
+  `anthropic-version`, `anthropic-beta` and `content-type` headers, adds the key, caps bodies at
+  32 MB and streams answers back on a channel. The CSP still allows no remote connections.
+- **Updates (opt-in)** are checked, verified and installed entirely in Rust (native menus and
+  dialogs); the webview has no updater permission. An update must be signed with Folio's key for
+  the version the feed announces, and unsaved work is asked about before Folio restarts.
+- **Fuzzing:** property tests (proptest) feed arbitrary input to everything that parses data from
+  the webview, Chrome or disk: native messaging frames and messages, file names, recovery ids,
+  recent files, grant tokens, launch arguments, settings files.
 - **Save** writes only through a grant token, with the SHA-256 Folio last read or wrote: a file
   changed by another program is not overwritten unless the user confirms. Writes go to a private
   temporary file in the same folder, are checked again just before an atomic replace
@@ -182,8 +204,10 @@ existing text objects (see [§4](#4-pdf-engines-and-licensing)).
 - The service worker validates every message with zod, caps message size and accepts only this
   extension's pages as senders. It holds no state in memory beyond a queue that orders
   activity-log writes.
-- Documents never leave the device. An e2e test asserts no network requests while opening a
-  document. Activity stores counts by default; file names only on opt-in, and turning that off
+- Documents never leave the device unless the user turns on Ask Claude and asks a question. Its
+  key lives in `chrome.storage.local` (never synced) and only the service worker uses it and talks
+  to `api.anthropic.com` (access requested from a click; removing it forgets the key); pages keep
+  `connect-src 'self'`. An e2e test asserts no network requests while opening a document. Activity stores counts by default; file names only on opt-in, and turning that off
   erases stored names.
 - Side panel → editor hand-offs are single-use IndexedDB records. Reading one deletes it, a record
   older than 10 minutes is ignored, and expired records are purged on every hand-off written or
@@ -222,7 +246,7 @@ full workspace.
 | qpdf                                      | Apache-2.0             | Fixture generation today; candidate desktop sidecar for robust encryption, linearization and repair (Phase 6) | Not shippable inside the extension.                                                                                                                                                                  |
 | PDFium                                    | BSD-3 / Apache-2.0     | Option for faster, higher-fidelity desktop rendering                                                          | Evaluate in Phase 7 if PDF.js performance is insufficient for very large files.                                                                                                                      |
 | MuPDF                                     | AGPL-3.0 or commercial | Rejected                                                                                                      | AGPL is incompatible with a closed product without a commercial license.                                                                                                                             |
-| Tesseract.js                              | Apache-2.0             | OCR (Phase 6), on device                                                                                      | Language data must be bundled or downloaded with explicit consent.                                                                                                                                   |
+| Tesseract.js                              | Apache-2.0             | OCR, on device                                                                                                | Bundled in both apps with English, Indonesian and Chinese (Simplified, Traditional) LSTM models (`4.0.0_best_int`, MIT-packaged tessdata): about 19.4 MB, nothing downloaded at runtime.             |
 | Commercial SDKs (Apryse, Nutrient, Foxit) | Commercial             | Not used                                                                                                      | Needed for high-fidelity **editing of existing text objects** and true redaction. Folio adds new content on top of pages instead and labels it that way.                                             |
 
 ## 5. Phases
@@ -335,21 +359,78 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
       a clear message when the app is absent, registration from the desktop app's menu and by
       hand (README).
 
-### Phase 6: Advanced tools ⏳
+### Phase 6: Advanced tools ✅
 
-Forms (AcroForm fill and flatten; XFA is reported as unsupported), signatures (drawn or image,
-placement; not cryptographic signing unless a certificate flow is added), OCR (Tesseract.js, on
-device), image export, compression (image recompression, object streams), password protection
-(validated output), page numbers and watermarks. AI features only as optional, disclosed and
-consented services.
+- [x] Forms: AcroForm fields filled on the page (text, multi-line, comb, password, check boxes,
+      radio buttons, drop-down and list boxes) through `forms/set-values`; PDF.js draws them from
+      its annotation storage and writes them as an incremental update (appearances generated,
+      encryption kept); "Save with form flattened" draws them into the pages, per page, so
+      duplicated pages and pages from other files work too. XFA forms are reported, not filled.
+- [x] Signatures: drawn (pointer events, smoothed, pen pressure), typed in a bundled OFL
+      handwriting font or imported (paper made transparent, cropped to the ink); placed with a
+      click or into a signature field; saved as Stamp annotations or flattened; optionally
+      remembered on the device (at most five, checked on read). Not cryptographic signing.
+- [x] OCR: Tesseract.js 7 (LSTM) with bundled English, Indonesian and Chinese models, one page at
+      a time on the device; recognized words are searchable, selectable and copyable, and saved as
+      invisible text with a glyph-less Unicode font (Type0/Identity-H, ToUnicode), so every
+      script extracts correctly.
+- [x] Page numbers and watermarks: one layout for the page view and the file, placed on the page
+      as shown; drawn into saved and printed pages as pagination artifacts, numbered by position
+      in the whole document (also in extracts, split parts and printed ranges).
+- [x] Export pages as images (PNG/JPEG, several in a ZIP) and text (including recognized text) in
+      the editor on every target, through a Rust `save_file_as` that checks the data on desktop.
+- [x] Reduce file size: lossless (streams, thumbnails) or JPEG re-encoding of large images to 2000
+      or 1400 px, keeping every image whose new version is not smaller.
+- [x] Password protection (AES-256): a password to open, restrictions with an optional permissions
+      password, or removal for documents opened with their password and without restrictions;
+      each copy is re-opened with PDF.js before it is saved.
+- [x] Ask Claude (opt-in, the user's own Anthropic API key): summarize and ask about a document
+      with streamed answers that cite pages; disclosed and consented, nothing sent until the user
+      asks; the official TypeScript SDK with platform transports that add the key outside the page
+      (a Rust proxy on desktop, the service worker in Chrome).
 
 ### Phase 7: Release quality ⏳
 
-Capability audit, accessibility review (screen readers on macOS, Windows and ChromeOS),
-performance profiling, a security review (IPC fuzzing, CSP, permissions), auto-update
-(`tauri-plugin-updater` with signed manifests), Web Store submission and release notes.
+- [x] Opt-in automatic updates (`tauri-plugin-updater`, signed and bound to the announced
+      version), native menu items, a draft-release workflow on `v*` tags (`release.yml`).
+- [x] Security: property tests fuzzing the Rust input handling (three bugs fixed: Windows device
+      names in file names, names that turned hidden, names read back from disk shown unfiltered);
+      `cargo audit` and `pnpm audit` clean; the updater's `zip` feature left out because of
+      advisories.
+- [x] Accessibility: visible keyboard focus rings everywhere (they were invisible with Tailwind 4),
+      axe in both themes on every new dialog and surface.
+- [ ] Export off the main thread (Web Worker) and measured.
+- [ ] Verify the native integrations on a real Mac and a real Windows PC.
+- [ ] Screen reader passes (VoiceOver, Narrator, ChromeVox).
+- [ ] Public release feed and signed, notarized installers (credentials).
+- [ ] Chrome Web Store submission (listing material in `docs/web-store/`).
 
 ## 6. Results
+
+### Phase 6 and 7 results
+
+#### Verified in this environment (macOS 26, Apple M1 Pro)
+
+| Area                | What was run                                                  | Result                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared packages     | `pnpm test` (Vitest)                                          | 583 tests passed: form engine (values re-read with PDF.js and pdf-lib, encryption kept), flattening, signatures (cropping, background removal, stored signatures), stamp layout at every rotation, real Tesseract in Node on a scanned fixture, invisible-text export, compression, protection (qpdf `--show-encryption`), Ask Claude prompts, transports and errors with mocked streams |
+| Types, lint, format | `pnpm typecheck`, `pnpm lint`, `pnpm format:check`            | Clean                                                                                                                                                                                                                                                                                                                                                                                    |
+| Rust                | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` | Clean; 247 unit and 5 integration tests, including 47 proptest properties (also run at 20,000–100,000 cases once)                                                                                                                                                                                                                                                                        |
+| Desktop UI          | `pnpm build:desktop:web` + Playwright (Chromium)              | All passed: forms, signatures, page numbers and watermarks, OCR (real Tesseract), export tools, Ask Claude (mocked API), focus rings, axe in both themes on every new dialog                                                                                                                                                                                                             |
+| Extension           | `pnpm build:extension` + Playwright (Chromium)                | All passed, adding forms, signatures (bundled font under the CSP), stamps, OCR (workers and WASM with no CSP violations), export tools and Ask Claude through the service worker                                                                                                                                                                                                         |
+| Updater signing     | A locally built signed bundle                                 | The signature verified against the configured public key and names its version; a changed artifact was refused                                                                                                                                                                                                                                                                           |
+
+Saved files were also rendered with poppler (`pdftoppm`, `pdftotext`) to check stamps, flattened
+forms and invisible text the way another reader sees them.
+
+#### Not yet verified anywhere
+
+- Phase 6 tools in WKWebView (macOS) and WebView2 (Windows): the same web code, verified in
+  Chromium only. Most at risk: OCR workers and WASM, the image codec of Reduce file size, the
+  handwriting font.
+- Ask Claude against the real API, the macOS Keychain and the Windows Credential Manager.
+- An update installed end to end (no public release exists yet).
+- The native save dialogs for images, text, compressed and protected copies.
 
 ### Phase 4 and 5 results
 
@@ -472,9 +553,27 @@ nothing beyond that is claimed here.
   Tiled rendering of the visible part would fix this.
 - **Text layer:** it is measured once per page and orientation and then scaled with CSS, so
   selections can drift slightly from the drawn text at zoom levels far from the first one.
-- **Interactive PDF content:** link annotations are drawn but not clickable, form fields are
-  drawn but not editable (Phase 6), and bookmarks that point to websites or other files are listed
-  but not followed.
+- **Interactive PDF content:** link annotations are drawn but not clickable, and bookmarks that
+  point to websites or other files are listed but not followed.
+- **Forms:** XFA forms (also hybrid AcroForm+XFA ones) are shown as saved but cannot be filled in;
+  form scripts (calculations, formatting, validation) do not run; characters a field's font
+  cannot show come out as "?" in flattened or printed copies; list boxes lose their border once an
+  option is chosen (PDF.js draws them that way); check boxes sharing one name tick together;
+  fields on pages inserted from other files stay as drawn.
+- **Signatures** are pictures: a signature field stays unsigned, and remembered signatures are
+  stored unencrypted on the device. Typed names outside the font's Latin, Latin Extended and
+  Vietnamese letters use the system's handwriting font.
+- **Page numbers and watermarks:** one line of text in the standard PDF fonts, one of each per
+  document; numbers are positions, not page labels. A watermark under the content is hidden by
+  pages that paint their whole area (such as scans), although the page view still shows it.
+- **OCR:** English, Indonesian and Chinese only; pages must show their text upright (no vertical or
+  right-to-left text); cancelling discards the whole run; it adds about 19.4 MB to each app.
+- **Ask Claude:** answers are plain text; conversations are lost on reload; desktop requests do not
+  use proxy settings from the OS.
+- **Reduce file size:** gray images become RGB JPEGs; the size is compared with the opened file,
+  so a document with many additions may read "already as small as Folio can make it".
+- **Updates:** checked only at startup; no download progress; the feed is this repository's GitHub
+  releases, which users cannot reach while the repository is private.
 - **Page labels:** page numbers are physical positions; `/PageLabels` (such as roman numerals for
   front matter) are not shown yet. Saved files keep page labels only while the original pages keep
   their positions; after reordering or deleting pages they are dropped rather than left wrong.
@@ -483,8 +582,8 @@ nothing beyond that is claimed here.
   pages copied from other files are kept as drawn but not merged into the document's form or
   structure tree. Changing a signed document invalidates its signatures (Folio says so when
   saving). Exporting runs on the main thread.
-- **Search:** scanned pages have no text until OCR (Phase 6); right-to-left and vertical text are
-  untested; results stop at 10,000 matches (the find bar says so).
+- **Search:** scanned pages have no text until Tools › Recognize text; right-to-left and vertical
+  text are untested; results stop at 10,000 matches (the find bar says so).
 - **macOS and Windows:** the native dialogs, drag and drop, menus, shortcuts, file association,
   Save, printing, recovery, recent files, single instance and native messaging are built in CI
   and tested on Linux, but have not been tried on a real Mac or Windows PC.
@@ -501,8 +600,7 @@ nothing beyond that is claimed here.
 - **Native messaging:** registered for Google Chrome and Chromium only (not Edge, Brave and other
   Chromium browsers). The extension uses a development key until it is published; any unpacked
   extension with the same public key gets the same id (transfers are still confirmed).
-- **Desktop editor:** page images and text extraction are only in the Chrome side panel so far
-  (Phase 6).
+- **Export pages as images** keeps the images in memory and takes up to 300 pages at a time.
 - **macOS 13.3+:** required. Tailwind CSS 4 needs Safari 16.4-level WebKit.
 - **Dependency pins:** ESLint 9 (end of life) is pinned until `eslint-plugin-jsx-a11y` supports
   ESLint 10.
