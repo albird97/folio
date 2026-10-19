@@ -340,7 +340,8 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
       Finder's open events. Remembered window state.
 - [x] Shortcuts for Save and Print, single-key tool shortcuts, copy/cut/paste of comments and
       pasting images, recent files (start screen and File → Open Recent), a close guard.
-- [ ] Verify the native integrations on a real Mac and a real Windows PC. The capability matrix
+- [ ] Verify the native integrations on a real Mac and a real Windows PC (partly done on a Mac:
+      see [Phase 6 and 7 results](#phase-6-and-7-results)). The capability matrix
       rates them Limited until then.
 - [ ] Signed and notarized installers, once credentials exist (see README).
 
@@ -404,7 +405,8 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
       propagating error codes and warnings, cancellable, with the main thread as fallback (Node,
       tests). The longest main-thread task while saving 5,000 stamped pages fell from about 0.55 s
       to none, and while compressing two 4000×2700 photos from about 0.8 s to none (Chromium).
-- [ ] Verify the native integrations on a real Mac and a real Windows PC.
+- [ ] Verify the native integrations on a real Mac and a real Windows PC (partly done on a Mac:
+      see [Phase 6 and 7 results](#phase-6-and-7-results)).
 - [ ] Screen reader passes (VoiceOver, Narrator, ChromeVox).
 - [ ] Public release feed and signed, notarized installers (credentials).
 - [ ] Chrome Web Store submission (listing material in `docs/web-store/`).
@@ -427,11 +429,26 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
 Saved files were also rendered with poppler (`pdftoppm`, `pdftotext`) to check stamps, flattened
 forms and invisible text the way another reader sees them.
 
+#### Tried on a real Mac (release build, macOS 26, Apple silicon)
+
+A release build (`tauri build --bundles app`) was driven with the macOS accessibility API:
+opening a file passed at launch and through a Finder open event (it opened in a new tab of the
+running window), the native Open dialog, the native File, Tools and Folio menus, filling in a form
+(text, check box, radio button) and **Save** writing the values back to the file (read back with
+pdf-lib, `qpdf --check` clean), OCR in WKWebView (Tesseract's worker and WASM under Tauri's CSP;
+29 words on the two scanned pages, saved and extracted again with poppler, Indonesian included),
+drawing and typing a signature (the bundled handwriting font loads) and placing it, Reduce file
+size in the export worker (`OffscreenCanvas` re-encoding: 15.5 MB → 351 KB) and the unsaved-work
+question when quitting. Background windows of WKWebView do not repaint until brought to the front,
+which only affects automation.
+
+Not tried on the Mac yet: the native save dialogs, printing, drag and drop, recent files, Connect
+to Chrome, updates, Ask Claude with the Keychain, VoiceOver.
+
 #### Not yet verified anywhere
 
-- Phase 6 tools in WKWebView (macOS) and WebView2 (Windows): the same web code, verified in
-  Chromium only. Most at risk: OCR workers and WASM, the image codec of Reduce file size, the
-  handwriting font.
+- Phase 6 tools in WebView2 (Windows): the same web code, verified in Chromium and (above) in
+  WKWebView on a Mac.
 - Ask Claude against the real API, the macOS Keychain and the Windows Credential Manager.
 - An update installed end to end (no public release exists yet).
 - The native save dialogs for images, text, compressed and protected copies.

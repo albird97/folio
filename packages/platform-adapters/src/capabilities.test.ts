@@ -54,28 +54,31 @@ describe('capability matrix', () => {
   });
 
   it('keeps native integration Limited on macOS and Windows until tried on a real machine', () => {
-    // Implemented and compiled in the macOS and Windows CI builds, but never
-    // run on either OS. Remove an id once it has been verified there.
-    const untested = [
-      'open-picker',
-      'open-drag-drop',
-      'open-file-association',
-      'native-menus',
-      'shortcuts',
-      'zoom-rotate-view',
-      'export-pdf',
-      'clipboard',
-      'save',
-      'printing',
-      'recovery',
-      'recent-files',
-      'single-instance',
-      'native-messaging',
-    ];
-    for (const id of untested) {
+    // Implemented and compiled in the macOS and Windows CI builds, but not yet
+    // run on that OS. Remove a target once it has been verified there.
+    const both = ['macos', 'windows'] as const;
+    const untested: Record<string, ReadonlyArray<'macos' | 'windows'>> = {
+      'open-picker': both,
+      'open-drag-drop': both,
+      // Tried on a Mac (release build, macOS 26): Finder open events, launch arguments.
+      'open-file-association': ['windows'],
+      'native-menus': both,
+      shortcuts: both,
+      'zoom-rotate-view': both,
+      'export-pdf': both,
+      clipboard: both,
+      // Tried on a Mac: Save wrote filled-in form values and recognized text back.
+      save: ['windows'],
+      printing: both,
+      recovery: both,
+      'recent-files': both,
+      'single-instance': both,
+      'native-messaging': both,
+    };
+    for (const [id, targets] of Object.entries(untested)) {
       const entry = capability(id);
       expect(entry.plannedPhase, id).not.toBeNull();
-      for (const target of ['macos', 'windows'] as const) {
+      for (const target of targets) {
         expect(entry.targets[target].level, `${id}/${target}`).toBe('limited');
         expect(entry.targets[target].note, `${id}/${target}`).toMatch(
           /not yet verified on a real (Mac|Windows PC)\.$/,

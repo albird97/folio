@@ -55,6 +55,10 @@ const REAL_MACHINE: Record<DesktopTarget, string> = {
 const unverified = (target: DesktopTarget, note: string): TargetSupport =>
   limited(`${note} Implemented and built in CI, but not yet verified on ${REAL_MACHINE[target]}.`);
 
+/** A native integration someone has used in a release build on a real Mac. */
+const triedOnMac = (note: string): TargetSupport =>
+  full(`${note} Tried in a release build on macOS 26 (Apple silicon).`);
+
 const EDITING_VERIFIED =
   'Unit tests of the model, store and export (results re-opened with PDF.js and checked with qpdf); e2e in Chromium for the desktop UI and the extension, reading saved files back.';
 
@@ -136,9 +140,8 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Open from Finder / File Explorer (file association)',
     plannedPhase: 4,
     targets: {
-      macos: unverified(
-        'macos',
-        'Handles Finder “Open With” events once the app bundle is installed; Folio is registered as an alternate PDF handler.',
+      macos: triedOnMac(
+        'Handles Finder “Open With” events and files passed at launch; a file opened while Folio runs opens in a new tab of the running window. Folio is registered as an alternate PDF handler.',
       ),
       windows: unverified(
         'windows',
@@ -430,7 +433,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Save (write changes back to the opened file)',
     plannedPhase: 4,
     targets: {
-      macos: unverified('macos', SAVE_NOTE),
+      macos: triedOnMac(SAVE_NOTE),
       windows: unverified('windows', SAVE_NOTE),
       chrome: none(
         'Extensions cannot write back to the original file; Download PDF saves a copy instead.',
@@ -520,8 +523,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Saving without freezing the window (export in a worker)',
     plannedPhase: 7,
     targets: {
-      macos: unverified(
-        'macos',
+      macos: triedOnMac(
         'Save, print, extract, split and Reduce file size write the PDF in a Web Worker.',
       ),
       windows: unverified(
@@ -595,7 +597,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Recognize text in scanned pages (OCR)',
     plannedPhase: 7,
     targets: {
-      macos: unverified('macos', OCR_NOTE),
+      macos: triedOnMac(OCR_NOTE),
       windows: unverified('windows', OCR_NOTE),
       chrome: full(OCR_NOTE),
     },
@@ -646,7 +648,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     targets: {
       macos: unverified(
         'macos',
-        `${COMPRESS_NOTE} Re-encoding images uses the browser engine’s image decoder, so far only tried in Chromium.`,
+        `${COMPRESS_NOTE} Re-encoding images was tried in a release build on a Mac; saving the copy uses the native save dialog.`,
       ),
       windows: unverified(
         'windows',
