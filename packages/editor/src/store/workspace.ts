@@ -10,8 +10,11 @@ import {
   newAssetId,
   newDocumentId,
   OperationError,
+  parseRecognizedText,
   parseRecoverySnapshot,
   redo as redoHistory,
+  serializeRecognizedText,
+  sourcePageKey,
   undo as undoHistory,
   type Annotation,
   type AnnotationId,
@@ -23,6 +26,8 @@ import {
   type EditorDocumentState,
   type Operation,
   type PageId,
+  type RecognizedText,
+  type RecognizedTextData,
   type SourceId,
   type ZoomMode,
 } from '@folio/document-model';
@@ -40,6 +45,7 @@ import {
 import type { ExportResult } from '@folio/pdf-core/export';
 import type { IncomingFile } from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
+import { pageTextWithRecognized } from '../ocr/page-text';
 import { DEFAULT_SEARCH_OPTIONS, type SearchOptions, type TextMatch } from '../search/match';
 import { searchDocument, type SearchableRun } from '../search/run';
 import { clampZoom, stepZoom } from '../viewer/zoom';
@@ -230,6 +236,23 @@ export interface WorkspaceState {
     bytes: Uint8Array,
     mimeType: AssetRef['mimeType'],
   ): Promise<AssetRef | null>;
+  /**
+   * Keeps other data the document refers to, such as recognized text
+   * (JSON), like `registerImage`: the same bytes give the same asset.
+   */
+  registerData(
+    key: string,
+    bytes: Uint8Array,
+    mimeType: AssetRef['mimeType'],
+  ): Promise<AssetRef | null>;
+  /**
+   * Gives source pages recognized text (OCR), replacing any they had, in one
+   * change. Text added to pages needs the permission to change the document.
+   */
+  addRecognizedText(
+    key: string,
+    pages: ReadonlyArray<{ sourceId: SourceId; pageIndex: number; data: RecognizedTextData }>,
+  ): Promise<boolean>;
   /** Writes the document (or some of its pages) as a new PDF. */
   exportDocument(key: string, request?: ExportRequest): Promise<ExportResult>;
   /** Opens each group of pages as a new document. */
@@ -289,9 +312,11 @@ interface Resources {
   handle: PdfDocumentHandle | null;
   /** The file the document was opened from, and files pages were inserted from. */
   sources: Map<SourceId, SourceEntry>;
-  /** Image bytes by asset, including images added and then undone (for redo). */
+  /** Asset bytes (images, recognized text), also of changes that were undone (for redo). */
   assets: Map<AssetId, Uint8Array>;
   assetUrls: Map<AssetId, string>;
+  /** Recognized text read from JSON assets (null when damaged); assets never change. */
+  recognized: Map<AssetId, RecognizedTextData | null>;
   /** Page sizes read after opening, applied to the model in batches. */
   pendingPageInfo: Map<SourceId, PageInfoUpdate[]>;
   flushTimer: ReturnType<typeof setTimeout> | null;
@@ -312,8 +337,10 @@ export interface WorkspaceStore extends StoreApi<WorkspaceState> {
   getAssetUrl(key: string, assetId: AssetId): string | null;
   /** The bytes of one of a document's source files (crash recovery). */
   getSourceBytes(key: string, sourceId: SourceId): Uint8Array | null;
-  /** The bytes of an image asset (crash recovery). */
+  /** The bytes of an asset: an image or recognized text (crash recovery). */
   getAssetBytes(key: string, assetId: AssetId): Uint8Array | null;
+  /** The recognized text stored in a JSON asset, or null when it is missing or damaged. */
+  getRecognizedText(key: string, assetId: AssetId): RecognizedTextData | null;
   /** The engine, to open bytes the workspace produced (printing). */
   readonly engine: PdfEngine;
   destroy(): Promise<void>;
@@ -350,6 +377,22 @@ function samePageSequence(a: DocumentModel['pages'], b: DocumentModel['pages']):
 }
 
 const textKey = (sourceId: SourceId, pageIndex: number) => `${sourceId}:${pageIndex}`;
+
+/** Recognized text from a JSON asset of the document, read once; null when missing or damaged. */
+function recognizedTextOf(entry: Resources, assetId: AssetId): RecognizedTextData | null {
+  const known = entry.recognized.get(assetId);
+  if (known !== undefined) return known;
+  const bytes = entry.assets.get(assetId);
+  if (!bytes) return null;
+  let data: RecognizedTextData | null = null;
+  try {
+    data = parseRecognizedText(bytes);
+  } catch {
+    // Damaged data (say, in a recovery record) shows no text instead of failing.
+  }
+  entry.recognized.set(assetId, data);
+  return data;
+}
 
 function newDocument(key: string, file: IncomingFile): WorkspaceDocument {
   return {
@@ -507,18 +550,28 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         pagesSearched: 0,
         truncated: false,
       }));
+      const textLayers = doc.editor?.model.textLayers ?? {};
       const source = {
         pageCount: pages.length,
         async getPageText(position: number) {
           const page = pages[position];
           if (!page || page.source.kind !== 'source') return { items: [] };
           const { sourceId, pageIndex } = page.source;
-          const id = textKey(sourceId, pageIndex);
+          // Recognized text is searched too. Its own cache entry means that
+          // undoing the recognition takes it out of searches again.
+          const layer = textLayers[sourcePageKey(sourceId, pageIndex)];
+          const id = layer
+            ? `${textKey(sourceId, pageIndex)}#${layer.assetId}`
+            : textKey(sourceId, pageIndex);
           const cached = entry.searchText.get(id);
           if (cached) return { items: cached };
           const handle = entry.sources.get(sourceId)?.handle;
           if (!handle) return { items: [] };
-          const text = await handle.getPageText(pageIndex);
+          const text = await pageTextWithRecognized(
+            handle,
+            pageIndex,
+            layer ? recognizedTextOf(entry, layer.assetId) : null,
+          );
           const items = text.items.map(({ str, hasEOL }) => ({ str, hasEOL }));
           const chars = items.reduce((total, item) => total + item.str.length, 0);
           if (entry.searchTextChars + chars <= SEARCH_TEXT_BUDGET) {
@@ -641,6 +694,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
           sources: new Map(),
           assets: new Map(),
           assetUrls: new Map(),
+          recognized: new Map(),
           pendingPageInfo: new Map(),
           flushTimer: null,
           search: null,
@@ -725,6 +779,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         sources: new Map(),
         assets: new Map(),
         assetUrls: new Map(),
+        recognized: new Map(),
         pendingPageInfo: new Map(),
         flushTimer: null,
         search: null,
@@ -792,7 +847,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       change: (editor: EditorDocumentState) => EditorDocumentState,
     ): boolean {
       let applied = false;
-      let pagesChanged = false;
+      let resultsStale = false;
       let failure: OperationError | null = null;
       update(key, (doc) => {
         if (!doc.editor) return null;
@@ -808,7 +863,10 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         }
         if (editor === doc.editor) return null;
         applied = true;
-        pagesChanged = !samePageSequence(doc.editor.model.pages, editor.model.pages);
+        // Results follow pages that move, and text recognized (or undone).
+        resultsStale =
+          !samePageSequence(doc.editor.model.pages, editor.model.pages) ||
+          doc.editor.model.textLayers !== editor.model.textLayers;
         return { editor, ...reconcile(doc, editor.model) };
       });
       if (failure) {
@@ -818,7 +876,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
             : 'That change does not fit the document any more.',
         );
       }
-      if (pagesChanged) {
+      if (resultsStale) {
         const doc = find(key);
         if (doc?.search.open && doc.search.query.trim()) runSearch(key);
       }
@@ -840,6 +898,25 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       options: { label: string; coalesceKey?: string },
     ): boolean {
       return commit(key, (editor) => execute(editor, operation, options));
+    }
+
+    /** Keeps the bytes of an asset (images, recognized text); the same bytes give the same asset. */
+    async function registerData(
+      key: string,
+      bytes: Uint8Array,
+      mimeType: AssetRef['mimeType'],
+    ): Promise<AssetRef | null> {
+      const entry = resources.get(key);
+      const model = find(key)?.editor?.model;
+      if (!entry || !model) return null;
+      const sha256 = await sha256Hex(bytes);
+      for (const [id, existing] of entry.assets) {
+        const ref = model.assets[id];
+        if (ref?.sha256 === sha256 && existing.byteLength === bytes.byteLength) return ref;
+      }
+      const ref: AssetRef = { id: newAssetId(), mimeType, byteLength: bytes.byteLength, sha256 };
+      entry.assets.set(ref.id, bytes);
+      return ref;
     }
 
     async function exportDocument(key: string, request: ExportRequest = {}) {
@@ -1269,18 +1346,32 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         );
       },
 
-      async registerImage(key, bytes, mimeType) {
-        const entry = resources.get(key);
-        const model = find(key)?.editor?.model;
-        if (!entry || !model) return null;
-        const sha256 = await sha256Hex(bytes);
-        for (const [id, existing] of entry.assets) {
-          const ref = model.assets[id];
-          if (ref?.sha256 === sha256 && existing.byteLength === bytes.byteLength) return ref;
+      registerImage: registerData,
+
+      registerData,
+
+      async addRecognizedText(key, pages) {
+        if (pages.length === 0 || !allowed(key, 'modify')) return false;
+        const entries: Array<{ key: string; layer: RecognizedText }> = [];
+        const assets: AssetRef[] = [];
+        for (const { sourceId, pageIndex, data } of pages) {
+          const bytes = serializeRecognizedText(data);
+          const ref = await registerData(key, bytes, 'application/json');
+          const entry = resources.get(key);
+          if (!ref || !entry) return false;
+          // Read back like stored data, so what shows is what is saved.
+          entry.recognized.set(ref.id, parseRecognizedText(bytes));
+          entries.push({
+            key: sourcePageKey(sourceId, pageIndex),
+            layer: { assetId: ref.id, languages: data.languages, wordCount: data.words.length },
+          });
+          if (!assets.some((asset) => asset.id === ref.id)) assets.push(ref);
         }
-        const ref: AssetRef = { id: newAssetId(), mimeType, byteLength: bytes.byteLength, sha256 };
-        entry.assets.set(ref.id, bytes);
-        return ref;
+        return apply(
+          key,
+          { type: 'text-layers/set', entries, assets },
+          { label: 'Recognize text' },
+        );
       },
 
       async exportDocument(key, request) {
@@ -1370,6 +1461,10 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
     getSourceHandle: (key, sourceId) => resources.get(key)?.sources.get(sourceId)?.handle ?? null,
     getSourceBytes: (key, sourceId) => resources.get(key)?.sources.get(sourceId)?.bytes ?? null,
     getAssetBytes: (key, assetId) => resources.get(key)?.assets.get(assetId) ?? null,
+    getRecognizedText: (key, assetId) => {
+      const entry = resources.get(key);
+      return entry ? recognizedTextOf(entry, assetId) : null;
+    },
     engine,
     getBytes: (key) => {
       const entry = resources.get(key);
