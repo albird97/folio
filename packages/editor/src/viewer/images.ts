@@ -34,31 +34,39 @@ export interface PreparedImage {
 
 /**
  * Decodes an image the way the browser shows it (EXIF orientation applied)
- * and re-encodes it as PNG or JPEG for the PDF. Re-encoding also drops
- * metadata such as the location a photo was taken at.
+ * onto a canvas, scaled down to at most `maxSide` pixels on its long side.
  */
-export async function prepareImage(file: Blob): Promise<PreparedImage> {
+export async function decodeImage(file: Blob, maxSide: number): Promise<HTMLCanvasElement> {
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   try {
-    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const context = canvas.getContext('2d');
     if (!context) throw new Error('No canvas.');
-    context.drawImage(bitmap, 0, 0, width, height);
-    // Photos stay JPEG; anything that may be transparent becomes PNG.
-    const mimeType: AssetRef['mimeType'] = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png';
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, mimeType, mimeType === 'image/jpeg' ? 0.92 : undefined),
-    );
-    canvas.width = 0;
-    canvas.height = 0;
-    if (!blob) throw new Error('The image could not be encoded.');
-    return { bytes: new Uint8Array(await blob.arrayBuffer()), mimeType, width, height };
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas;
   } finally {
     bitmap.close();
   }
+}
+
+/**
+ * Decodes an image the way the browser shows it and re-encodes it as PNG or
+ * JPEG for the PDF. Re-encoding also drops metadata such as the location a
+ * photo was taken at.
+ */
+export async function prepareImage(file: Blob): Promise<PreparedImage> {
+  const canvas = await decodeImage(file, MAX_IMAGE_SIDE);
+  const { width, height } = canvas;
+  // Photos stay JPEG; anything that may be transparent becomes PNG.
+  const mimeType: AssetRef['mimeType'] = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, mimeType, mimeType === 'image/jpeg' ? 0.92 : undefined),
+  );
+  canvas.width = 0;
+  canvas.height = 0;
+  if (!blob) throw new Error('The image could not be encoded.');
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), mimeType, width, height };
 }
