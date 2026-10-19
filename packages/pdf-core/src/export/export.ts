@@ -10,6 +10,7 @@ import {
 import { degrees, EncryptedPDFError, PDFDocument, PDFPage } from '@cantoo/pdf-lib';
 import type { PdfPermissions } from '../engine';
 import { AnnotationWriter, type AssetData } from './annotations';
+import { flattenFormFields } from './forms';
 import { writeMetadata } from './metadata';
 import {
   collectGarbage,
@@ -45,6 +46,8 @@ export interface ExportOptions {
   pageIds?: readonly PageId[];
   /** Default: the document's `exportConfig.flattenAnnotations`. */
   flatten?: boolean;
+  /** Draw the form fields into the pages and leave the form out (they can no longer be filled in). */
+  flattenForms?: boolean;
   /** Encrypt the result. Callers pass the original's protection to keep it protected. */
   protection?: Protection | null;
   now?: Date;
@@ -203,6 +206,13 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     basePages.map((page) => page.ref.tag),
     output.map((entry) => entry.page),
   );
+  // Before Folio's annotations, so comments flattened too are drawn over the fields.
+  if (options.flattenForms) {
+    flattenFormFields(
+      doc,
+      output.map((entry) => entry.page),
+    );
+  }
 
   // Annotations.
   const pageAnnotations = new Map<PageId, Annotation[]>();
