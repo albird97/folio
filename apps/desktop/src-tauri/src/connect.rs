@@ -5,7 +5,8 @@
 //!
 //! The question that changes something always has a safe default: Return,
 //! Enter and Escape keep things as they are, and only a click on the action
-//! button (or Tab to it) goes ahead.
+//! button (or Tab to it) goes ahead. Updates (`updates`) ask and tell through
+//! the same dialogs.
 
 use crate::native_messaging::{self, RegistrationError, Status};
 use crate::paths;
@@ -234,7 +235,7 @@ fn run(app: &AppHandle) {
 }
 
 /// Shows a notice and waits until it is closed.
-fn tell(app: &AppHandle, notice: &Notice) {
+pub(crate) fn tell(app: &AppHandle, notice: &Notice) {
     let kind = match notice.level {
         Level::Info => MessageDialogKind::Info,
         Level::Warning => MessageDialogKind::Warning,
@@ -260,7 +261,7 @@ fn tell(app: &AppHandle, notice: &Notice) {
 /// through `rfd` directly with the safe button first: Return picks it,
 /// Escape reads as cancelled, and only `Custom(action)` goes ahead.
 #[cfg(any(target_os = "macos", windows))]
-fn ask(app: &AppHandle, question: &Question) -> bool {
+pub(crate) fn ask(app: &AppHandle, question: &Question) -> bool {
     use rfd::{AsyncMessageDialog, MessageButtons, MessageDialogResult, MessageLevel};
     let (sender, receiver) = std::sync::mpsc::channel();
     let window = crate::main_window(app);
@@ -295,7 +296,7 @@ fn ask(app: &AppHandle, question: &Question) -> bool {
 /// and have no default button, so the dialog is built here with an
 /// explicit default (and focus) on the safe button.
 #[cfg(target_os = "linux")]
-fn ask(app: &AppHandle, question: &Question) -> bool {
+pub(crate) fn ask(app: &AppHandle, question: &Question) -> bool {
     use gtk::prelude::*;
     let (sender, receiver) = std::sync::mpsc::channel();
     let window = crate::main_window(app);
@@ -337,7 +338,7 @@ fn ask(app: &AppHandle, question: &Question) -> bool {
 }
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-fn ask(_app: &AppHandle, _question: &Question) -> bool {
+pub(crate) fn ask(_app: &AppHandle, _question: &Question) -> bool {
     false
 }
 

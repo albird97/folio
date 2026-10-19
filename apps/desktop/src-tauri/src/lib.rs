@@ -2,6 +2,8 @@ pub mod close_guard;
 mod commands;
 mod connect;
 pub mod files;
+#[cfg(test)]
+mod fuzz;
 pub mod incoming;
 pub mod menu;
 pub mod native_host;
@@ -11,6 +13,7 @@ pub mod recent;
 pub mod recovery;
 pub mod save;
 pub mod time;
+mod updates;
 
 use close_guard::{CloseGuard, CloseIntent};
 use files::{FileError, FileGrants, LaunchArgs, LaunchQueue, OpenedFiles};
@@ -48,6 +51,8 @@ pub struct Storage {
     pub recent: RecentFiles,
     /// Where the native messaging host spools documents from Chrome.
     pub incoming: Option<PathBuf>,
+    /// Whether Folio checks for updates by itself, and when it last checked.
+    pub updates: updates::UpdateSettings,
 }
 
 impl Storage {
@@ -65,6 +70,11 @@ impl Storage {
                 }
             }),
             recent: RecentFiles::load(data_dir.as_ref().map(|dir| dir.join("recent.json"))),
+            updates: updates::UpdateSettings::load(
+                data_dir
+                    .as_ref()
+                    .map(|dir| dir.join(updates::SETTINGS_FILE)),
+            ),
             incoming: data_dir.map(|dir| dir.join(incoming::INCOMING_DIR)),
         }
     }
@@ -88,7 +98,7 @@ pub(crate) fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(MAIN_WINDOW)
 }
 
-fn focus_main_window(app: &AppHandle) {
+pub(crate) fn focus_main_window(app: &AppHandle) {
     if let Some(window) = main_window(app) {
         let _ = window.unminimize();
         let _ = window.show();
@@ -232,7 +242,7 @@ fn on_second_instance(app: &AppHandle, argv: Vec<String>, cwd: String) {
 
 /// Holds back a close or quit while work is unsaved and asks the UI.
 /// Returns whether it was held back.
-fn hold_close(app: &AppHandle, intent: CloseIntent) -> bool {
+pub(crate) fn hold_close(app: &AppHandle, intent: CloseIntent) -> bool {
     if !app.state::<CloseGuard>().intercept(intent) {
         return false;
     }
@@ -251,6 +261,7 @@ pub(crate) fn carry_out_close(app: &AppHandle, intent: CloseIntent) {
             None => app.exit(0),
         },
         CloseIntent::Quit => app.exit(0),
+        CloseIntent::Update => updates::install(app),
     }
 }
 
@@ -271,6 +282,10 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         }
     } else if id == menu::CONNECT_CHROME.0 {
         connect::start(app);
+    } else if id == menu::CHECK_FOR_UPDATES.0 {
+        updates::check_now(app);
+    } else if id == menu::CHECK_UPDATES_AUTOMATICALLY.0 {
+        updates::toggle_automatic(app);
     } else if let Some(recent) = menu::recent_file_for(id) {
         let opened = open_recent(app, recent);
         deliver(app, opened);
@@ -329,11 +344,15 @@ pub fn run() {
     builder
         .plugin(window_state_plugin(data_dir.as_deref()))
         .plugin(tauri_plugin_dialog::init())
+        // Used from Rust only (see `updates`): the capability grants the
+        // webview none of its commands.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(FileGrants::new(data_dir.clone()))
         .manage(LaunchQueue::default())
         .manage(TransferQueue::default())
         .manage(CloseGuard::default())
         .manage(RecentMenu(Mutex::new(None)))
+        .manage(updates::Updates::default())
         .setup(move |app| {
             // Only the process the single-instance plugin kept gets here.
             #[cfg(not(target_os = "macos"))]
@@ -345,13 +364,17 @@ pub fn run() {
             let alone = app.state::<paths::Instance>().alone;
             let handle = app.handle();
             let entries = handle.state::<Storage>().recent.menu_entries();
-            let (menu, recent) = menu::build(handle, &entries)?;
+            let automatic = handle.state::<Storage>().updates.get().check_automatically;
+            let (menu, recent, automatic_updates) = menu::build(handle, &entries, automatic)?;
             app.set_menu(menu)?;
             *handle
                 .state::<RecentMenu>()
                 .0
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(recent);
+            handle
+                .state::<updates::Updates>()
+                .set_menu_item(automatic_updates);
             app.on_menu_event(on_menu_event);
             // Documents from Chrome: accepted ones whose grants were never
             // released (Folio quit), ones nobody answered for a day and
@@ -371,6 +394,8 @@ pub fn run() {
                 handle,
                 files::parse_launch_args(std::env::args_os().skip(1), &cwd),
             );
+            // Only once the user turned automatic checks on.
+            updates::check_if_due(handle);
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -472,6 +497,8 @@ mod tests {
             .save_snapshot("doc", "t", b"{}")
             .unwrap();
         assert!(dir.path().join("recovery").join("doc").is_dir());
+        storage.updates.set_check_automatically(true);
+        assert!(dir.path().join("updates.json").is_file());
         let without = Storage::new(None, true);
         assert!(without.recovery.is_none() && without.incoming.is_none());
     }

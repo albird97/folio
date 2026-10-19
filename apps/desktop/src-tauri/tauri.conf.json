@@ -82,5 +82,13 @@
     "linux": {
       "deb": { "section": "office" }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMyRUI0NUYyMjhCRjk5MkUKUldRdW1iOG84a1hyd2pnUWUycUFGVWQ0Nk9qcHJDNjJVSlFvOHFmLzMrRXA5R2hiUTRhOTg2VkcK",
+      "endpoints": ["https://github.com/albird97/folio/releases/latest/download/latest.json"],
+      "requireSignedVersion": true,
+      "windows": { "installMode": "passive" }
+    }
   }
 }

@@ -1351,3 +1351,520 @@ mod tests {
         assert_eq!(app_bundle(Path::new("/usr/local/bin/folio-desktop")), None);
     }
 }
+
+/// Whatever Chrome sends, the host answers with well-formed replies, and
+/// keeps only documents that arrived whole, in order and as announced.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+    use std::collections::HashMap;
+    use std::io::Cursor;
+
+    fn base64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    /// A JSON object of a known type; an error with a code and a message; a
+    /// transfer only when it is a valid id; far below Chrome's limit.
+    fn assert_well_formed(reply: &Value) -> Result<(), TestCaseError> {
+        let kind = reply["type"].as_str().unwrap_or_default();
+        prop_assert!(
+            ["hello", "ready", "ack", "done", "error"].contains(&kind),
+            "{reply}"
+        );
+        if kind == "error" {
+            for field in ["code", "message"] {
+                prop_assert!(
+                    reply[field].as_str().is_some_and(|text| !text.is_empty()),
+                    "{reply}"
+                );
+            }
+        }
+        if let Some(transfer) = reply.get("transfer") {
+            prop_assert!(
+                transfer.as_str().is_some_and(incoming::is_valid_id),
+                "{reply}"
+            );
+        }
+        prop_assert!(serde_json::to_vec(reply).unwrap().len() < 1024, "{reply}");
+        Ok(())
+    }
+
+    fn host(base: &Path) -> Host {
+        let mut host = Host::new(Some(base.to_path_buf()), None);
+        // The tests' documents are tiny; whether the disk has room is
+        // tested on its own.
+        host.free_space = |_| None;
+        host
+    }
+
+    /// The transfer folders in the spool (not its lock file).
+    fn spooled(base: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(base)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .filter(|name| name != incoming::LOCK_FILE)
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    fn uuid() -> impl Strategy<Value = String> {
+        any::<u128>().prop_map(|bits| uuid::Uuid::from_u128(bits).hyphenated().to_string())
+    }
+
+    /// A PDF, junk, or junk long enough to be refused before it is complete.
+    fn document() -> impl Strategy<Value = Vec<u8>> {
+        prop_oneof![
+            3 => prop::collection::vec(any::<u8>(), 0..300)
+                .prop_map(|rest| [b"%PDF-1.7\n".as_slice(), &rest].concat()),
+            1 => prop::collection::vec(any::<u8>(), 0..300),
+            1 => prop::collection::vec(any::<u8>(), HEADER_WINDOW..HEADER_WINDOW + 600),
+        ]
+    }
+
+    /// Frames with their true length, a wrong one or a huge one, and maybe
+    /// a few stray bytes at the end.
+    fn stream() -> impl Strategy<Value = Vec<u8>> {
+        let length = prop_oneof![
+            4 => Just(None),
+            1 => (0u32..600).prop_map(Some),
+            1 => any::<u32>().prop_map(Some),
+            1 => Just(Some(MAX_MESSAGE_BYTES as u32 + 1)),
+        ];
+        let frame = (fuzz::bytes(), length).prop_map(|(payload, length)| {
+            let length = length.unwrap_or(payload.len() as u32);
+            [&length.to_ne_bytes()[..], &payload].concat()
+        });
+        (
+            prop::collection::vec(frame, 0..5),
+            prop::collection::vec(any::<u8>(), 0..4),
+        )
+            .prop_map(|(frames, tail)| [frames.concat(), tail].concat())
+    }
+
+    /// Mostly right (`None`), now and then `wrong`.
+    fn sometimes<T: Clone + std::fmt::Debug>(
+        wrong: impl Strategy<Value = T>,
+    ) -> impl Strategy<Value = Option<T>> {
+        prop_oneof![10 => Just(None), 1 => wrong.prop_map(Some)]
+    }
+
+    /// How much of the document a chunk carries.
+    #[derive(Debug, Clone)]
+    enum Length {
+        /// Part of what is left.
+        Part(prop::sample::Index),
+        /// All that is left.
+        Rest,
+        /// All that is left and these bytes more.
+        TooMuch(Vec<u8>),
+    }
+
+    /// What the extension sends next: right, unless an override says
+    /// otherwise.
+    #[derive(Debug, Clone)]
+    enum Step {
+        Hello,
+        Begin {
+            document: Vec<u8>,
+            name: String,
+            size: Option<u64>,
+            sha256: Option<String>,
+        },
+        Chunk {
+            length: Length,
+            index: Option<u64>,
+            transfer: Option<String>,
+            data: Option<String>,
+        },
+        End {
+            transfer: Option<String>,
+        },
+        /// Any message at all.
+        Noise(Vec<u8>),
+    }
+
+    fn begin() -> impl Strategy<Value = Step> {
+        let size = prop_oneof![
+            Just(0u64),
+            Just(MAX_TRANSFER_BYTES + 1),
+            1u64..400,
+            any::<u64>()
+        ];
+        let sha256 = prop_oneof!["[0-9a-f]{64}", "[0-9A-Fa-f]{0,70}", fuzz::text()];
+        (document(), fuzz::text(), sometimes(size), sometimes(sha256)).prop_map(
+            |(document, name, size, sha256)| Step::Begin {
+                document,
+                name,
+                size,
+                sha256,
+            },
+        )
+    }
+
+    fn transfer_claim() -> impl Strategy<Value = Option<String>> {
+        sometimes(prop_oneof![uuid(), fuzz::text()])
+    }
+
+    fn chunk(rest: bool) -> impl Strategy<Value = Step> {
+        let length = if rest {
+            Just(Length::Rest).boxed()
+        } else {
+            prop_oneof![
+                6 => any::<prop::sample::Index>().prop_map(Length::Part),
+                1 => prop::collection::vec(any::<u8>(), 1..20).prop_map(Length::TooMuch),
+            ]
+            .boxed()
+        };
+        let index = prop_oneof![0u64..8, any::<u64>()];
+        let data = prop_oneof![
+            Just("not base64!".to_owned()),
+            "[A-Za-z0-9+/=]{0,12}",
+            fuzz::text()
+        ];
+        (length, sometimes(index), transfer_claim(), sometimes(data)).prop_map(
+            |(length, index, transfer, data)| Step::Chunk {
+                length,
+                index,
+                transfer,
+                data,
+            },
+        )
+    }
+
+    fn noise() -> impl Strategy<Value = Vec<Step>> {
+        prop_oneof![
+            3 => Just(Vec::new()),
+            1 => Just(vec![Step::Hello]),
+            1 => fuzz::bytes().prop_map(|bytes| vec![Step::Noise(bytes)]),
+        ]
+    }
+
+    /// A transfer from beginning to end, with mistakes and other messages
+    /// mixed in.
+    fn episode() -> impl Strategy<Value = Vec<Step>> {
+        (
+            begin(),
+            prop::collection::vec((noise(), chunk(false)), 0..4),
+            noise(),
+            chunk(true),
+            noise(),
+            transfer_claim(),
+        )
+            .prop_map(|(begin, chunks, before_last, last, before_end, end)| {
+                let mut steps = vec![begin];
+                for (noise, chunk) in chunks {
+                    steps.extend(noise);
+                    steps.push(chunk);
+                }
+                steps.extend(before_last);
+                steps.push(last);
+                steps.extend(before_end);
+                steps.push(Step::End { transfer: end });
+                steps
+            })
+    }
+
+    /// The extension's side, and what the host confirmed.
+    #[derive(Default)]
+    struct Extension {
+        /// The transfer the last `ready` named, and its document.
+        current: Option<String>,
+        document: Vec<u8>,
+        sent: usize,
+        next_index: u64,
+        /// Per transfer: the size and checksum announced, and the bytes the
+        /// host acknowledged.
+        announced: HashMap<String, (u64, String)>,
+        acknowledged: HashMap<String, Vec<u8>>,
+        done: Vec<String>,
+    }
+
+    impl Extension {
+        /// The message for `step`, and the part of the document a chunk is
+        /// meant to carry.
+        fn message(&self, step: &Step) -> (Vec<u8>, Vec<u8>) {
+            let current = || self.current.clone().unwrap_or_else(incoming::new_id);
+            let message = match step {
+                Step::Hello => json!({ "type": "hello" }),
+                Step::Begin {
+                    document,
+                    name,
+                    size,
+                    sha256,
+                } => json!({
+                    "type": "begin",
+                    "name": name,
+                    "size": size.unwrap_or(document.len() as u64),
+                    "sha256": sha256.clone().unwrap_or_else(|| save::sha256_hex(document)),
+                }),
+                Step::Chunk {
+                    length,
+                    index,
+                    transfer,
+                    data,
+                } => {
+                    let rest = &self.document[self.sent.min(self.document.len())..];
+                    let bytes = match length {
+                        Length::Part(part) => rest[..part.index(rest.len() + 1)].to_vec(),
+                        Length::Rest => rest.to_vec(),
+                        Length::TooMuch(more) => [rest, more].concat(),
+                    };
+                    let message = json!({
+                        "type": "chunk",
+                        "transfer": transfer.clone().unwrap_or_else(current),
+                        "index": index.unwrap_or(self.next_index),
+                        "data": data.clone().unwrap_or_else(|| base64(&bytes)),
+                    });
+                    return (serde_json::to_vec(&message).unwrap(), bytes);
+                }
+                Step::End { transfer } => json!({
+                    "type": "end",
+                    "transfer": transfer.clone().unwrap_or_else(current),
+                }),
+                Step::Noise(bytes) => return (bytes.clone(), Vec::new()),
+            };
+            (serde_json::to_vec(&message).unwrap(), Vec::new())
+        }
+    }
+
+    /// Runs `steps` against a host and checks every reply and the spool.
+    /// Returns the transfers that were done.
+    fn run(steps: &[Step]) -> Result<Vec<String>, TestCaseError> {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("incoming");
+        let mut host = host(&base);
+        let mut extension = Extension::default();
+        for step in steps {
+            let (message, bytes) = extension.message(step);
+            let reply = host.handle(&message);
+            assert_well_formed(&reply)?;
+            let sent: Value = serde_json::from_slice(&message).unwrap_or_default();
+            match reply["type"].as_str().unwrap_or_default() {
+                "ready" => {
+                    let Step::Begin { document, .. } = step else {
+                        return Err(TestCaseError::fail(format!("ready for {step:?}")));
+                    };
+                    let id = reply["transfer"].as_str().unwrap().to_owned();
+                    let announced = (
+                        sent["size"].as_u64().unwrap(),
+                        sent["sha256"].as_str().unwrap().to_owned(),
+                    );
+                    extension.announced.insert(id.clone(), announced);
+                    extension.acknowledged.insert(id.clone(), Vec::new());
+                    extension.current = Some(id);
+                    extension.document = document.clone();
+                    extension.sent = 0;
+                    extension.next_index = 0;
+                }
+                "ack" => {
+                    prop_assert!(matches!(step, Step::Chunk { .. }), "ack for {step:?}");
+                    // Only for the transfer in progress, in order.
+                    prop_assert_eq!(&reply["index"], &sent["index"]);
+                    prop_assert_eq!(&sent["index"], &json!(extension.next_index));
+                    let transfer = sent["transfer"].as_str().unwrap().to_owned();
+                    prop_assert_eq!(Some(&transfer), extension.current.as_ref());
+                    let data = sent["data"].as_str().unwrap();
+                    let data = base64::engine::general_purpose::STANDARD.decode(data);
+                    prop_assert!(data.is_ok(), "ack for data that is not base64");
+                    extension
+                        .acknowledged
+                        .entry(transfer)
+                        .or_default()
+                        .extend(data.unwrap());
+                    extension.sent += bytes.len();
+                    extension.next_index += 1;
+                }
+                "done" => {
+                    let id = reply["transfer"].as_str().unwrap().to_owned();
+                    prop_assert!(matches!(step, Step::End { .. }), "done for {step:?}");
+                    prop_assert_eq!(sent["transfer"].as_str(), Some(id.as_str()));
+                    // Exactly what was announced and acknowledged, a PDF.
+                    let dir = base.join(&id);
+                    let stored = std::fs::read(dir.join(incoming::DOCUMENT_FILE)).unwrap();
+                    let (size, sha256) = &extension.announced[&id];
+                    prop_assert_eq!(&stored, &extension.acknowledged[&id]);
+                    prop_assert_eq!(stored.len() as u64, *size);
+                    prop_assert!(save::sha256_hex(&stored).eq_ignore_ascii_case(sha256));
+                    prop_assert!(save::looks_like_pdf(&stored));
+                    let meta = incoming::read_meta(&dir).unwrap();
+                    prop_assert_eq!(&save::sanitize_file_name(&meta.name), &meta.name);
+                    prop_assert_eq!(meta.size, *size);
+                    extension.done.push(id);
+                }
+                _ => {}
+            }
+            // A few documents at most, finished or arriving.
+            prop_assert!(spooled(&base).len() <= incoming::MAX_PENDING);
+        }
+        // Chrome disconnects: only the finished documents are left.
+        drop(host);
+        let mut done = extension.done.clone();
+        done.sort();
+        prop_assert_eq!(spooled(&base), done);
+        Ok(extension.done)
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(256))]
+
+        #[test]
+        fn answers_any_message_with_a_well_formed_reply(message in fuzz::bytes()) {
+            let dir = tempfile::tempdir().unwrap();
+            let mut host = host(&dir.path().join("incoming"));
+            assert_well_formed(&host.handle(&message))?;
+        }
+
+        #[test]
+        fn frames_read_back_as_written(values in prop::collection::vec(fuzz::json(), 0..5)) {
+            let mut stream = Vec::new();
+            let mut written = Vec::new();
+            for value in &values {
+                if write_message(&mut stream, value).is_ok() {
+                    written.push(serde_json::to_vec(value).unwrap());
+                }
+            }
+            let mut reader = Cursor::new(stream);
+            for expected in written {
+                prop_assert_eq!(read_message(&mut reader).unwrap(), Some(expected));
+            }
+            prop_assert_eq!(read_message(&mut reader).unwrap(), None);
+        }
+
+        /// A message is read whole, as long as its frame says, refused when
+        /// too large, or reported as cut short; never misread.
+        #[test]
+        fn reads_any_stream_frame_by_frame(stream in stream()) {
+            let mut reader = Cursor::new(&stream[..]);
+            loop {
+                let rest = &stream[reader.position() as usize..];
+                let length = rest
+                    .get(..4)
+                    .map(|length| u32::from_ne_bytes(length.try_into().unwrap()) as usize);
+                match read_message(&mut reader) {
+                    Ok(None) => {
+                        prop_assert!(rest.is_empty());
+                        break;
+                    }
+                    Ok(Some(message)) => {
+                        let length = length.unwrap();
+                        prop_assert!(length <= MAX_MESSAGE_BYTES);
+                        prop_assert_eq!(&message[..], &rest[4..4 + length]);
+                    }
+                    Err(FrameError::TooLarge(announced)) => {
+                        prop_assert_eq!(Some(announced as usize), length);
+                        prop_assert!(announced > MAX_MESSAGE_BYTES as u64);
+                        break;
+                    }
+                    Err(FrameError::Io(_)) => {
+                        prop_assert!(length.is_none_or(|length| rest.len() - 4 < length));
+                        break;
+                    }
+                }
+            }
+        }
+
+        /// Whatever arrives, every reply is a frame Chrome accepts.
+        #[test]
+        fn serves_any_stream_with_well_formed_replies(stream in stream()) {
+            let dir = tempfile::tempdir().unwrap();
+            let mut host = host(&dir.path().join("incoming"));
+            let mut output = Vec::new();
+            let _ = host.serve(&mut Cursor::new(stream), &mut output);
+            let mut replies = Cursor::new(output);
+            while let Some(reply) = read_message(&mut replies).unwrap() {
+                prop_assert!(reply.len() < MAX_REPLY_BYTES);
+                assert_well_formed(&serde_json::from_slice(&reply).unwrap())?;
+            }
+        }
+
+        #[test]
+        fn answers_only_the_official_extension(origin in prop_oneof![
+            Just(format!("chrome-extension://{}/", native_messaging::OFFICIAL_EXTENSION_IDS[0])),
+            "chrome-extension://[a-p]{32}/",
+            "[Cc]hrome-extension://[a-q]{31,33}/{0,2}",
+            fuzz::text(),
+        ]) {
+            let official = native_messaging::OFFICIAL_EXTENSION_IDS
+                .iter()
+                .any(|id| origin == format!("chrome-extension://{id}/"));
+            prop_assert_eq!(origin_allowed(Some(OsStr::new(&origin))), official);
+            prop_assert_eq!(
+                is_host_invocation(Some(OsStr::new(&origin))),
+                origin.starts_with("chrome-extension://")
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    proptest! {
+        #![proptest_config(fuzz::config(256))]
+
+        /// Chrome passes the origin as an argument, which need not be text.
+        #[test]
+        fn refuses_origins_that_are_not_text(
+            text in fuzz::text(),
+            stray in any::<prop::sample::Index>(),
+        ) {
+            use std::os::unix::ffi::OsStrExt;
+            // A byte that is never valid UTF-8, anywhere in the text.
+            let mut bytes = format!("chrome-extension://{text}").into_bytes();
+            bytes.insert(stray.index(bytes.len() + 1), 0xff);
+            let origin = OsStr::from_bytes(&bytes);
+            prop_assert!(!origin_allowed(Some(origin)));
+            prop_assert!(!is_host_invocation(Some(origin)));
+        }
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(128))]
+
+        /// Any PDF, split into chunks anywhere, with hellos in between,
+        /// arrives byte for byte under a plain name.
+        #[test]
+        fn spools_documents_split_anywhere(
+            document in prop::collection::vec(any::<u8>(), 0..3000)
+                .prop_map(|rest| [b"%PDF-2.0\n".as_slice(), &rest].concat()),
+            name in fuzz::text(),
+            cuts in prop::collection::vec(any::<prop::sample::Index>(), 0..6),
+            hellos in prop::collection::vec(any::<bool>(), 8),
+        ) {
+            let mut cuts: Vec<usize> = cuts.iter().map(|cut| cut.index(document.len() + 1)).collect();
+            cuts.push(0);
+            cuts.push(document.len());
+            cuts.sort_unstable();
+            let mut steps = vec![Step::Begin { document: document.clone(), name, size: None, sha256: None }];
+            for (index, part) in cuts.windows(2).enumerate() {
+                if hellos[index % hellos.len()] {
+                    steps.push(Step::Hello);
+                }
+                // The part between two cuts.
+                steps.push(Step::Chunk {
+                    length: Length::Rest,
+                    index: None,
+                    transfer: None,
+                    data: Some(base64(&document[part[0]..part[1]])),
+                });
+            }
+            steps.push(Step::End { transfer: None });
+            // Checked like any run, and it must have arrived.
+            prop_assert_eq!(run(&steps)?.len(), 1);
+        }
+
+        /// Transfers with mistakes and other messages mixed in: the spool
+        /// only ever keeps documents that arrived as announced.
+        #[test]
+        fn keeps_only_documents_that_arrived_as_announced(
+            episodes in prop::collection::vec(episode(), 1..5),
+        ) {
+            run(&episodes.concat())?;
+        }
+    }
+}

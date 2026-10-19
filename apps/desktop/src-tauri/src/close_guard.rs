@@ -13,6 +13,9 @@ pub enum CloseIntent {
     Window,
     /// Quit Folio (Quit menu item, ⌘Q).
     Quit,
+    /// Quit to install an update the user agreed to, and start again (see
+    /// `updates`).
+    Update,
 }
 
 #[derive(Debug, Default)]
@@ -138,6 +141,21 @@ mod tests {
     }
 
     #[test]
+    fn an_update_waits_for_the_same_answer_as_quitting() {
+        let guard = CloseGuard::default();
+        // Nothing unsaved: the update is installed right away.
+        assert!(!guard.intercept(CloseIntent::Update));
+        guard.set_enabled(true);
+        assert!(guard.intercept(CloseIntent::Update));
+        assert_eq!(guard.confirm(), Some(CloseIntent::Update));
+        // Kept working: nothing is carried out later.
+        guard.set_enabled(true);
+        assert!(guard.intercept(CloseIntent::Update));
+        assert!(guard.cancel());
+        assert_eq!(guard.confirm(), None);
+    }
+
+    #[test]
     fn saving_everything_drops_a_pending_request() {
         let guard = CloseGuard::default();
         guard.set_enabled(true);
@@ -146,5 +164,77 @@ mod tests {
         guard.set_enabled(false);
         guard.set_enabled(true);
         assert_eq!(guard.confirm(), None);
+    }
+}
+
+/// The webview calls `set_close_guard`, `confirm_close` and `cancel_close`
+/// whenever it likes: whatever the order, a confirmation carries out only a
+/// close, quit or update Folio itself asked about, and only once.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    #[derive(Debug, Clone)]
+    enum Call {
+        /// From the webview.
+        SetEnabled(bool),
+        Confirm,
+        Cancel,
+        /// From Folio: the window's close button, Quit, an update.
+        Intercept(CloseIntent),
+    }
+
+    fn call() -> impl Strategy<Value = Call> {
+        let intent = prop::sample::select(vec![
+            CloseIntent::Window,
+            CloseIntent::Quit,
+            CloseIntent::Update,
+        ]);
+        prop_oneof![
+            any::<bool>().prop_map(Call::SetEnabled),
+            Just(Call::Confirm),
+            Just(Call::Cancel),
+            intent.prop_map(Call::Intercept),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn confirms_only_what_folio_asked_about(calls in prop::collection::vec(call(), 0..40)) {
+            let guard = CloseGuard::default();
+            // What the guard should know: whether work is unsaved, and the
+            // request being asked about.
+            let (mut enabled, mut pending) = (false, None);
+            for call in calls {
+                match call {
+                    Call::SetEnabled(on) => {
+                        guard.set_enabled(on);
+                        enabled = on;
+                        if !on {
+                            pending = None;
+                        }
+                    }
+                    Call::Intercept(intent) => {
+                        prop_assert_eq!(guard.intercept(intent), enabled);
+                        if enabled {
+                            pending = Some(intent);
+                        }
+                    }
+                    Call::Confirm => {
+                        let confirmed = guard.confirm();
+                        prop_assert_eq!(confirmed, pending.take());
+                        if confirmed.is_some() {
+                            enabled = false;
+                        }
+                    }
+                    Call::Cancel => prop_assert_eq!(guard.cancel(), pending.take().is_some()),
+                }
+                prop_assert_eq!(guard.is_enabled(), enabled);
+            }
+        }
     }
 }

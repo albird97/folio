@@ -1,7 +1,7 @@
 //! Native application menus. Custom items emit `folio://menu` with a
 //! command name the frontend understands; nothing else is forwarded. Closing
-//! the window, quitting, the Open Recent submenu and Connect to Chrome are
-//! handled natively.
+//! the window, quitting, the Open Recent submenu, Connect to Chrome and the
+//! update items are handled natively.
 //!
 //! macOS: Folio, File, Edit, View, Pages, Tools and Window menus. Windows and
 //! Linux: File, Edit, View, Pages, Tools and Help menus.
@@ -9,7 +9,10 @@
 use crate::recent;
 #[cfg(not(target_os = "macos"))]
 use tauri::menu::AboutMetadata;
-use tauri::menu::{Menu, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
+use tauri::menu::{
+    CheckMenuItem, CheckMenuItemBuilder, Menu, MenuItem, MenuItemBuilder, PredefinedMenuItem,
+    Submenu, SubmenuBuilder,
+};
 use tauri::{AppHandle, Runtime};
 
 /// (id, label, accelerator)
@@ -91,6 +94,16 @@ pub const QUIT: MenuEntry = ("quit", "Quit", Some("CmdOrCtrl+Q"));
 /// File > Connect to Chrome…, handled entirely in Rust (see `connect`): the
 /// webview can neither start nor answer it.
 pub const CONNECT_CHROME: MenuEntry = ("connect-chrome", "Connect to Chrome…", None);
+
+/// Folio > Check for Updates… (Help > on Windows and Linux) and its setting,
+/// handled entirely in Rust (see `updates`): the webview can neither look
+/// for an update nor install one.
+pub const CHECK_FOR_UPDATES: MenuEntry = ("check-for-updates", "Check for Updates…", None);
+pub const CHECK_UPDATES_AUTOMATICALLY: MenuEntry = (
+    "check-updates-automatically",
+    "Check for Updates Automatically",
+    None,
+);
 
 /// File > Open Recent, filled from the recent files.
 pub const OPEN_RECENT: &str = "open-recent";
@@ -198,13 +211,19 @@ pub fn fill_recent<R: Runtime>(
 }
 
 /// Builds the menu bar. Returns the Open Recent submenu, which
-/// [`fill_recent`] updates when the recent files change.
+/// [`fill_recent`] updates when the recent files change, and Check for
+/// Updates Automatically, which shows the setting.
 pub fn build<R: Runtime>(
     app: &AppHandle<R>,
     recent: &[recent::MenuEntry],
-) -> tauri::Result<(Menu<R>, Submenu<R>)> {
+    check_updates_automatically: bool,
+) -> tauri::Result<(Menu<R>, Submenu<R>, CheckMenuItem<R>)> {
     let open_recent = SubmenuBuilder::with_id(app, OPEN_RECENT, "Open Recent").build()?;
     fill_recent(app, &open_recent, recent)?;
+    let (id, label, _) = CHECK_UPDATES_AUTOMATICALLY;
+    let automatic_updates = CheckMenuItemBuilder::with_id(id, label)
+        .checked(check_updates_automatically)
+        .build(app)?;
 
     let file = SubmenuBuilder::new(app, "File")
         .item(&item(app, "open")?)
@@ -294,6 +313,9 @@ pub fn build<R: Runtime>(
         let app_menu = SubmenuBuilder::new(app, "Folio")
             .about(None)
             .separator()
+            .item(&entry_item(app, &CHECK_FOR_UPDATES)?)
+            .item(&automatic_updates)
+            .separator()
             .services()
             .separator()
             .hide()
@@ -318,12 +340,15 @@ pub fn build<R: Runtime>(
     let menu = {
         let about = format!("About {}", app.package_info().name);
         let help = SubmenuBuilder::new(app, "Help")
+            .item(&entry_item(app, &CHECK_FOR_UPDATES)?)
+            .item(&automatic_updates)
+            .separator()
             .about_with_text(about, Some(about_metadata(app)))
             .build()?;
         Menu::with_items(app, &[&file, &edit, &view, &pages, &tools, &help])?
     };
 
-    Ok((menu, open_recent))
+    Ok((menu, open_recent, automatic_updates))
 }
 
 #[cfg(test)]
@@ -331,7 +356,14 @@ mod tests {
     use super::*;
 
     /// Items handled natively rather than forwarded.
-    const NATIVE: [MenuEntry; 4] = [CLOSE_WINDOW, QUIT, CLEAR_RECENT, CONNECT_CHROME];
+    const NATIVE: [MenuEntry; 6] = [
+        CLOSE_WINDOW,
+        QUIT,
+        CLEAR_RECENT,
+        CONNECT_CHROME,
+        CHECK_FOR_UPDATES,
+        CHECK_UPDATES_AUTOMATICALLY,
+    ];
 
     #[test]
     fn only_declared_commands_are_forwarded() {
@@ -359,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn closing_quitting_recent_files_and_chrome_are_handled_natively() {
+    fn closing_quitting_recent_files_chrome_and_updates_are_handled_natively() {
         for (id, _, _) in NATIVE {
             assert_eq!(command_for(id), None);
             assert_eq!(recent_file_for(id), None);
@@ -397,18 +429,46 @@ mod tests {
             serde_json::from_str(include_str!("../../src/platform/menu-commands.json")).unwrap();
         let declared: Vec<&str> = MENU_COMMANDS.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(accepted, declared);
-        // Native items, Connect to Chrome among them, never reach the webview.
+        // Native items, Connect to Chrome and the updates among them, never
+        // reach the webview.
         for (id, _, _) in NATIVE {
             assert!(!accepted.iter().any(|command| command == id), "{id}");
         }
-        assert!(!accepted.iter().any(|command| command.contains("chrome")));
+        assert!(!accepted
+            .iter()
+            .any(|command| command.contains("chrome") || command.contains("update")));
+    }
+
+    /// The source of the submenu built with `builder`, up to its `.build()?`.
+    fn submenu_source(builder: &str) -> &'static str {
+        let source = include_str!("menu.rs");
+        let submenu = &source[source.find(builder).unwrap()..];
+        &submenu[..submenu.find(".build()?").unwrap()]
+    }
+
+    #[test]
+    fn updates_are_in_the_folio_menu_on_macos_and_the_help_menu_elsewhere() {
+        for builder in [
+            "SubmenuBuilder::new(app, \"Folio\")",
+            "SubmenuBuilder::new(app, \"Help\")",
+        ] {
+            let submenu = submenu_source(builder);
+            assert!(
+                submenu.contains("entry_item(app, &CHECK_FOR_UPDATES)?"),
+                "{builder}"
+            );
+            assert!(submenu.contains(".item(&automatic_updates)"), "{builder}");
+        }
+        assert_eq!(CHECK_FOR_UPDATES.1, "Check for Updates…");
+        assert_eq!(
+            CHECK_UPDATES_AUTOMATICALLY.1,
+            "Check for Updates Automatically"
+        );
     }
 
     #[test]
     fn connect_to_chrome_is_in_the_file_menu_everywhere() {
-        let source = include_str!("menu.rs");
-        let file_menu = &source[source.find("SubmenuBuilder::new(app, \"File\")").unwrap()..];
-        let file_menu = &file_menu[..file_menu.find(".build()?").unwrap()];
+        let file_menu = submenu_source("SubmenuBuilder::new(app, \"File\")");
         assert!(file_menu.contains("entry_item(app, &CONNECT_CHROME)?"));
         assert_eq!(CONNECT_CHROME.1, "Connect to Chrome…");
     }
@@ -501,5 +561,51 @@ mod tests {
     fn file_names_are_not_mnemonics() {
         assert_eq!(literal_label("Q&A.pdf"), "Q&&A.pdf");
         assert_eq!(literal_label("Report.pdf"), "Report.pdf");
+    }
+}
+
+/// Menu events carry ids: only declared commands reach the webview, and
+/// only a valid recent id opens a recent file.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    fn id_like() -> impl Strategy<Value = String> {
+        let native = [
+            CLOSE_WINDOW,
+            QUIT,
+            CLEAR_RECENT,
+            CONNECT_CHROME,
+            CHECK_FOR_UPDATES,
+            CHECK_UPDATES_AUTOMATICALLY,
+        ];
+        let known: Vec<String> = MENU_COMMANDS
+            .iter()
+            .chain(native.iter())
+            .map(|(id, _, _)| (*id).to_owned())
+            .chain([OPEN_RECENT.to_owned()])
+            .collect();
+        prop_oneof![
+            prop::sample::select(known),
+            "recent:[0-9a-fA-F]{30,34}",
+            fuzz::text(),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn forwards_only_declared_commands(id in id_like()) {
+            let declared = MENU_COMMANDS.iter().any(|(command, _, _)| *command == id);
+            prop_assert_eq!(command_for(&id), declared.then_some(id.as_str()));
+            if let Some(recent) = recent_file_for(&id) {
+                prop_assert!(recent::is_valid_id(recent));
+                prop_assert_eq!(format!("{RECENT_PREFIX}{recent}"), id.clone());
+                prop_assert!(!declared);
+            }
+        }
     }
 }

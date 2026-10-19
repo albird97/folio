@@ -26,7 +26,7 @@
 //! older than a day, and (unfinished ones) once nothing was written to them
 //! for a quarter of an hour; the app also deletes accepted ones at startup.
 
-use crate::paths;
+use crate::{paths, save};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -105,7 +105,10 @@ pub fn entry_dir(base: &Path, id: &str) -> Option<PathBuf> {
 
 pub fn read_meta(dir: &Path) -> Option<IncomingMeta> {
     let bytes = paths::read_limited(&dir.join(META_FILE), MAX_META_BYTES).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let mut meta: IncomingMeta = serde_json::from_slice(&bytes).ok()?;
+    // As plain as the host wrote it, even if the file was changed since.
+    meta.name = save::sanitize_file_name(&meta.name);
+    Some(meta)
 }
 
 /// The request to show for a complete transfer, after checking that its
@@ -409,6 +412,23 @@ mod tests {
         assert_eq!(request_for(dir.path(), &complete), None);
     }
 
+    /// Found by the property tests below: the meta file may have been
+    /// changed since the host wrote it.
+    #[test]
+    fn offers_edited_names_as_plain_file_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut edited = meta(8, SystemTime::now());
+        for (name, shown) in [
+            ("../../\u{202E}fdp.exe", "fdp.exe.pdf"),
+            ("", "Document.pdf"),
+            ("nul", "_nul.pdf"),
+        ] {
+            edited.name = name.to_owned();
+            let id = spool(dir.path(), Some(&edited), b"%PDF-1.7");
+            assert_eq!(request_for(dir.path(), &id).unwrap().name, shown);
+        }
+    }
+
     /// A transfer the host is still receiving (or a dead host left behind).
     fn partial(base: &Path, bytes: &[u8]) -> String {
         let id = new_id();
@@ -622,5 +642,221 @@ mod tests {
         assert!(!queue.take("a"));
         assert!(!queue.take("never-offered"));
         assert!(queue.take("b"));
+    }
+}
+
+/// Transfer ids from the webview, and whatever the spool holds: only
+/// canonical ids name folders, only complete documents of the announced size
+/// are offered, under a plain name, and only Folio's own folders are purged.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::{fuzz, save};
+    use proptest::prelude::*;
+
+    fn id_like() -> impl Strategy<Value = String> {
+        let uuid = || any::<u128>().prop_map(uuid::Uuid::from_u128);
+        prop_oneof![
+            3 => uuid().prop_map(|id| id.hyphenated().to_string()),
+            1 => uuid().prop_map(|id| id.hyphenated().to_string().to_uppercase()),
+            1 => uuid().prop_map(|id| id.simple().to_string()),
+            1 => uuid().prop_map(|id| id.braced().to_string()),
+            1 => uuid().prop_map(|id| id.urn().to_string()),
+            1 => "[0-9a-f-]{36}",
+            1 => fuzz::text(),
+        ]
+    }
+
+    /// The canonical form, spelled out: 8-4-4-4-12 lowercase hex digits.
+    fn is_canonical(id: &str) -> bool {
+        id.len() == 36
+            && id.char_indices().all(|(at, c)| match at {
+                8 | 13 | 18 | 23 => c == '-',
+                _ => matches!(c, '0'..='9' | 'a'..='f'),
+            })
+    }
+
+    /// One folder in the spool: Folio's or not, complete or not, damaged or
+    /// edited.
+    #[derive(Debug, Clone)]
+    struct Entry {
+        name: String,
+        meta: Option<Vec<u8>>,
+        document: Option<Vec<u8>>,
+        part: Option<Vec<u8>>,
+        announced: Option<String>,
+        accepted: bool,
+    }
+
+    /// A complete transfer as the host leaves it, but with any name in its
+    /// meta file (it may have been edited), or anything else.
+    fn entry() -> impl Strategy<Value = Entry> {
+        let complete = (
+            any::<u128>(),
+            fuzz::text(),
+            prop::collection::vec(any::<u8>(), 0..64),
+            prop::option::of(fuzz::text()),
+            prop::bool::weighted(0.25),
+        )
+            .prop_map(|(id, name, document, created_at, accepted)| Entry {
+                name: uuid::Uuid::from_u128(id).hyphenated().to_string(),
+                meta: Some(
+                    serde_json::to_vec(&IncomingMeta {
+                        name,
+                        size: document.len() as u64,
+                        created_at: created_at.unwrap_or_else(crate::time::now),
+                    })
+                    .unwrap(),
+                ),
+                document: Some(document),
+                part: None,
+                announced: None,
+                accepted,
+            });
+        prop_oneof![complete, any_entry()]
+    }
+
+    fn any_entry() -> impl Strategy<Value = Entry> {
+        let meta = prop_oneof![
+            fuzz::bytes(),
+            (fuzz::text(), 0u64..64, fuzz::text()).prop_map(|(name, size, created_at)| {
+                serde_json::to_vec(&IncomingMeta {
+                    name,
+                    size,
+                    created_at,
+                })
+                .unwrap()
+            }),
+            (fuzz::text(), 0u64..64).prop_map(|(name, size)| serde_json::to_vec(&IncomingMeta {
+                name,
+                size,
+                created_at: crate::time::now(),
+            })
+            .unwrap()),
+        ];
+        let bytes = || prop::option::of(prop::collection::vec(any::<u8>(), 0..64));
+        (
+            id_like(),
+            prop::option::of(meta),
+            bytes(),
+            bytes(),
+            prop::option::of(prop_oneof!["[0-9]{1,25}", fuzz::text()]),
+            any::<bool>(),
+        )
+            .prop_map(|(name, meta, document, part, announced, accepted)| Entry {
+                name,
+                meta,
+                document,
+                part,
+                announced,
+                accepted,
+            })
+    }
+
+    /// A name that is one plain folder name here.
+    fn is_one_component(name: &str) -> bool {
+        let mut components = Path::new(name).components();
+        matches!(
+            (components.next(), components.next()),
+            (Some(std::path::Component::Normal(_)), None)
+        )
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn only_canonical_uuids_name_transfers(id in id_like()) {
+            prop_assert_eq!(is_valid_id(&id), is_canonical(&id));
+            let base = Path::new("incoming");
+            match entry_dir(base, &id) {
+                Some(dir) => {
+                    prop_assert!(is_canonical(&id));
+                    prop_assert_eq!(dir.parent(), Some(base));
+                }
+                None => prop_assert!(!is_canonical(&id)),
+            }
+        }
+
+        #[test]
+        fn recognizes_spooled_documents_by_their_shape(
+            parts in prop::collection::vec(
+                prop_oneof![
+                    Just(INCOMING_DIR.to_owned()),
+                    Just(DOCUMENT_FILE.to_owned()),
+                    Just(PART_FILE.to_owned()),
+                    id_like(),
+                ],
+                0..5,
+            ),
+        ) {
+            let path: PathBuf = parts.iter().collect();
+            if looks_like_spool_document(&path) {
+                let names: Vec<_> = path.iter().rev().take(3).map(|name| name.to_str().unwrap()).collect();
+                prop_assert!(names[0] == DOCUMENT_FILE || names[0] == PART_FILE);
+                prop_assert!(is_canonical(names[1]));
+                prop_assert_eq!(names[2], INCOMING_DIR);
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(96))]
+
+        /// The app is asked about complete documents of the announced size
+        /// only, under a plain name; purging deletes only Folio's folders.
+        #[test]
+        fn offers_only_complete_documents_from_any_spool(
+            entries in prop::collection::vec(entry(), 0..6),
+        ) {
+            let dir = tempfile::tempdir().unwrap();
+            let base = dir.path().join(INCOMING_DIR);
+            std::fs::create_dir(&base).unwrap();
+            for entry in &entries {
+                let folder = base.join(&entry.name);
+                // Names the file system refuses cannot be there.
+                if !is_one_component(&entry.name) || std::fs::create_dir_all(&folder).is_err() {
+                    continue;
+                }
+                let files = [
+                    (META_FILE, entry.meta.clone()),
+                    (DOCUMENT_FILE, entry.document.clone()),
+                    (PART_FILE, entry.part.clone()),
+                    (ANNOUNCED_FILE, entry.announced.clone().map(String::into_bytes)),
+                ];
+                for (name, content) in files {
+                    if let Some(content) = content {
+                        std::fs::write(folder.join(name), content).unwrap();
+                    }
+                }
+                if entry.accepted {
+                    mark_accepted(&folder);
+                }
+            }
+            let requests = pending_requests(&base);
+            for request in &requests {
+                prop_assert!(is_canonical(&request.id));
+                let folder = base.join(&request.id);
+                prop_assert!(!folder.join(ACCEPTED_MARKER).exists());
+                let document = std::fs::metadata(folder.join(DOCUMENT_FILE)).unwrap();
+                prop_assert_eq!(document.len(), request.size);
+                prop_assert_eq!(&save::sanitize_file_name(&request.name), &request.name);
+                prop_assert_eq!(request_for(&base, &request.id), Some(request.clone()));
+            }
+            let usage = usage(&base);
+            prop_assert!(usage.count >= requests.len());
+            // Accepted and stale transfers go; everything else stays.
+            let others: Vec<_> = std::fs::read_dir(&base)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| !is_valid_id(name))
+                .collect();
+            purge(&base, SystemTime::now() + MAX_AGE * 2, true);
+            for name in others {
+                prop_assert!(base.join(&name).exists(), "{name}");
+            }
+            prop_assert!(pending_requests(&base).is_empty());
+        }
     }
 }

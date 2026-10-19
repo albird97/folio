@@ -398,3 +398,133 @@ mod tests {
         assert!(!recent.remove("nope"));
     }
 }
+
+/// Whatever `recent.json` holds (it may be damaged or edited), only valid
+/// entries are listed, never Folio's own files, and never with their paths.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    fn id_like() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => "[0-9a-f]{32}",
+            1 => "[0-9a-fA-F]{31,33}",
+            1 => fuzz::text(),
+        ]
+    }
+
+    /// Where an entry's path leads, made concrete in a temporary folder.
+    #[derive(Debug, Clone)]
+    enum Place {
+        Elsewhere(String),
+        InDataFolder(String),
+        Spooled,
+        Relative(String),
+        Text(String),
+    }
+
+    fn place() -> impl Strategy<Value = Place> {
+        let name = || "[A-Za-z0-9 ._-]{1,12}";
+        prop_oneof![
+            3 => name().prop_map(Place::Elsewhere),
+            1 => name().prop_map(Place::InDataFolder),
+            1 => Just(Place::Spooled),
+            1 => name().prop_map(Place::Relative),
+            1 => fuzz::text().prop_map(Place::Text),
+        ]
+    }
+
+    #[derive(Debug, Clone)]
+    enum Content {
+        Entries(Vec<(String, String, Place, String)>),
+        Junk(Vec<u8>),
+    }
+
+    fn content() -> impl Strategy<Value = Content> {
+        prop_oneof![
+            4 => prop::collection::vec((id_like(), fuzz::text(), place(), fuzz::text()), 0..14)
+                .prop_map(Content::Entries),
+            1 => fuzz::bytes().prop_map(Content::Junk),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(128))]
+
+        #[test]
+        fn lists_only_valid_entries_from_any_file(content in content()) {
+            let dir = tempfile::tempdir().unwrap();
+            let data = dir.path().join("data");
+            std::fs::create_dir(&data).unwrap();
+            let file = data.join("recent.json");
+            let bytes = match content {
+                Content::Entries(entries) => {
+                    let entries: Vec<_> = entries
+                        .into_iter()
+                        .map(|(id, name, place, opened_at)| {
+                            let path = match place {
+                                Place::Elsewhere(name) => dir.path().join("files").join(name),
+                                Place::InDataFolder(name) => data.join(name),
+                                Place::Spooled => dir
+                                    .path()
+                                    .join(incoming::INCOMING_DIR)
+                                    .join(incoming::new_id())
+                                    .join(incoming::DOCUMENT_FILE),
+                                Place::Relative(name) => PathBuf::from(name),
+                                Place::Text(text) => PathBuf::from(text),
+                            };
+                            json!({ "id": id, "name": name, "path": path, "openedAt": opened_at })
+                        })
+                        .collect();
+                    serde_json::to_vec(&entries).unwrap()
+                }
+                Content::Junk(bytes) => bytes,
+            };
+            std::fs::write(&file, bytes).unwrap();
+            let recent = RecentFiles::load(Some(file));
+            let listed = recent.list();
+            prop_assert!(listed.len() <= MAX_RECENT);
+            let mut paths = Vec::new();
+            for entry in &listed {
+                prop_assert!(is_valid_id(&entry.id));
+                prop_assert!(!entry.name.is_empty());
+                let (path, name) = recent.lookup(&entry.id).unwrap();
+                prop_assert_eq!(&name, &entry.name);
+                prop_assert!(path.is_absolute());
+                prop_assert!(!path.starts_with(&data));
+                prop_assert!(!incoming::looks_like_spool_document(&path));
+                prop_assert!(!paths.contains(&path), "listed twice");
+                paths.push(path);
+            }
+            let ids: Vec<_> = recent.menu_entries().into_iter().map(|entry| entry.id).collect();
+            let listed_ids: Vec<_> = listed.iter().map(|entry| entry.id.clone()).collect();
+            prop_assert_eq!(ids, listed_ids);
+            // What the webview gets has no paths.
+            let json = serde_json::to_string(&listed).unwrap();
+            prop_assert!(!json.contains("\"path\""));
+            prop_assert!(!json.contains(&*dir.path().to_string_lossy()));
+        }
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        /// Ids from the webview and the Open Recent menu.
+        #[test]
+        fn recent_ids_are_32_lowercase_hex_digits(id in id_like()) {
+            let hex = id.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+            prop_assert_eq!(is_valid_id(&id), id.len() == 32 && hex);
+            let item = format!("recent:{id}");
+            prop_assert_eq!(
+                crate::menu::recent_file_for(&item),
+                is_valid_id(&id).then_some(id.as_str())
+            );
+            if !id.starts_with("recent:") {
+                prop_assert_eq!(crate::menu::recent_file_for(&id), None);
+            }
+        }
+    }
+}

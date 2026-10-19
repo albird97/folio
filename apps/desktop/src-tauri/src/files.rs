@@ -710,3 +710,158 @@ mod tests {
         assert!(queue.drain().is_empty());
     }
 }
+
+/// Tokens from the webview, names and command lines: only a token Folio
+/// issued and did not release opens a file, and a transfer id never opens
+/// as one.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    /// A token: one Folio issued (by its place in the list), or any text.
+    #[derive(Debug, Clone)]
+    enum Token {
+        Issued(prop::sample::Index),
+        Any(String),
+    }
+
+    #[derive(Debug, Clone)]
+    enum Call {
+        /// Grants the file with this number.
+        Grant(usize),
+        Lookup(Token),
+        Release(Token),
+    }
+
+    fn token() -> impl Strategy<Value = Token> {
+        prop_oneof![
+            any::<prop::sample::Index>().prop_map(Token::Issued),
+            prop_oneof!["[0-9a-f]{32}", fuzz::text()].prop_map(Token::Any),
+        ]
+    }
+
+    fn call() -> impl Strategy<Value = Call> {
+        prop_oneof![
+            (0usize..3).prop_map(Call::Grant),
+            token().prop_map(Call::Lookup),
+            token().prop_map(Call::Release),
+        ]
+    }
+
+    fn argument() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => Just(INCOMING_ARG.to_owned()),
+            2 => any::<u128>().prop_map(|id| uuid::Uuid::from_u128(id).hyphenated().to_string()),
+            2 => "[a-z]{1,6}\\.pdf",
+            1 => "-[a-z_0-9]{1,8}",
+            1 => fuzz::text(),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(256))]
+
+        #[test]
+        fn only_issued_tokens_that_were_not_released_open_files(
+            calls in prop::collection::vec(call(), 0..24),
+        ) {
+            let dir = tempfile::tempdir().unwrap();
+            let files: Vec<PathBuf> = (0..3)
+                .map(|index| {
+                    let path = dir.path().join(format!("{index}.pdf"));
+                    std::fs::write(&path, b"%PDF-1.7").unwrap();
+                    path
+                })
+                .collect();
+            let grants = FileGrants::default();
+            // (token, file, still granted)
+            let mut issued: Vec<(String, PathBuf, bool)> = Vec::new();
+            let resolve = |issued: &[(String, PathBuf, bool)], token: &Token| match token {
+                Token::Issued(index) if !issued.is_empty() => issued[index.index(issued.len())].0.clone(),
+                Token::Issued(_) => String::new(),
+                Token::Any(text) => text.clone(),
+            };
+            for call in calls {
+                match call {
+                    Call::Grant(file) => {
+                        let granted = grants.grant(&files[file]).unwrap();
+                        prop_assert_eq!(granted.token.len(), 32);
+                        prop_assert!(granted
+                            .token
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')));
+                        prop_assert!(issued.iter().all(|(token, _, _)| *token != granted.token));
+                        issued.push((granted.token, std::fs::canonicalize(&files[file]).unwrap(), true));
+                    }
+                    Call::Lookup(token) => {
+                        let token = resolve(&issued, &token);
+                        let live = issued.iter().find(|(issued, _, live)| *issued == token && *live);
+                        match live {
+                            Some((_, path, _)) => prop_assert_eq!(grants.path(&token), Ok(path.clone())),
+                            None => prop_assert_eq!(grants.path(&token), Err(FileError::UnknownToken)),
+                        }
+                    }
+                    Call::Release(token) => {
+                        let token = resolve(&issued, &token);
+                        let live = issued.iter_mut().find(|(issued, _, live)| *issued == token && *live);
+                        prop_assert_eq!(grants.release(&token), live.is_some());
+                        if let Some(entry) = live {
+                            entry.2 = false;
+                        }
+                    }
+                }
+                prop_assert_eq!(grants.len(), issued.iter().filter(|(_, _, live)| *live).count());
+            }
+        }
+
+        /// A file next to Folio named like a transfer id does not open when
+        /// the id follows `--incoming`.
+        #[test]
+        fn transfer_ids_never_open_as_files(arguments in prop::collection::vec(argument(), 0..8)) {
+            let dir = tempfile::tempdir().unwrap();
+            for argument in &arguments {
+                if !argument.starts_with('-') && !argument.contains(['/', '\\', '\0']) {
+                    let _ = std::fs::write(dir.path().join(argument), b"%PDF-1.7");
+                }
+            }
+            let launch = parse_launch_args(arguments.iter().map(OsString::from), dir.path());
+            // What follows `--incoming` is a transfer id, and nothing else is.
+            let mut expected = Vec::new();
+            let mut others = Vec::new();
+            let mut rest = arguments.iter();
+            while let Some(argument) = rest.next() {
+                if argument == INCOMING_ARG {
+                    expected.extend(rest.next().cloned());
+                } else {
+                    others.push(dir.path().join(argument));
+                }
+            }
+            prop_assert_eq!(&launch.incoming, &expected);
+            for path in &launch.paths {
+                prop_assert!(path.is_file());
+                let position = others.iter().position(|other| other == path);
+                prop_assert!(position.is_some(), "{} is not a file argument", path.display());
+                others.remove(position.unwrap());
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        /// The rule the workspace also follows (`isLikelyPdfName`).
+        #[test]
+        fn only_names_typed_as_something_else_are_skipped(
+            name in fuzz::text(),
+            extension in "[a-zA-Z0-9]{1,8}",
+        ) {
+            for pdf in [format!("{name}.pdf"), format!("{name}.PDF"), name.replace('.', "")] {
+                prop_assert!(is_likely_pdf_name(&pdf), "{pdf:?}");
+            }
+            let typed = format!("{name}.{extension}");
+            prop_assert_eq!(is_likely_pdf_name(&typed), extension.eq_ignore_ascii_case("pdf"));
+        }
+    }
+}

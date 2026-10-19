@@ -511,7 +511,19 @@ fn strip_verbatim(path: &str) -> Option<String> {
 /// A path component that means the same with or without `\\?\`.
 #[cfg(any(windows, test))]
 fn is_plain_component(part: &str) -> bool {
-    let stem = part.split('.').next().unwrap_or_default().trim_end();
+    !part.is_empty()
+        && !part.ends_with(['.', ' '])
+        && !part.contains(['/', ':'])
+        && !is_windows_device_name(part)
+}
+
+/// Whether Windows takes the file name `name` for a device: `CON`, `PRN`,
+/// `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`–`COM9` and `LPT0`–`LPT9` (also
+/// with the digits ¹, ² and ³), in any case, also followed by an extension
+/// or spaces (`nul.txt`, `CON .pdf`). Folio checks names against it on every
+/// platform, so that the names it makes stay usable everywhere.
+pub fn is_windows_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or_default().trim_end();
     let mut device = stem.chars().map(|c| c.to_ascii_uppercase());
     let prefix: String = device.by_ref().take(3).collect();
     let numbered = matches!(prefix.as_str(), "COM" | "LPT")
@@ -519,14 +531,10 @@ fn is_plain_component(part: &str) -> bool {
             (device.next(), device.next()),
             (Some('0'..='9' | '¹' | '²' | '³'), None)
         );
-    let named = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"]
-        .iter()
-        .any(|name| stem.eq_ignore_ascii_case(name));
-    !part.is_empty()
-        && !part.ends_with(['.', ' '])
-        && !part.contains(['/', ':'])
-        && !numbered
-        && !named
+    numbered
+        || ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"]
+            .iter()
+            .any(|device| stem.eq_ignore_ascii_case(device))
 }
 
 #[cfg(windows)]
@@ -1184,6 +1192,143 @@ mod tests {
         let shm = Path::new("/dev/shm");
         if shm.is_dir() {
             assert!(on_removable_or_temporary_volume(shm));
+        }
+    }
+}
+
+/// Names, paths and Folio's own files, whatever they hold.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    fn component() -> impl Strategy<Value = String> {
+        prop_oneof![
+            3 => "[A-Za-z0-9 ._-]{1,10}",
+            1 => fuzz::device_name(),
+            1 => prop::sample::select(vec![".", "..", "", " ", "a.", "a ", "a:b", "Program Files"])
+                .prop_map(str::to_owned),
+            1 => fuzz::text(),
+        ]
+    }
+
+    /// `\\?\C:\…`, `\\?\UNC\server\share\…`, and anything else.
+    fn verbatim_like() -> impl Strategy<Value = String> {
+        prop_oneof![
+            ("[A-Za-z]", prop::collection::vec(component(), 0..5))
+                .prop_map(|(drive, parts)| format!(r"\\?\{drive}:\{}", parts.join(r"\"))),
+            (
+                component(),
+                component(),
+                prop::collection::vec(component(), 0..4)
+            )
+                .prop_map(|(server, share, parts)| {
+                    let mut path = format!(r"\\?\UNC\{server}\{share}");
+                    for part in parts {
+                        path.push('\\');
+                        path.push_str(&part);
+                    }
+                    path
+                }),
+            ("[A-Za-z]", "[a-z]{1,250}").prop_map(|(drive, long)| format!(r"\\?\{drive}:\{long}")),
+            fuzz::text(),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        /// The plain spelling of a canonical Windows path names the same file
+        /// for any program, or the verbatim one is kept.
+        #[test]
+        fn plain_spellings_name_the_same_path(path in verbatim_like()) {
+            if let Some(plain) = strip_verbatim(&path) {
+                prop_assert!(plain.encode_utf16().count() < 260);
+                // The server and share, or the drive, then the rest below
+                // that root (empty for the root itself, `C:\` or `\\a\b\`).
+                let (back, mut names, rest) = match plain.strip_prefix(r"\\") {
+                    Some(unc) => {
+                        let mut parts = unc.splitn(3, '\\');
+                        let root: Vec<&str> = parts.by_ref().take(2).collect();
+                        (format!(r"\\?\UNC\{unc}"), root, parts.next().unwrap_or_default())
+                    }
+                    None => (format!(r"\\?\{plain}"), Vec::new(), &plain[3..]),
+                };
+                prop_assert_eq!(&back, &path);
+                if !rest.is_empty() {
+                    names.extend(rest.split('\\'));
+                }
+                for name in names {
+                    prop_assert!(is_plain_component(name), "{name:?} in {plain:?}");
+                }
+            }
+        }
+
+        #[test]
+        fn device_names_are_recognized_in_any_case_and_form(name in fuzz::device_name()) {
+            prop_assert!(is_windows_device_name(&name));
+            prop_assert!(!is_plain_component(&name));
+        }
+
+        /// `CONSOLE`, `COM10`, `NULL.pdf`: they only start like devices.
+        #[test]
+        fn names_that_only_start_like_devices_are_fine(
+            device in prop::sample::select(vec!["CON", "prn", "Aux", "NUL", "COM1", "lpt9", "CONIN$"]),
+            more in "[A-Za-z0-9_]{1,4}",
+            extension in prop::sample::select(vec!["", ".pdf", ".tar.gz"]),
+        ) {
+            let name = format!("{device}{more}{extension}");
+            prop_assert!(!is_windows_device_name(&name), "{name}");
+        }
+
+        #[test]
+        fn only_absolute_overrides_move_the_data_folder(dir in fuzz::text()) {
+            let system = PathBuf::from("/home/alice/.local/share");
+            let expected = if Path::new(&dir).is_absolute() {
+                PathBuf::from(&dir)
+            } else {
+                system.join(IDENTIFIER)
+            };
+            prop_assert_eq!(
+                resolve_data_dir(Some(OsString::from(&dir)), Some(system)),
+                Some(expected)
+            );
+        }
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(128))]
+
+        #[test]
+        fn reads_its_own_files_only_within_the_limit(
+            content in prop::collection::vec(any::<u8>(), 0..80),
+            limit in 0u64..100,
+        ) {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("data");
+            std::fs::write(&file, &content).unwrap();
+            match read_limited(&file, limit) {
+                Ok(bytes) => {
+                    prop_assert!(content.len() as u64 <= limit);
+                    prop_assert_eq!(bytes, content);
+                }
+                Err(error) => {
+                    prop_assert!(content.len() as u64 > limit);
+                    prop_assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+                }
+            }
+        }
+
+        #[test]
+        fn writes_its_own_files_whole(first in fuzz::bytes(), second in fuzz::bytes()) {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("recent.json");
+            for content in [&first, &second] {
+                write_atomically(&file, content).unwrap();
+                prop_assert_eq!(&std::fs::read(&file).unwrap(), content);
+            }
+            prop_assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
         }
     }
 }
