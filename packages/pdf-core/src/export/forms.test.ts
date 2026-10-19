@@ -11,9 +11,9 @@ import {
   PDFDict,
   PDFDocument,
   PDFName,
+  PDFRawStream,
   StandardFonts,
   type PDFArray,
-  type PDFRawStream,
 } from '@cantoo/pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -264,5 +264,72 @@ describe('exportPdf: forms', () => {
       /^\/OC \/FlatOC[\w-]* BDC q .* cm \/FlatField[\w-]* Do Q EMC$/,
     );
     await expectValidPdf(bytes);
+  });
+
+  it('draws the fields of forms that leave drawing them to the reader', async () => {
+    // A form without appearances, as some tools write them (NeedAppearances).
+    const pdf = await PDFDocument.create({ updateMetadata: false });
+    const page = pdf.addPage([612, 792]);
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const form = pdf.getForm();
+    for (const [index, name] of ['kept', 'typed', 'foreign'].entries()) {
+      const field = form.createTextField(name);
+      if (name === 'kept') field.setText('value from the file');
+      field.addToPage(page, { x: 72, y: 700 - index * 60, width: 260, height: 24, font });
+    }
+    form.updateFieldAppearances(font);
+    for (const field of form.getFields()) {
+      for (const widget of field.acroField.getWidgets()) widget.dict.delete(PDFName.of('AP'));
+    }
+    form.acroForm.dict.set(PDFName.of('NeedAppearances'), pdf.context.obj(true));
+    const source = await pdf.save({ updateFieldAppearances: false });
+
+    // PDF.js saves what is typed without appearances into such forms.
+    const handle = await engine.open(source);
+    await handle.getFormFields();
+    handle.setFormValues([
+      ['typed', 'typed in Folio'],
+      ['foreign', 'Grüße 你好'],
+    ]);
+    const filled = (await handle.saveFormValues())!;
+    await handle.destroy();
+    const { model, sources } = await document(filled, 'drawn-by-readers.pdf');
+
+    const flat = await exportPdf({ model, sources, assets: new Map(), flattenForms: true });
+    const text = (await read(flat.bytes)).pages[0]!.text;
+    expect(text).toContain('value from the file');
+    expect(text).toContain('typed in Folio');
+    // Characters the standard font cannot show become "?", and the save says so.
+    expect(text).toContain('Grüße ??');
+    expect(flat.warnings).toEqual(['unsupported-form-characters']);
+    await expectValidPdf(flat.bytes);
+
+    // Printing copies the pages out, without the form: the widgets carry what they show.
+    const copied = await exportPdf({
+      model,
+      sources,
+      assets: new Map(),
+      pageIds: [model.pages[0]!.id],
+    });
+    const doc = await PDFDocument.load(copied.bytes, { updateMetadata: false });
+    const drawn = doc
+      .getPage(0)
+      .node.Annots()!
+      .asArray()
+      .map((ref) => {
+        const ap = (doc.context.lookup(ref) as PDFDict).lookupMaybe(PDFName.of('AP'), PDFDict);
+        const normal = ap && doc.context.lookup(ap.get(PDFName.of('N')));
+        return normal instanceof PDFRawStream
+          ? new TextDecoder('latin1').decode(decodePDFRawStream(normal).decode())
+          : '';
+      })
+      .join('\n')
+      // pdf-lib writes the text as hex strings.
+      .replace(/<([0-9A-F]+)> Tj/g, (_, hex: string) =>
+        String.fromCharCode(...(hex.match(/../g) ?? []).map((pair) => Number.parseInt(pair, 16))),
+      );
+    expect(drawn).toContain('value from the file');
+    expect(drawn).toContain('typed in Folio');
+    await expectValidPdf(copied.bytes);
   });
 });

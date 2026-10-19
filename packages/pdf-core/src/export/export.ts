@@ -10,7 +10,7 @@ import {
 import { degrees, EncryptedPDFError, PDFDocument, PDFPage } from '@cantoo/pdf-lib';
 import type { PdfPermissions } from '../engine';
 import { AnnotationWriter, type AssetData } from './annotations';
-import { flattenFormFields } from './forms';
+import { drawMissingAppearances, flattenFormFields } from './forms';
 import { writeMetadata } from './metadata';
 import {
   collectGarbage,
@@ -55,7 +55,9 @@ export interface ExportOptions {
 
 export type ExportWarning =
   /** Added text used characters the standard fonts cannot show; they became "?". */
-  'unsupported-characters';
+  | 'unsupported-characters'
+  /** Form fields drawn for a copy without the form had such characters, drawn as "?". */
+  | 'unsupported-form-characters';
 
 export interface ExportResult {
   bytes: Uint8Array;
@@ -179,8 +181,13 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     if (batch) batch.push({ slot, pageIndex });
     else batches.set(sourceId, [{ slot, pageIndex }]);
   }
+  /** Form fields drawn for copies without their form showed characters as "?". */
+  let lossyFields = false;
   for (const [sourceId, batch] of batches) {
-    const source = sourceId === originalId && basePages.length > 0 ? doc : await load(sourceId);
+    const own = sourceId === originalId && basePages.length > 0;
+    const source = own ? doc : await load(sourceId);
+    // Copied pages leave their file's form behind: their fields need drawing.
+    if (!own) lossyFields = drawMissingAppearances(source) || lossyFields;
     if (batch.some(({ pageIndex }) => pageIndex >= source.getPageCount())) {
       throw new ExportError('unreadable-source', 'A page of a source document is missing.');
     }
@@ -208,6 +215,7 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   );
   // Before Folio's annotations, so comments flattened too are drawn over the fields.
   if (options.flattenForms) {
+    lossyFields = drawMissingAppearances(doc) || lossyFields;
     flattenFormFields(
       doc,
       output.map((entry) => entry.page),
@@ -253,6 +261,16 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
       permissions: toUserPermissions(options.protection.permissions),
     });
   }
-  const bytes = await doc.save({ useObjectStreams: true, rewrite: true, addDefaultPage: false });
-  return { bytes, warnings: writer.lossyText ? ['unsupported-characters'] : [] };
+  // Appearances are Folio's to draw (`drawMissingAppearances`): pdf-lib would
+  // redraw every field of a form it was asked about, and fail on removed ones.
+  const bytes = await doc.save({
+    useObjectStreams: true,
+    rewrite: true,
+    addDefaultPage: false,
+    updateFieldAppearances: false,
+  });
+  const warnings: ExportWarning[] = [];
+  if (writer.lossyText) warnings.push('unsupported-characters');
+  if (lossyFields) warnings.push('unsupported-form-characters');
+  return { bytes, warnings };
 }

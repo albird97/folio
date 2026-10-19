@@ -1,12 +1,19 @@
 import {
   PDFArray,
+  PDFBool,
   PDFDict,
+  PDFDropdown,
   PDFName,
   PDFNumber,
+  PDFOptionList,
   PDFRef,
   PDFStream,
+  PDFTextField,
+  StandardFonts,
   type PDFContext,
   type PDFDocument,
+  type PDFField,
+  type PDFFont,
   type PDFObject,
   type PDFPage,
 } from '@cantoo/pdf-lib';
@@ -90,6 +97,57 @@ function propertiesName(page: PDFPage, group: PDFRef): PDFName {
   const key = properties.uniqueKey('FlatOC');
   properties.set(key, group);
   return key;
+}
+
+/** Text a field draws: its value, or the options of a list. */
+function drawnText(field: PDFField): string[] {
+  if (field instanceof PDFTextField) return [field.getText() ?? ''];
+  if (field instanceof PDFDropdown || field instanceof PDFOptionList) return field.getOptions();
+  return [];
+}
+
+/**
+ * Draws the fields of a form that leaves drawing them to the reader
+ * (NeedAppearances), as readers do. A copy without the form (flattened,
+ * or pages copied out, as printing does) shows only what appearances draw.
+ * Best effort, in a standard font: characters it cannot show are drawn as
+ * "?" (returns true when that happened), and a field that cannot be drawn
+ * stays as it is.
+ */
+export function drawMissingAppearances(doc: PDFDocument): boolean {
+  const { context } = doc;
+  const acroForm = context.lookup(doc.catalog.get(name('AcroForm')));
+  // pdf-lib's form API would remove an XFA part, so such forms are left alone.
+  if (!(acroForm instanceof PDFDict) || acroForm.get(name('XFA')) !== undefined) return false;
+  const needed = context.lookup(acroForm.get(name('NeedAppearances')));
+  if (!(needed instanceof PDFBool) || !needed.asBoolean()) return false;
+  let fields: PDFField[];
+  try {
+    fields = doc.getForm().getFields();
+  } catch {
+    return false;
+  }
+  let font: PDFFont | null = null;
+  let characters: ReadonlySet<number> = new Set();
+  let lossy = false;
+  for (const field of fields) {
+    try {
+      if (!field.needsAppearancesUpdate()) continue;
+      if (!font) {
+        font = doc.embedStandardFont(StandardFonts.Helvetica);
+        characters = new Set(font.getCharacterSet());
+      }
+      field.defaultUpdateAppearances(font);
+      lossy ||= drawnText(field).some((text) =>
+        Array.from(text.replace(/[\r\n\t]/g, '')).some(
+          (char) => !characters.has(char.codePointAt(0)!),
+        ),
+      );
+    } catch {
+      // Left to readers that draw fields themselves, as before.
+    }
+  }
+  return lossy;
 }
 
 /**
