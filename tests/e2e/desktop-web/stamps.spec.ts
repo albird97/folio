@@ -86,7 +86,8 @@ test.describe('page numbers and watermarks', () => {
     await dialog.getByRole('spinbutton', { name: 'Size' }).fill('200');
     await expect(dialog.getByText('Enter a size from 4 to 72 points.')).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    await dialog.getByRole('spinbutton', { name: 'Size' }).fill('11');
+    // Sizes between the spin buttons' steps are fine.
+    await dialog.getByRole('spinbutton', { name: 'Size' }).fill('10.5');
     await dialog.getByRole('button', { name: 'Apply' }).click();
     await expect(dialog).toBeHidden();
 
@@ -106,7 +107,7 @@ test.describe('page numbers and watermarks', () => {
     await expect(properties).toContainText('“Page 1 of 3”, bottom right');
     await properties.getByRole('button', { name: 'Edit page numbers' }).click();
     await expect(dialog.getByLabel('Format')).toHaveValue('Page {page} of {total}');
-    await expect(dialog.getByRole('spinbutton', { name: 'Size' })).toHaveValue('11');
+    await expect(dialog.getByRole('spinbutton', { name: 'Size' })).toHaveValue('10.5');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
 
     // The saved pages carry their numbers as page content.

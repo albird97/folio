@@ -388,7 +388,12 @@ export function StampDialog<K extends keyof DocumentStamps>({
       aria-describedby={`${id}-description`}
       className="max-h-[calc(100vh-2rem)] w-[min(44rem,calc(100vw-2rem))] overflow-y-auto"
     >
-      <form onSubmit={onSubmit}>
+      {/*
+        The fields are checked here, with a message beside each; the browser's
+        own checks would also refuse values allowed here (10.5 pt, an angle
+        between the spin buttons' steps).
+      */}
+      <form noValidate onSubmit={onSubmit}>
         <DialogTitle>{title}</DialogTitle>
         <DialogDescription id={`${id}-description`}>{description}</DialogDescription>
         {!editable ? (
