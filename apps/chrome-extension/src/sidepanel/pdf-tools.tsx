@@ -6,24 +6,22 @@ import {
 } from '@folio/document-model';
 import { parsePageRange } from '@folio/editor';
 import {
-  createZip,
+  exportPageImages,
   extractText,
-  pageImageName,
-  renderPageImage,
+  MAX_IMAGE_PAGES,
   sha256Hex,
   toSourceDescriptor,
   type PageImageFormat,
   type PdfDocumentHandle,
 } from '@folio/pdf-core';
-import { downloadBytes, downloadFile, pdfFileName, safeFileName } from '@folio/platform-adapters';
+import { downloadBytes, fileNameFor } from '@folio/platform-adapters';
 import { Button, cn, ICON, Input, Label, SegmentedControl, Spinner } from '@folio/shared-ui';
 import { FileOutput, FileText, Images, RotateCw } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 type Tool = 'rotate' | 'extract' | 'images' | 'text';
 
-/** Images are made in memory before they are zipped; this keeps that bounded. */
-const MAX_IMAGE_PAGES = 300;
+const encoder = new TextEncoder();
 
 const TOOLS: Array<{ id: Tool; label: string; icon: ReactNode }> = [
   {
@@ -165,7 +163,7 @@ export function PdfTools({
             delta: Number(rotation) as Rotation,
           });
           const { bytes: out } = await exportPdf({ model: turned, sources, assets: new Map() });
-          downloadBytes(pdfFileName(`${baseName} (rotated)`), out);
+          downloadBytes(fileNameFor('pdf', `${baseName} (rotated)`), out);
         });
         break;
       case 'extract':
@@ -179,7 +177,7 @@ export function PdfTools({
             assets: new Map(),
             pageIds,
           });
-          downloadBytes(pdfFileName(`${baseName} (pages ${rangeLabel(range)})`), out);
+          downloadBytes(fileNameFor('pdf', `${baseName} (pages ${rangeLabel(range)})`), out);
         });
         break;
       case 'images':
@@ -187,34 +185,19 @@ export function PdfTools({
           setProblem(`Choose up to ${MAX_IMAGE_PAGES} pages at a time.`);
           return;
         }
-        void run('Drawing pages…', async (signal) => {
-          const entries: Array<{ name: string; bytes: Uint8Array }> = [];
-          for (const [done, position] of positions.entries()) {
-            signal.throwIfAborted();
-            setBusy(`Drawing page ${done + 1} of ${positions.length}…`);
-            const image = await renderPageImage(handle, position, { dpi: Number(dpi), format });
-            entries.push({
-              name: pageImageName(baseName, position + 1, count, format),
-              bytes: new Uint8Array(await image.blob.arrayBuffer()),
-            });
-          }
-          signal.throwIfAborted();
-          const [only] = entries;
-          if (entries.length === 1 && only) {
-            downloadFile(
-              only.name,
-              new Blob([only.bytes as Uint8Array<ArrayBuffer>], {
-                type: format === 'png' ? 'image/png' : 'image/jpeg',
-              }),
-            );
-          } else {
-            downloadFile(
-              safeFileName(`${baseName} (images)`, 'zip'),
-              new Blob([createZip(entries) as Uint8Array<ArrayBuffer>], {
-                type: 'application/zip',
-              }),
-            );
-          }
+        void run(`Drawing page 1 of ${positions.length}…`, async (signal) => {
+          const file = await exportPageImages(handle, {
+            pages: positions.map((position) => ({ index: position, number: position + 1 })),
+            pageCount: count,
+            baseName,
+            dpi: Number(dpi),
+            format,
+            signal,
+            onProgress: (done, total) => {
+              if (done < total) setBusy(`Drawing page ${done + 1} of ${total}…`);
+            },
+          });
+          downloadBytes(fileNameFor(file.kind, file.name), file.bytes, file.kind);
         });
         break;
       case 'text':
@@ -384,8 +367,8 @@ export function PdfTools({
                 />
               ) : (
                 <p className="text-xs text-ink-muted">
-                  No text found. Scanned pages contain pictures of text, which needs OCR (not yet
-                  available in Folio).
+                  No text found. Scanned pages contain pictures of text: open the document in the
+                  editor and choose Tools › Recognize text (OCR) to read it.
                 </p>
               )}
               {text ? (
@@ -396,9 +379,10 @@ export function PdfTools({
                   <Button
                     size="sm"
                     onClick={() =>
-                      downloadFile(
-                        safeFileName(`${baseName} (text)`, 'txt'),
-                        new Blob([text], { type: 'text/plain;charset=utf-8' }),
+                      downloadBytes(
+                        fileNameFor('text', `${baseName} (text)`),
+                        encoder.encode(text),
+                        'text',
                       )
                     }
                   >
