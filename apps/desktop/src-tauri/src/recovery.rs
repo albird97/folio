@@ -109,19 +109,7 @@ pub fn is_valid_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-        && !is_reserved_device_name(name)
-}
-
-/// `CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9` and `LPT0`–`LPT9`, in any case
-/// and with any extension: Windows opens the device instead of a file.
-pub fn is_reserved_device_name(name: &str) -> bool {
-    let stem = name.split('.').next().unwrap_or_default().trim_end();
-    let upper = stem.to_ascii_uppercase();
-    match upper.as_bytes() {
-        b"CON" | b"PRN" | b"AUX" | b"NUL" => true,
-        [b'C', b'O', b'M', digit] | [b'L', b'P', b'T', digit] => digit.is_ascii_digit(),
-        _ => false,
-    }
+        && !paths::is_windows_device_name(name)
 }
 
 /// Titles are cleaned like suggested file names: no control or invisible
@@ -222,7 +210,8 @@ impl RecoveryStore {
         let snapshot = std::fs::metadata(dir.join(SNAPSHOT)).ok()?;
         Some(RecoveryRecord {
             id,
-            title: meta.title,
+            // Cleaned again: the file may have been changed since Folio wrote it.
+            title: clean_title(&meta.title),
             saved_at: meta.saved_at,
             byte_length: snapshot.len() + tree_size(&dir.join(FILES)),
         })
@@ -511,7 +500,7 @@ mod tests {
         for name in [
             "CON", "con", "Prn", "aux", "NUL", "COM1", "com9", "COM0", "LPT1", "lpt9",
         ] {
-            assert!(is_reserved_device_name(name), "{name}");
+            assert!(paths::is_windows_device_name(name), "{name}");
             assert!(!is_valid_name(name), "{name}");
             assert_eq!(
                 store.save_snapshot(name, "t", b"{}"),
@@ -522,8 +511,16 @@ mod tests {
                 Err(RecoveryError::InvalidName)
             );
         }
-        assert!(is_reserved_device_name("con.txt"));
-        assert!(is_reserved_device_name("NUL.tar.gz"));
+        for name in [
+            "con.txt",
+            "NUL.tar.gz",
+            "CON .pdf",
+            "conin$",
+            "LPT¹",
+            "com³.x",
+        ] {
+            assert!(paths::is_windows_device_name(name), "{name}");
+        }
         for name in ["CONSOLE", "COM10", "LPTX", "con_1", "nul-2", "COMA"] {
             assert!(is_valid_name(name), "{name}");
         }
@@ -626,6 +623,23 @@ mod tests {
         assert!(stored.ends_with('é'));
     }
 
+    /// Found by the property tests below.
+    #[test]
+    fn cleans_titles_read_back_from_the_folder() {
+        let (dir, store) = store();
+        store.save_snapshot("doc", "Report.pdf", b"{}").unwrap();
+        // Someone edits the record's meta file.
+        let meta = serde_json::json!({
+            "title": format!(" Invoice\u{202E}fdp.exe\u{0}{}", "x".repeat(300)),
+            "savedAt": "2026-01-01T10:00:00.000Z",
+        });
+        let meta = serde_json::to_vec(&meta).unwrap();
+        std::fs::write(dir.path().join("recovery").join("doc").join(META), meta).unwrap();
+        let title = &store.list().unwrap()[0].title;
+        assert!(title.starts_with("Invoicefdp.exexxx"));
+        assert_eq!(title.len(), save::MAX_NAME_BYTES);
+    }
+
     #[test]
     fn errors_never_mention_paths() {
         for error in [
@@ -638,6 +652,160 @@ mod tests {
             RecoveryError::Io,
         ] {
             assert!(!error.to_string().contains('/'), "{error}");
+        }
+    }
+}
+
+/// Ids, keys and titles from the webview, and whatever the recovery folder
+/// holds: refused names never become paths, nothing is written outside the
+/// folder, accepted data reads back, and listed records are clean.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    fn name_like() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[A-Za-z0-9_-]{1,12}",
+            "[A-Za-z0-9_-]{127,129}",
+            "[A-Za-z0-9_. /\\\\:-]{0,12}",
+            fuzz::device_name(),
+            fuzz::text(),
+        ]
+    }
+
+    /// Everything below `dir`.
+    fn all_paths(dir: &Path) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                found.extend(all_paths(&path));
+            }
+            found.push(path);
+        }
+        found
+    }
+
+    /// A name that is one plain folder or file name here, for setting up a
+    /// folder with arbitrary content.
+    fn is_one_component(name: &str) -> bool {
+        let mut components = Path::new(name).components();
+        matches!(
+            (components.next(), components.next()),
+            (Some(std::path::Component::Normal(_)), None)
+        )
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn valid_names_are_plain_and_stay_inside_the_folder(name in name_like()) {
+            if is_valid_name(&name) {
+                let base = Path::new("recovery");
+                let joined = base.join(&name);
+                prop_assert_eq!(joined.parent(), Some(base));
+                prop_assert!(name.len() <= 128);
+                prop_assert!(!name.contains(['.', '/', '\\', ':', ' ']));
+                prop_assert!(!paths::is_windows_device_name(&name));
+            }
+        }
+
+        #[test]
+        fn names_like_devices_are_refused(name in fuzz::device_name()) {
+            prop_assert!(!is_valid_name(&name));
+        }
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(96))]
+
+        #[test]
+        fn the_store_keeps_to_its_folder_and_reads_back_what_it_took(
+            id in name_like(),
+            key in name_like(),
+            title in fuzz::text(),
+            snapshot in fuzz::bytes(),
+            file in prop::collection::vec(any::<u8>(), 0..64),
+        ) {
+            let dir = tempfile::tempdir().unwrap();
+            let base = dir.path().join("recovery");
+            let store = RecoveryStore::new(base.clone());
+            let saved = store.save_snapshot(&id, &title, &snapshot);
+            let stored = store.save_file(&id, &key, &file);
+            if !is_valid_name(&id) {
+                prop_assert_eq!(saved, Err(RecoveryError::InvalidName));
+                prop_assert_eq!(&stored, &Err(RecoveryError::InvalidName));
+                prop_assert_eq!(store.load_snapshot(&id), Err(RecoveryError::InvalidName));
+                prop_assert_eq!(store.remove(&id), Err(RecoveryError::InvalidName));
+            } else if std::str::from_utf8(&snapshot).is_err() {
+                prop_assert_eq!(saved, Err(RecoveryError::InvalidRequest));
+            } else {
+                prop_assert_eq!(saved, Ok(()));
+                prop_assert_eq!(
+                    store.load_snapshot(&id).unwrap(),
+                    Some(String::from_utf8(snapshot.clone()).unwrap())
+                );
+                let records = store.list().unwrap();
+                prop_assert_eq!(records.len(), 1);
+                prop_assert_eq!(&records[0].id, &id);
+                prop_assert_eq!(&records[0].title, &clean_title(&title));
+            }
+            if is_valid_name(&id) && is_valid_name(&key) {
+                prop_assert_eq!(&stored, &Ok(()));
+                prop_assert_eq!(store.load_file(&id, &key).unwrap(), file);
+                prop_assert_eq!(store.file_keys(&id).unwrap(), vec![key.clone()]);
+            } else if is_valid_name(&id) {
+                prop_assert_eq!(stored, Err(RecoveryError::InvalidName));
+                prop_assert_eq!(store.has_file(&id, &key), Err(RecoveryError::InvalidName));
+            }
+            // Nothing outside the recovery folder.
+            for path in all_paths(dir.path()) {
+                prop_assert!(path.starts_with(&base), "{}", path.display());
+            }
+            if is_valid_name(&id) {
+                store.remove(&id).unwrap();
+                prop_assert!(!base.join(&id).exists());
+            }
+        }
+
+        /// Records someone else wrote into the folder, or that were damaged:
+        /// only complete ones with valid ids are listed, and their titles are
+        /// as clean as Folio's own.
+        #[test]
+        fn lists_only_valid_records_with_clean_titles(
+            entries in prop::collection::vec(
+                (name_like(), prop_oneof![
+                    fuzz::bytes(),
+                    (fuzz::text(), fuzz::text()).prop_map(|(title, saved_at)| {
+                        serde_json::to_vec(&serde_json::json!({ "title": title, "savedAt": saved_at }))
+                            .unwrap()
+                    }),
+                ], any::<bool>()),
+                0..6,
+            ),
+        ) {
+            let dir = tempfile::tempdir().unwrap();
+            let base = dir.path().join("recovery");
+            for (name, meta, snapshot) in &entries {
+                let folder = base.join(name);
+                // Names the file system refuses cannot be there.
+                if !is_one_component(name) || std::fs::create_dir_all(&folder).is_err() {
+                    continue;
+                }
+                std::fs::write(folder.join(META), meta).unwrap();
+                if *snapshot {
+                    std::fs::write(folder.join(SNAPSHOT), b"{}").unwrap();
+                }
+            }
+            let records = RecoveryStore::new(base.clone()).list().unwrap();
+            for record in records {
+                prop_assert!(is_valid_name(&record.id));
+                prop_assert!(base.join(&record.id).join(SNAPSHOT).is_file());
+                prop_assert_eq!(&clean_title(&record.title), &record.title);
+            }
         }
     }
 }

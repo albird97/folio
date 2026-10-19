@@ -168,3 +168,57 @@ mod tests {
         assert!(later > earlier);
     }
 }
+
+/// Timestamps are read back from files Folio keeps, which may be damaged or
+/// edited: only what Folio writes is accepted, and it reads back exactly.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    /// The last millisecond with a four-digit year.
+    const LAST: u64 = 253_402_300_799_999;
+
+    fn at(millis: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_millis(millis)
+    }
+
+    fn timestamp_like() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{3})?Z",
+            "[0-9+-]{4,5}-[0-9]{1,2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,4})?(Z|[+-][0-9]{2}:[0-9]{2})?",
+            fuzz::text(),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn reads_back_every_time_it_writes(millis in 0..=LAST) {
+            let text = iso8601(at(millis));
+            prop_assert_eq!(text.len(), 24);
+            prop_assert_eq!(parse_iso8601(&text), Some(at(millis)));
+        }
+
+        /// What it accepts is what it would write (maybe without the
+        /// milliseconds); it never guesses.
+        #[test]
+        fn accepts_only_what_it_writes(text in timestamp_like()) {
+            if let Some(time) = parse_iso8601(&text) {
+                let written = iso8601(time);
+                if text.len() == 20 {
+                    prop_assert_eq!(written, format!("{}.000Z", &text[..19]));
+                } else {
+                    prop_assert_eq!(written, text);
+                }
+            }
+        }
+
+        #[test]
+        fn sorts_like_the_times_it_writes(a in 0..=LAST, b in 0..=LAST) {
+            prop_assert_eq!(iso8601(at(a)).cmp(&iso8601(at(b))), a.cmp(&b));
+        }
+    }
+}

@@ -503,3 +503,42 @@ mod tests {
         assert_eq!(literal_label("Report.pdf"), "Report.pdf");
     }
 }
+
+/// Menu events carry ids: only declared commands reach the webview, and
+/// only a valid recent id opens a recent file.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    fn id_like() -> impl Strategy<Value = String> {
+        let native = [CLOSE_WINDOW, QUIT, CLEAR_RECENT, CONNECT_CHROME];
+        let known: Vec<String> = MENU_COMMANDS
+            .iter()
+            .chain(native.iter())
+            .map(|(id, _, _)| (*id).to_owned())
+            .chain([OPEN_RECENT.to_owned()])
+            .collect();
+        prop_oneof![
+            prop::sample::select(known),
+            "recent:[0-9a-fA-F]{30,34}",
+            fuzz::text(),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn forwards_only_declared_commands(id in id_like()) {
+            let declared = MENU_COMMANDS.iter().any(|(command, _, _)| *command == id);
+            prop_assert_eq!(command_for(&id), declared.then_some(id.as_str()));
+            if let Some(recent) = recent_file_for(&id) {
+                prop_assert!(recent::is_valid_id(recent));
+                prop_assert_eq!(format!("{RECENT_PREFIX}{recent}"), id.clone());
+                prop_assert!(!declared);
+            }
+        }
+    }
+}

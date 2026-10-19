@@ -4,8 +4,10 @@
 //! it proposes a file name and gets the chosen file's name back.
 
 use crate::files::MAX_FILE_BYTES;
+use crate::paths;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::fs::Metadata;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -165,15 +167,21 @@ fn truncate_to_bytes(text: &str, max: usize) -> &str {
     &text[..end]
 }
 
+/// Dots and spaces, which a file name should not start with (it would be
+/// hidden) or end with (Windows refuses it), in whatever mix.
+fn is_dot_or_space(c: char) -> bool {
+    c == '.' || c.is_whitespace()
+}
+
 /// A plain file name for `name`: its last path component, without characters
-/// file systems reject or invisible formatting characters, ending in `.pdf`
-/// and at most 200 bytes long (UTF-8).
+/// file systems reject or invisible formatting characters, not named like a
+/// Windows device, ending in `.pdf` and at most 200 bytes long (UTF-8).
 pub fn sanitize_file_name(name: &str) -> String {
     let last = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let cleaned: String = visible_characters(last)
         .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
         .collect();
-    let trimmed = cleaned.trim().trim_matches('.').trim();
+    let trimmed = cleaned.trim_matches(is_dot_or_space);
     // Keep the extension (and its case) when there is one.
     let (stem, extension) = match trimmed.len().checked_sub(4) {
         Some(at) if trimmed.is_char_boundary(at) && trimmed[at..].eq_ignore_ascii_case(".pdf") => {
@@ -181,9 +189,15 @@ pub fn sanitize_file_name(name: &str) -> String {
         }
         _ => (trimmed, ".pdf"),
     };
-    let stem = truncate_to_bytes(stem, MAX_NAME_BYTES - extension.len());
-    // Windows refuses names that end in a dot or a space.
-    let stem = stem.trim_end_matches(['.', ' ']).trim_end();
+    // Windows would open a device instead of a file named like one (`CON`,
+    // `nul.txt`).
+    let stem = if paths::is_windows_device_name(stem) {
+        Cow::Owned(format!("_{stem}"))
+    } else {
+        Cow::Borrowed(stem)
+    };
+    let stem = truncate_to_bytes(&stem, MAX_NAME_BYTES - extension.len());
+    let stem = stem.trim_end_matches(is_dot_or_space);
     let stem = if stem.is_empty() { FALLBACK_NAME } else { stem };
     format!("{stem}{extension}")
 }
@@ -816,6 +830,21 @@ mod tests {
         assert_eq!(suggested_file_name(None), "Document.pdf");
     }
 
+    /// Both found by the property tests below.
+    #[test]
+    fn never_proposes_device_names_or_hidden_files() {
+        // Windows would open the device: `CON` is the console.
+        assert_eq!(sanitize_file_name("con"), "_con.pdf");
+        assert_eq!(sanitize_file_name("NUL.pdf"), "_NUL.pdf");
+        assert_eq!(sanitize_file_name("Com1 .txt"), "_Com1 .txt.pdf");
+        assert_eq!(sanitize_file_name("LPT¹"), "_LPT¹.pdf");
+        assert_eq!(sanitize_file_name("Console"), "Console.pdf");
+        assert_eq!(sanitize_file_name("COM10.pdf"), "COM10.pdf");
+        // Dots and spaces of any kind, mixed, are trimmed at both ends.
+        assert_eq!(sanitize_file_name(".\u{3000}.exe"), "exe.pdf");
+        assert_eq!(sanitize_file_name("Report. \u{3000}.pdf"), "Report.pdf");
+    }
+
     #[test]
     fn limits_names_to_200_bytes_and_keeps_the_extension() {
         let ascii = sanitize_file_name(&"x".repeat(500));
@@ -1263,5 +1292,134 @@ mod tests {
         let target = dir.path().join(format!("{}.pdf", "a".repeat(251)));
         write_atomically(&target, PDF).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), PDF);
+    }
+}
+
+/// Whatever name the webview or Chrome proposes, Folio suggests a plain PDF
+/// file name, and it only takes PDF data.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    /// One plain file name that reads as it is and means the same on every
+    /// system: no separators or characters file systems refuse, no device
+    /// name, no dots or spaces at either end of the name, `.pdf` at the end
+    /// and at most 200 bytes.
+    fn assert_plain_pdf_name(name: &str) -> Result<(), TestCaseError> {
+        prop_assert!(name.len() <= MAX_NAME_BYTES, "{name:?}");
+        let at = name.len().saturating_sub(4);
+        prop_assert!(name.is_char_boundary(at), "{name:?}");
+        let (stem, extension) = name.split_at(at);
+        prop_assert!(extension.eq_ignore_ascii_case(".pdf"), "{name:?}");
+        prop_assert!(!stem.is_empty(), "{name:?}");
+        prop_assert!(
+            !name.contains(['/', '\\', '<', '>', ':', '"', '|', '?', '*']),
+            "{name:?}"
+        );
+        prop_assert!(
+            name.chars()
+                .all(|c| !c.is_control() && !is_hidden_format_character(c)),
+            "{name:?}"
+        );
+        let dot_or_space = |c: char| c == '.' || c.is_whitespace();
+        prop_assert!(!name.starts_with(dot_or_space), "{name:?}");
+        prop_assert!(!stem.ends_with(dot_or_space), "{name:?}");
+        prop_assert!(!crate::paths::is_windows_device_name(name), "{name:?}");
+        Ok(())
+    }
+
+    /// Names close to `.folio-<32 hex digits>.tmp`, and others.
+    fn leftover_like() -> impl Strategy<Value = String> {
+        let prefix = prop::sample::select(vec![".folio-", "folio-", ".Folio-", ".folio_", ""]);
+        let id = prop_oneof!["[0-9a-f]{32}", "[0-9a-fA-F]{31,33}", "[0-9a-gé]{32}"];
+        let extension =
+            prop::sample::select(vec![".tmp", ".bak", ".TMP", ".tmp.pdf", "", ".bak ", ".tm"]);
+        prop_oneof![
+            (prefix, id, extension)
+                .prop_map(|(prefix, id, extension)| format!("{prefix}{id}{extension}")),
+            fuzz::text(),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn suggests_a_plain_pdf_name_for_any_name(name in fuzz::text()) {
+            let suggested = sanitize_file_name(&name);
+            assert_plain_pdf_name(&suggested)?;
+            // A suggestion stays as it is.
+            prop_assert_eq!(sanitize_file_name(&suggested), suggested);
+        }
+
+        #[test]
+        fn decodes_any_header_into_a_plain_pdf_name(name in fuzz::text()) {
+            // Percent-encoded, as the webview sends it, or anything else.
+            let encoded = percent_encoding::utf8_percent_encode(
+                &name,
+                percent_encoding::NON_ALPHANUMERIC,
+            )
+            .to_string();
+            prop_assert_eq!(decode_header(&encoded), name.clone());
+            for header in [&encoded, &name] {
+                assert_plain_pdf_name(&suggested_file_name(Some(header)))?;
+            }
+        }
+
+        #[test]
+        fn display_text_is_visible_trimmed_and_short(text in fuzz::text(), max in 0usize..300) {
+            let shown = clean_display_text(&text, max);
+            prop_assert!(shown.len() <= max);
+            prop_assert!(shown
+                .chars()
+                .all(|c| !c.is_control() && !is_hidden_format_character(c)));
+            prop_assert_eq!(shown.trim(), shown.as_str());
+            prop_assert_eq!(clean_display_text(&shown, max), shown);
+        }
+
+        #[test]
+        fn recognizes_only_folios_exact_leftover_names(name in leftover_like()) {
+            if let Some(kind) = leftover_kind(&name) {
+                let id = &name[".folio-".len()..name.len() - ".tmp".len()];
+                prop_assert!(name.starts_with(".folio-"));
+                prop_assert_eq!(id.len(), 32);
+                prop_assert!(id.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')));
+                let extension = if kind == Leftover::Temporary { ".tmp" } else { ".bak" };
+                prop_assert!(name.ends_with(extension));
+            }
+        }
+
+        #[test]
+        fn recognizes_the_names_of_its_own_temporary_files(id in any::<u128>()) {
+            let name = format!(".folio-{}.tmp", uuid::Uuid::from_u128(id).simple());
+            prop_assert_eq!(leftover_kind(&name), Some(Leftover::Temporary));
+        }
+
+        #[test]
+        fn takes_only_data_with_a_pdf_header_near_the_start(
+            before in prop::collection::vec(any::<u8>(), 0..1100),
+            header in any::<bool>(),
+            after in fuzz::bytes(),
+        ) {
+            let mut data = before;
+            if header {
+                data.extend_from_slice(b"%PDF-");
+            }
+            data.extend(after);
+            let expected = data
+                .windows(5)
+                .position(|window| window == b"%PDF-")
+                .is_some_and(|at| at + 5 <= 1024);
+            prop_assert_eq!(check_pdf(&data).is_ok(), expected);
+        }
+
+        #[test]
+        fn recognizes_hex_digests_exactly(value in "[0-9a-fA-Fg-z ]{0,70}", data in fuzz::bytes()) {
+            let expected = value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
+            prop_assert_eq!(is_sha256_hex(&value), expected);
+            prop_assert!(is_sha256_hex(&sha256_hex(&data)));
+        }
     }
 }

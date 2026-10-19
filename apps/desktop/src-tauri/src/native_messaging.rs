@@ -675,3 +675,152 @@ mod tests {
         assert!(locations.browser_folders);
     }
 }
+
+/// Extension ids, origins and manifests from anywhere: only the official
+/// extension is ever reported, and only another copy's registration is left
+/// alone.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+    use serde_json::{json, Value};
+
+    fn id_like() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just(OFFICIAL_EXTENSION_IDS[0].to_owned()),
+            "[a-p]{32}",
+            "[a-q]{31,33}",
+            "[A-Pa-p]{32}",
+            fuzz::text(),
+        ]
+    }
+
+    /// What a manifest file holds: a manifest, as Folio writes it or as
+    /// someone may have edited it (`path: None` names this copy of Folio),
+    /// or anything else.
+    #[derive(Debug, Clone)]
+    enum Content {
+        Manifest {
+            name: String,
+            path: Option<String>,
+            origins: Vec<String>,
+        },
+        Junk(Vec<u8>),
+    }
+
+    impl Content {
+        fn bytes(&self, exe: &Path) -> Vec<u8> {
+            match self {
+                Content::Manifest {
+                    name,
+                    path,
+                    origins,
+                } => serde_json::to_vec(&json!({
+                    "name": name,
+                    "description": DESCRIPTION,
+                    "path": path.clone().map_or_else(|| json!(exe), Value::from),
+                    "type": "stdio",
+                    "allowed_origins": origins,
+                }))
+                .unwrap(),
+                Content::Junk(bytes) => bytes.clone(),
+            }
+        }
+    }
+
+    fn content() -> impl Strategy<Value = Content> {
+        let name = prop_oneof![3 => Just(HOST_NAME.to_owned()), 1 => fuzz::text()];
+        let path = prop_oneof![3 => Just(None), 1 => fuzz::text().prop_map(Some)];
+        let origins = prop::collection::vec(
+            prop_oneof![id_like().prop_map(|id| origin(&id)), fuzz::text()],
+            0..4,
+        );
+        prop_oneof![
+            3 => (name, path, origins).prop_map(|(name, path, origins)| Content::Manifest {
+                name,
+                path,
+                origins,
+            }),
+            1 => fuzz::bytes().prop_map(Content::Junk),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn extension_ids_are_32_letters_from_a_to_p(id in id_like()) {
+            let letters = id.bytes().all(|byte| (b'a'..=b'p').contains(&byte));
+            prop_assert_eq!(is_valid_extension_id(&id), id.len() == 32 && letters);
+            prop_assert_eq!(is_official(&id), id == OFFICIAL_EXTENSION_IDS[0]);
+        }
+
+        #[test]
+        fn origins_name_exactly_one_valid_id(
+            prefix in prop_oneof![3 => Just(ORIGIN_PREFIX.to_owned()), 1 => fuzz::text()],
+            id in id_like(),
+            suffix in prop_oneof![3 => Just("/".to_owned()), 1 => fuzz::text()],
+        ) {
+            let text = format!("{prefix}{id}{suffix}");
+            match extension_id_from_origin(&text) {
+                Some(found) => {
+                    prop_assert!(is_valid_extension_id(found));
+                    prop_assert_eq!(origin(found), text.clone());
+                }
+                None => prop_assert!(
+                    !(prefix == ORIGIN_PREFIX && suffix == "/" && is_valid_extension_id(&id))
+                ),
+            }
+        }
+    }
+
+    /// Chrome's folder with this copy of Folio in it.
+    fn setup() -> (tempfile::TempDir, Locations, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir
+            .path()
+            .join("google-chrome")
+            .join("NativeMessagingHosts")
+            .join(MANIFEST_FILE);
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        let locations = Locations {
+            browsers: vec![Browser {
+                name: "Google Chrome",
+                manifest,
+            }],
+            registry_key: None,
+            browser_folders: true,
+        };
+        let exe = dir.path().join("folio-desktop");
+        std::fs::write(&exe, b"").unwrap();
+        (dir, locations, exe)
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(128))]
+
+        /// Anyone who can write to Chrome's folder can change the manifest:
+        /// Folio still reports only the official extension, only for a
+        /// manifest that starts this copy, and removes nothing else.
+        #[test]
+        fn trusts_no_manifest_beyond_the_official_extension(content in content()) {
+            let (_dir, locations, exe) = setup();
+            let path = &locations.browsers[0].manifest;
+            let content = content.bytes(&exe);
+            std::fs::write(path, &content).unwrap();
+            let status = status(&locations, &exe);
+            prop_assert!(status.extension_ids.iter().all(|id| is_official(id)));
+            let ours = serde_json::from_slice::<Manifest>(&content).is_ok_and(|manifest| {
+                manifest.name == HOST_NAME && same_file(&manifest.path, &exe)
+            });
+            prop_assert_eq!(status.registered, ours);
+            if !status.registered {
+                prop_assert!(status.extension_ids.is_empty());
+            }
+            // Disconnecting removes only a manifest of this copy's.
+            unregister(&locations, &exe).unwrap();
+            prop_assert_eq!(path.exists(), !ours);
+        }
+    }
+}

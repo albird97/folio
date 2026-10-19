@@ -2,6 +2,8 @@ pub mod close_guard;
 mod commands;
 mod connect;
 pub mod files;
+#[cfg(test)]
+mod fuzz;
 pub mod incoming;
 pub mod menu;
 pub mod native_host;

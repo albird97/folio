@@ -148,3 +148,71 @@ mod tests {
         assert_eq!(guard.confirm(), None);
     }
 }
+
+/// The webview calls `set_close_guard`, `confirm_close` and `cancel_close`
+/// whenever it likes: whatever the order, a confirmation carries out only a
+/// close or quit Folio itself asked about, and only once.
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::fuzz;
+    use proptest::prelude::*;
+
+    #[derive(Debug, Clone)]
+    enum Call {
+        /// From the webview.
+        SetEnabled(bool),
+        Confirm,
+        Cancel,
+        /// From Folio: the window's close button, Quit.
+        Intercept(CloseIntent),
+    }
+
+    fn call() -> impl Strategy<Value = Call> {
+        let intent = prop::sample::select(vec![CloseIntent::Window, CloseIntent::Quit]);
+        prop_oneof![
+            any::<bool>().prop_map(Call::SetEnabled),
+            Just(Call::Confirm),
+            Just(Call::Cancel),
+            intent.prop_map(Call::Intercept),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(fuzz::config(1024))]
+
+        #[test]
+        fn confirms_only_what_folio_asked_about(calls in prop::collection::vec(call(), 0..40)) {
+            let guard = CloseGuard::default();
+            // What the guard should know: whether work is unsaved, and the
+            // request being asked about.
+            let (mut enabled, mut pending) = (false, None);
+            for call in calls {
+                match call {
+                    Call::SetEnabled(on) => {
+                        guard.set_enabled(on);
+                        enabled = on;
+                        if !on {
+                            pending = None;
+                        }
+                    }
+                    Call::Intercept(intent) => {
+                        prop_assert_eq!(guard.intercept(intent), enabled);
+                        if enabled {
+                            pending = Some(intent);
+                        }
+                    }
+                    Call::Confirm => {
+                        let confirmed = guard.confirm();
+                        prop_assert_eq!(confirmed, pending.take());
+                        if confirmed.is_some() {
+                            enabled = false;
+                        }
+                    }
+                    Call::Cancel => prop_assert_eq!(guard.cancel(), pending.take().is_some()),
+                }
+                prop_assert_eq!(guard.is_enabled(), enabled);
+            }
+        }
+    }
+}

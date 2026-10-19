@@ -61,3 +61,6 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 tempfile = "3"
+# Property tests of everything that parses input from the webview, Chrome or
+# disk. No forking or timeouts: plain, fast runs.
+proptest = { version = "1.12", default-features = false, features = ["std"] }
