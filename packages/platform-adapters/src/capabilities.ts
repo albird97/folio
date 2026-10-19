@@ -126,7 +126,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Open PDFs by drag and drop',
     plannedPhase: 4,
     targets: {
-      macos: unverified('macos', 'Dropped files are granted by the native layer.'),
+      macos: triedOnMac('Dropped files are granted by the native layer.'),
       windows: unverified('windows', 'Dropped files are granted by the native layer.'),
       chrome: full('Drop onto the editor page or the side panel.'),
     },
@@ -449,8 +449,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Save changes as a new PDF (Save as)',
     plannedPhase: 4,
     targets: {
-      macos: unverified(
-        'macos',
+      macos: triedOnMac(
         'Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages.',
       ),
       windows: unverified(
@@ -666,18 +665,17 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Native menus',
     plannedPhase: 4,
     targets: {
-      macos: unverified(
-        'macos',
-        'Folio (app), File (with Open Recent, Save, Save As, Print), Edit, View, Pages and Window menus with the editing, zoom, rotation and page commands.',
+      macos: triedOnMac(
+        'Folio (app, with Check for Updates), File (with Open Recent, Save, Save As, Print), Edit, View, Pages, Tools and Window menus with the editing, zoom, rotation, page and tool commands.',
       ),
       windows: unverified(
         'windows',
-        'File, Edit, View, Pages and Help menus in the window menu bar, with the same commands.',
+        'File, Edit, View, Pages, Tools and Help (with Check for Updates) menus in the window menu bar, with the same commands.',
       ),
       chrome: none('Not applicable.'),
     },
     verification:
-      'Rust unit tests for command forwarding on Linux, macOS and Windows CI runners. No test builds or uses the menus.',
+      'Rust unit tests for command forwarding on Linux, macOS and Windows CI runners; the menus were used in a release build on a Mac.',
     runtimeFeature: 'nativeMenus',
   },
   {
@@ -742,7 +740,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Recent files',
     plannedPhase: 4,
     targets: {
-      macos: unverified('macos', RECENT_NOTE),
+      macos: triedOnMac(RECENT_NOTE),
       windows: unverified('windows', RECENT_NOTE),
       chrome: none('Not applicable: browsers do not let extensions reopen local files later.'),
     },

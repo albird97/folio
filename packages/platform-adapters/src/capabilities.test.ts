@@ -59,10 +59,11 @@ describe('capability matrix', () => {
     const both = ['macos', 'windows'] as const;
     const untested: Record<string, ReadonlyArray<'macos' | 'windows'>> = {
       'open-picker': both,
-      'open-drag-drop': both,
-      // Tried on a Mac (release build, macOS 26): Finder open events, launch arguments.
+      'open-drag-drop': ['windows'],
+      // Tried on a Mac (release build, macOS 26): Finder open events, launch
+      // arguments, drag and drop, the menus and Open Recent.
       'open-file-association': ['windows'],
-      'native-menus': both,
+      'native-menus': ['windows'],
       shortcuts: both,
       'zoom-rotate-view': both,
       'export-pdf': both,
@@ -71,7 +72,7 @@ describe('capability matrix', () => {
       save: ['windows'],
       printing: both,
       recovery: both,
-      'recent-files': both,
+      'recent-files': ['windows'],
       'single-instance': both,
       'native-messaging': both,
     };

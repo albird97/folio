@@ -19,7 +19,7 @@ a note below the table.
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
 | Open a PDF with a file picker | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Extension and desktop UI (web adapter): Playwright e2e. Native dialog: Rust unit tests for granting the chosen files; the dialog itself cannot be automated. |
-| Open PDFs by drag and drop | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Extension and desktop UI (web adapter): Playwright e2e. Native drops: Rust unit tests for grant filtering and the drag-hover signal. |
+| Open PDFs by drag and drop | ✅ Full † | 🟡 Limited † | ✅ Full † | 4 | Extension and desktop UI (web adapter): Playwright e2e. Native drops: Rust unit tests for grant filtering and the drag-hover signal. |
 | Open from Finder / File Explorer (file association) | ✅ Full † | 🟡 Limited † | ⛔ Not supported † | 4 | Launch-argument opening: tauri-driver e2e against the real binary on Linux. Finder events and Explorer registration: compiled in CI only. |
 | Open password-protected PDFs | ✅ Full † | ✅ Full † | ✅ Full † | — | Unit tests with qpdf-encrypted fixtures; extension e2e. |
 | Clear errors for damaged, empty or non-PDF files | ✅ Full | ✅ Full | ✅ Full | — | Unit tests with invalid fixtures; e2e for the error state. |
@@ -31,7 +31,7 @@ a note below the table.
 - **Open a PDF with a file picker (macOS):** Native dialog shown by the Rust layer; the webview only receives tokens and file names. Implemented and built in CI, but not yet verified on a real Mac.
 - **Open a PDF with a file picker (Windows):** Native dialog shown by the Rust layer; the webview only receives tokens and file names. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Open a PDF with a file picker (Chrome):** Picker in the editor page and side panel. The popup hands off to the editor because Chrome closes popups when a file dialog opens.
-- **Open PDFs by drag and drop (macOS):** Dropped files are granted by the native layer. Implemented and built in CI, but not yet verified on a real Mac.
+- **Open PDFs by drag and drop (macOS):** Dropped files are granted by the native layer. Tried in a release build on macOS 26 (Apple silicon).
 - **Open PDFs by drag and drop (Windows):** Dropped files are granted by the native layer. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Open PDFs by drag and drop (Chrome):** Drop onto the editor page or the side panel.
 - **Open from Finder / File Explorer (file association) (macOS):** Handles Finder “Open With” events and files passed at launch; a file opened while Folio runs opens in a new tab of the running window. Folio is registered as an alternate PDF handler. Tried in a release build on macOS 26 (Apple silicon).
@@ -129,7 +129,7 @@ a note below the table.
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
 | Save (write changes back to the opened file) | ✅ Full † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for atomic replacement, changed-on-disk detection, read-only files and permissions; tauri-driver e2e on Linux saves through the real binary and refuses a file changed behind its back. Shared Save logic: unit and e2e tests with the web adapter. |
-| Save changes as a new PDF (Save as) | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Export tests re-open every result with PDF.js and check it with qpdf; e2e (Chromium) reads downloaded files back with pdf-lib. The native save dialog cannot be automated. |
+| Save changes as a new PDF (Save as) | ✅ Full † | 🟡 Limited † | ✅ Full † | 4 | Export tests re-open every result with PDF.js and check it with qpdf; e2e (Chromium) reads downloaded files back with pdf-lib. The native save dialog cannot be automated. |
 | Save a copy of the original PDF | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Extension and desktop UI: e2e compares the SHA-256 of the saved file with the original. Desktop: Rust unit tests for validation, file names and atomic writes; tauri-driver checks that non-PDF data is refused. The native dialog cannot be automated. |
 | Export pages as images | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 7 | Unit tests of page images, ZIP output (the writer is checked against Python’s zipfile) and the Rust content checks; e2e (Chromium) in the desktop UI, the editor and the side panel reads the ZIP and images back. The native save dialog cannot be automated. |
 | Extract text | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 7 | Unit tests on the text fixture and recognized text; e2e (Chromium) copies and saves it from the desktop UI, the editor and the side panel, including a page read by OCR. |
@@ -140,7 +140,7 @@ a note below the table.
 - **Save (write changes back to the opened file) (macOS):** Writes changes back to the file you opened or last saved as, through a temporary file and an atomic replace. If another program changed the file, Folio asks before overwriting it; files that cannot be written fall back to Save As. Tried in a release build on macOS 26 (Apple silicon).
 - **Save (write changes back to the opened file) (Windows):** Writes changes back to the file you opened or last saved as, through a temporary file and an atomic replace. If another program changed the file, Folio asks before overwriting it; files that cannot be written fall back to Save As. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Save (write changes back to the opened file) (Chrome):** Extensions cannot write back to the original file; Download PDF saves a copy instead.
-- **Save changes as a new PDF (Save as) (macOS):** Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages. Implemented and built in CI, but not yet verified on a real Mac.
+- **Save changes as a new PDF (Save as) (macOS):** Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages. Tried in a release build on macOS 26 (Apple silicon).
 - **Save changes as a new PDF (Save as) (Windows):** Writes the edited document through the native save dialog; comments can be kept editable or flattened into the pages. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Save changes as a new PDF (Save as) (Chrome):** Downloads the edited document; comments can be kept editable or flattened into the pages.
 - **Save a copy of the original PDF (macOS):** Native save dialog shown by the Rust layer, which only writes PDF data, through a temporary file. The webview never sees the path. Implemented and built in CI, but not yet verified on a real Mac.
@@ -196,19 +196,19 @@ a note below the table.
 
 | Feature | macOS | Windows | Chrome | Phase | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Native menus | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for command forwarding on Linux, macOS and Windows CI runners. No test builds or uses the menus. |
+| Native menus | ✅ Full † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for command forwarding on Linux, macOS and Windows CI runners; the menus were used in a release build on a Mac. |
 | Keyboard shortcuts | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | Key matching: unit tests. Browser key set: extension e2e. Desktop key set: desktop UI e2e in Chromium. Menu accelerators: Rust unit tests only. |
 | Light, dark and system themes | ✅ Full | ✅ Full | ✅ Full | — | E2E (including axe checks in both themes). |
 | Clipboard | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | E2E (Chromium) reads the clipboard after copying and pastes comments and images. The desktop webviews (WebKit on macOS, WebView2 on Windows) have not run these tests. |
 | Autosave and crash recovery | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 4 | Unit tests restore documents with their history, passwords asked again and damaged records refused; e2e (Chromium) restores after closing the tab and checks that saved work leaves nothing behind. Desktop store: Rust unit tests and tauri-driver e2e on Linux. |
-| Recent files | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for the list (order, limit, removal, damaged lists, no paths); DOM tests for the start screen list with a fake list. |
+| Recent files | ✅ Full † | 🟡 Limited † | ⛔ Not supported † | 4 | Rust unit tests for the list (order, limit, removal, damaged lists, no paths); DOM tests for the start screen list with a fake list. |
 | One running app, remembered window size and position | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 4 | tauri-driver e2e on Linux starts a second copy with a file and checks that the first window opens it. |
 | Automatic updates (opt-in) | 🟡 Limited † | 🟡 Limited † | ⛔ Not supported † | 7 | Rust unit and property tests (the setting, the daily rule, versions, messages, configuration, menu wiring, no updater permission for the page); a locally built signed bundle verified against the configured key. No update has been installed end to end. |
 | Installers | 🟡 Limited † | 🟡 Limited † | 🟡 Limited † | 4 | CI release builds on macOS and Windows runners (see README). |
 | Send documents between the extension and the desktop app | 🟡 Limited † | 🟡 Limited † | ✅ Full † | 5 | Unit tests of the protocol against a scripted host, and property tests that fuzz the host’s framing and messages; e2e (Chromium, Linux) sends documents from the side panel and the editor to the real desktop host binary, with the permission granted at install in a test copy of the extension (Chrome’s prompt cannot be automated). |
 
-- **Native menus (macOS):** Folio (app), File (with Open Recent, Save, Save As, Print), Edit, View, Pages and Window menus with the editing, zoom, rotation and page commands. Implemented and built in CI, but not yet verified on a real Mac.
-- **Native menus (Windows):** File, Edit, View, Pages and Help menus in the window menu bar, with the same commands. Implemented and built in CI, but not yet verified on a real Windows PC.
+- **Native menus (macOS):** Folio (app, with Check for Updates), File (with Open Recent, Save, Save As, Print), Edit, View, Pages, Tools and Window menus with the editing, zoom, rotation, page and tool commands. Tried in a release build on macOS 26 (Apple silicon).
+- **Native menus (Windows):** File, Edit, View, Pages, Tools and Help (with Check for Updates) menus in the window menu bar, with the same commands. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Native menus (Chrome):** Not applicable.
 - **Keyboard shortcuts (macOS):** Open, Save, Save as, Save a copy, Print, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, single keys for the drawing tools, rotate (⌘R/⌘L) and Close Window. Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Mac.
 - **Keyboard shortcuts (Windows):** Open, Save, Save as, Save a copy, Print, undo and redo, close and switch documents, sidebar and Properties panel, zoom in/out/actual size, go to page, find next/previous, single keys for the drawing tools, rotate (Ctrl+R/Ctrl+L). Switching the theme has no shortcut. Implemented and built in CI, but not yet verified on a real Windows PC.
@@ -219,7 +219,7 @@ a note below the table.
 - **Autosave and crash recovery (macOS):** Unsaved changes are kept in Folio’s data folder two seconds after each change and offered when Folio starts after a crash. Saving, closing or discarding deletes them. Implemented and built in CI, but not yet verified on a real Mac.
 - **Autosave and crash recovery (Windows):** Unsaved changes are kept in Folio’s data folder two seconds after each change and offered when Folio starts after a crash. Saving, closing or discarding deletes them. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Autosave and crash recovery (Chrome):** Unsaved changes are kept in the extension’s storage on this device two seconds after each change and offered when the editor opens again. Saving, closing or discarding deletes them; documents open in another editor tab are not offered.
-- **Recent files (macOS):** Start screen list and File › Open Recent; only names reach the UI, and files that moved are reported. Implemented and built in CI, but not yet verified on a real Mac.
+- **Recent files (macOS):** Start screen list and File › Open Recent; only names reach the UI, and files that moved are reported. Tried in a release build on macOS 26 (Apple silicon).
 - **Recent files (Windows):** Start screen list and File › Open Recent; only names reach the UI, and files that moved are reported. Implemented and built in CI, but not yet verified on a real Windows PC.
 - **Recent files (Chrome):** Not applicable: browsers do not let extensions reopen local files later.
 - **One running app, remembered window size and position (macOS):** Finder sends files to the running app; the window’s size and position are restored. Implemented and built in CI, but not yet verified on a real Mac.
