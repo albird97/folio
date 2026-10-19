@@ -1,4 +1,5 @@
 import {
+  normalizeRect,
   primarySource,
   type FormField,
   type FormFieldId,
@@ -405,6 +406,17 @@ function FormLayerView({ doc, page, position, box, viewRotation, handle, tool }:
     () => new Map(Object.values(formFields ?? {}).map((field) => [field.name, field])),
     [formFields],
   );
+  // Where signatures from the signature tool are on this page (their centres).
+  const annotations = model?.annotations;
+  const signatures = useMemo(
+    () =>
+      Object.values(annotations ?? {}).flatMap((annotation) => {
+        if (annotation.kind !== 'signature' || annotation.pageId !== page.id) return [];
+        const rect = normalizeRect(annotation.rect);
+        return [{ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }];
+      }),
+    [annotations, page.id],
+  );
 
   const widgets =
     loaded && loaded.handle === handle && loaded.sourceIndex === sourceIndex
@@ -463,8 +475,13 @@ function FormLayerView({ doc, page, position, box, viewRotation, handle, tool }:
       case 'choice':
         controls.push(<ChoiceControl key={widget.id} {...common} widget={widget} />);
         break;
-      case 'signature':
-        if (!editable) break;
+      case 'signature': {
+        // A field signed with the signature tool shows the signature instead.
+        const { x, y, width, height } = widget.rect;
+        const signed = signatures.some(
+          (point) => point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height,
+        );
+        if (!editable || signed) break;
         controls.push(
           <button
             key={widget.id}
@@ -489,6 +506,7 @@ function FormLayerView({ doc, page, position, box, viewRotation, handle, tool }:
           </button>,
         );
         break;
+      }
     }
   }
 
@@ -521,6 +539,7 @@ function sameFields(a: PageOverlayProps, b: PageOverlayProps): boolean {
     a.doc.info === b.doc.info &&
     a.doc.permissions === b.doc.permissions &&
     a.doc.editor?.model.formFields === b.doc.editor?.model.formFields &&
+    a.doc.editor?.model.annotations === b.doc.editor?.model.annotations &&
     a.doc.editor?.model.sources === b.doc.editor?.model.sources
   );
 }

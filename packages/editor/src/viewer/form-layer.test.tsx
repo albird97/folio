@@ -1,4 +1,9 @@
-import { undoLabel, type FormFieldDescriptor, type SourceId } from '@folio/document-model';
+import {
+  newAnnotationId,
+  undoLabel,
+  type FormFieldDescriptor,
+  type SourceId,
+} from '@folio/document-model';
 import type { FormWidget, PdfDocumentInfo, PdfEngine } from '@folio/pdf-core';
 import { fakeDocumentHandle } from '@folio/pdf-core/testing';
 import { createMemoryPlatformAdapter, memoryFile } from '@folio/platform-adapters';
@@ -243,15 +248,44 @@ describe('form layer', () => {
     expect(((await screen.findByLabelText('pin')) as HTMLInputElement).value).toBe('1234');
   });
 
-  it('opens the signature tool for a signature field', async () => {
+  it('opens the signature tool for a signature field, until it is signed', async () => {
     const { ui, key, workspace } = await setup();
     fireEvent.click(screen.getByRole('button', { name: 'Sign signature' }));
     const page = workspace.getState().documents[0]!.editor!.model.pages[0]!;
+    const rect = WIDGETS[10]!.rect;
     expect(ui.getState().dialog).toEqual({
       kind: 'signature',
       docKey: key,
-      field: { pageId: page.id, rect: WIDGETS[10]!.rect },
+      field: { pageId: page.id, rect },
     });
+    // A signature placed in the field shows instead of the button.
+    const asset = await workspace
+      .getState()
+      .registerImage(key, new Uint8Array([137, 80, 78, 71]), 'image/png');
+    act(() => {
+      workspace.getState().addAnnotations(
+        key,
+        [
+          {
+            id: newAnnotationId(),
+            pageId: page.id,
+            author: '',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            modifiedAt: '2026-01-01T00:00:00.000Z',
+            color: '#000000',
+            opacity: 1,
+            kind: 'signature',
+            rect: { x: rect.x + 10, y: rect.y + 4, width: 120, height: 16 },
+            assetId: asset!.id,
+            rotation: 0,
+          },
+        ],
+        { label: 'Add signature', assets: [asset!] },
+      );
+    });
+    expect(screen.queryByRole('button', { name: 'Sign signature' })).toBeNull();
+    act(() => workspace.getState().undo(key));
+    expect(screen.getByRole('button', { name: 'Sign signature' })).toBeTruthy();
   });
 
   it('shows fields without changing them when the document does not allow filling them in', async () => {
