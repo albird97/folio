@@ -397,6 +397,7 @@ pub fn run() {
             commands::release_file,
             commands::take_pending_files,
             commands::save_pdf_as,
+            commands::save_file_as,
             commands::write_granted_file,
             commands::print_window,
             commands::app_info,

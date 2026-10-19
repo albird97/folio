@@ -97,6 +97,7 @@ export const MENU_COMMANDS: ReadonlySet<AppCommand> = new Set(
 const HEADERS = {
   name: 'x-folio-name',
   keepAccess: 'x-folio-keep-access',
+  kind: 'x-folio-kind',
   token: 'x-folio-token',
   expectedSha256: 'x-folio-expected-sha256',
   overwrite: 'x-folio-overwrite',
@@ -437,14 +438,16 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
     setWindowTitle(title) {
       void window.setTitle(title).catch(() => undefined);
     },
-    async saveFileAs({ suggestedName, bytes, keepAccess }) {
+    async saveFileAs({ suggestedName, bytes, kind = 'pdf', keepAccess }) {
       // The bytes travel as the raw request body; the name as a header.
       const headers: Record<string, string> = {
         [HEADERS.name]: headerText(suggestedName),
       };
-      if (keepAccess) headers[HEADERS.keepAccess] = '1';
+      // Other kinds of files (exports) are written once and never granted.
+      if (kind !== 'pdf') headers[HEADERS.kind] = kind;
+      else if (keepAccess) headers[HEADERS.keepAccess] = '1';
       const saved = await call<SavedFile | null>(
-        'save_pdf_as',
+        kind === 'pdf' ? 'save_pdf_as' : 'save_file_as',
         bytes,
         { headers },
         'The file could not be saved.',

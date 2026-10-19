@@ -203,6 +203,45 @@ describe('desktop platform adapter', () => {
       );
     });
 
+    it('saves images, archives and text through their own command, without access', async () => {
+      const adapter = await createTauriPlatformAdapter();
+      const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      tauri.responses.set('save_file_as', { name: 'Report-page-1.png', token: null });
+      expect(
+        await adapter.saveFileAs({
+          suggestedName: 'Report-page-1.png',
+          bytes: png,
+          kind: 'png',
+          // Ignored: only PDFs are kept for later saves.
+          keepAccess: true,
+        }),
+      ).toEqual({ status: 'saved', name: 'Report-page-1.png', handle: null });
+      const call = lastCall('save_file_as');
+      expect(call.args).toBe(png);
+      expect(call.options?.headers).toEqual({
+        'x-folio-name': 'Report-page-1.png',
+        'x-folio-kind': 'png',
+      });
+      for (const kind of ['jpeg', 'zip', 'text'] as const) {
+        await adapter.saveFileAs({ suggestedName: 'Report (text)', bytes, kind });
+        expect(lastCall('save_file_as').options?.headers).toEqual({
+          'x-folio-name': 'Report%20(text)',
+          'x-folio-kind': kind,
+        });
+      }
+      tauri.responses.set('save_file_as', null);
+      expect(await adapter.saveFileAs({ suggestedName: 'a.txt', bytes, kind: 'text' })).toEqual({
+        status: 'cancelled',
+      });
+      tauri.responses.set(
+        'save_file_as',
+        rejectWith('wrong-content', 'The data is not what the file is meant to contain.'),
+      );
+      await expect(
+        adapter.saveFileAs({ suggestedName: 'a.zip', bytes, kind: 'zip' }),
+      ).rejects.toThrow('The data is not what the file is meant to contain.');
+    });
+
     it('encodes names with unpaired surrogates instead of failing', async () => {
       const adapter = await createTauriPlatformAdapter();
       tauri.responses.set('save_pdf_as', { name: 'a.pdf', token: null });

@@ -344,7 +344,7 @@ try {
     await waitFor(`return document.querySelector('[role="search"]') === null`);
   });
 
-  await test('"Save a copy" refuses anything but PDF data before showing a dialog', async () => {
+  await test('saving refuses data that is not what it claims before showing a dialog', async () => {
     const notPdf = await runAsync(`
       const done = arguments[arguments.length - 1];
       window.__TAURI_INTERNALS__.invoke('save_pdf_as', new Uint8Array([35, 33, 47, 98, 105, 110]), {
@@ -358,6 +358,21 @@ try {
         .then(() => done('resolved'), (e) => done(e));
     `);
     assert.equal(notRaw.code, 'invalid-request');
+    // Exports are checked against the kind they claim, and PDFs keep their command.
+    const notPng = await runAsync(`
+      const done = arguments[arguments.length - 1];
+      window.__TAURI_INTERNALS__.invoke('save_file_as', new Uint8Array([35, 33, 47, 98, 105, 110]), {
+        headers: { 'x-folio-name': 'page.png', 'x-folio-kind': 'png' },
+      }).then(() => done('resolved'), (e) => done(e));
+    `);
+    assert.equal(notPng.code, 'wrong-content');
+    const pdfKind = await runAsync(`
+      const done = arguments[arguments.length - 1];
+      window.__TAURI_INTERNALS__.invoke('save_file_as', new TextEncoder().encode('%PDF-1.7'), {
+        headers: { 'x-folio-name': 'a.pdf', 'x-folio-kind': 'pdf' },
+      }).then(() => done('resolved'), (e) => done(e));
+    `);
+    assert.equal(pdfKind.code, 'invalid-request');
   });
 
   await test('the content security policy blocks nothing Folio needs', async () => {

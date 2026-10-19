@@ -21,6 +21,8 @@ pub const TOKEN_HEADER: &str = "x-folio-token";
 pub const EXPECTED_SHA256_HEADER: &str = "x-folio-expected-sha256";
 /// `1` writes even though the file changed on disk (the user confirmed).
 pub const OVERWRITE_HEADER: &str = "x-folio-overwrite";
+/// The kind of file `save_file_as` writes (see [`ExportKind::parse`]).
+pub const KIND_HEADER: &str = "x-folio-kind";
 const FALLBACK_NAME: &str = "Document";
 /// File systems count names in bytes (usually 255); this leaves room. Also
 /// the limit for other names Folio shows, such as recovery titles.
@@ -30,6 +32,8 @@ pub const MAX_NAME_BYTES: usize = 200;
 pub enum SaveError {
     #[error("Only PDF data can be saved.")]
     NotPdf,
+    #[error("The data is not what the file is meant to contain.")]
+    WrongContent,
     #[error("This file is larger than Folio can save.")]
     TooLarge,
     #[error("The request was not understood.")]
@@ -51,6 +55,7 @@ impl SaveError {
     pub fn code(&self) -> &'static str {
         match self {
             SaveError::NotPdf => "not-pdf",
+            SaveError::WrongContent => "wrong-content",
             SaveError::TooLarge => "too-large",
             SaveError::InvalidRequest => "invalid-request",
             SaveError::WriteFailed => "write-failed",
@@ -85,6 +90,104 @@ pub fn check_pdf(bytes: &[u8]) -> Result<(), SaveError> {
 pub fn suggested_file_name(header: Option<&str>) -> String {
     let decoded = header.map(decode_header).unwrap_or_default();
     sanitize_file_name(&decoded)
+}
+
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+const ZIP_LOCAL_FILE: &[u8] = b"PK\x03\x04";
+const ZIP_END_OF_DIRECTORY: &[u8] = b"PK\x05\x06";
+/// An archive without files is only its end-of-central-directory record.
+const EMPTY_ZIP_BYTES: usize = 22;
+
+/// Files Folio exports that are not PDFs: page images, a ZIP archive of
+/// them, and text. PDFs go through `save_pdf_as`, which can also grant them
+/// and lists them among recent files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportKind {
+    Png,
+    Jpeg,
+    Zip,
+    Text,
+}
+
+impl ExportKind {
+    /// The `x-folio-kind` header: `png`, `jpeg`, `zip` or `text`.
+    pub fn parse(value: Option<&str>) -> Result<Self, SaveError> {
+        match value {
+            Some("png") => Ok(ExportKind::Png),
+            Some("jpeg") => Ok(ExportKind::Jpeg),
+            Some("zip") => Ok(ExportKind::Zip),
+            Some("text") => Ok(ExportKind::Text),
+            _ => Err(SaveError::InvalidRequest),
+        }
+    }
+
+    /// The extensions a file of this kind may have; the first is added to
+    /// names that end in none of them.
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            ExportKind::Png => &["png"],
+            ExportKind::Jpeg => &["jpg", "jpeg"],
+            ExportKind::Zip => &["zip"],
+            ExportKind::Text => &["txt"],
+        }
+    }
+
+    /// The save dialog's file type.
+    pub fn filter_name(self) -> &'static str {
+        match self {
+            ExportKind::Png => "PNG image",
+            ExportKind::Jpeg => "JPEG image",
+            ExportKind::Zip => "ZIP archive",
+            ExportKind::Text => "Plain text",
+        }
+    }
+
+    /// The save dialog's title.
+    pub fn dialog_title(self) -> &'static str {
+        match self {
+            ExportKind::Png | ExportKind::Jpeg => "Save Image",
+            ExportKind::Zip => "Save Archive",
+            ExportKind::Text => "Save Text",
+        }
+    }
+
+    /// Accepts only data of this kind within the size limit, so the save
+    /// dialog cannot be used to write arbitrary files (such as programs or
+    /// scripts): a PNG signature and header, a complete JPEG (start and end
+    /// of image), a ZIP archive (a file entry, or an empty archive) or UTF-8
+    /// text without NUL characters.
+    pub fn check(self, bytes: &[u8]) -> Result<(), SaveError> {
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return Err(SaveError::TooLarge);
+        }
+        let valid = match self {
+            ExportKind::Png => {
+                bytes.starts_with(PNG_SIGNATURE) && bytes.get(12..16) == Some(b"IHDR".as_slice())
+            }
+            ExportKind::Jpeg => {
+                bytes.len() >= 4
+                    && bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+                    && bytes.ends_with(&[0xFF, 0xD9])
+            }
+            ExportKind::Zip => {
+                bytes.starts_with(ZIP_LOCAL_FILE)
+                    || (bytes.len() == EMPTY_ZIP_BYTES && bytes.starts_with(ZIP_END_OF_DIRECTORY))
+            }
+            ExportKind::Text => std::str::from_utf8(bytes).is_ok() && !bytes.contains(&0),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(SaveError::WrongContent)
+        }
+    }
+
+    /// The name to propose in the dialog, like [`suggested_file_name`] but
+    /// ending in one of this kind's extensions.
+    pub fn suggested_file_name(self, header: Option<&str>) -> String {
+        let decoded = header.map(decode_header).unwrap_or_default();
+        sanitize_file_name_as(&decoded, self.extensions())
+    }
 }
 
 /// Decodes a percent-encoded header value (headers are ASCII).
@@ -169,18 +272,25 @@ fn truncate_to_bytes(text: &str, max: usize) -> &str {
 /// file systems reject or invisible formatting characters, ending in `.pdf`
 /// and at most 200 bytes long (UTF-8).
 pub fn sanitize_file_name(name: &str) -> String {
+    sanitize_file_name_as(name, &["pdf"])
+}
+
+/// [`sanitize_file_name`] for files ending in one of `extensions` (ASCII,
+/// without the dot); the first is added to names that end in none of them.
+pub fn sanitize_file_name_as(name: &str, extensions: &[&str]) -> String {
     let last = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let cleaned: String = visible_characters(last)
         .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
         .collect();
     let trimmed = cleaned.trim().trim_matches('.').trim();
     // Keep the extension (and its case) when there is one.
-    let (stem, extension) = match trimmed.len().checked_sub(4) {
-        Some(at) if trimmed.is_char_boundary(at) && trimmed[at..].eq_ignore_ascii_case(".pdf") => {
-            (&trimmed[..at], &trimmed[at..])
-        }
-        _ => (trimmed, ".pdf"),
-    };
+    let kept = extensions.iter().find_map(|extension| {
+        let at = trimmed.len().checked_sub(extension.len() + 1)?;
+        let ending = trimmed.get(at..)?;
+        (ending.starts_with('.') && ending[1..].eq_ignore_ascii_case(extension))
+            .then(|| (&trimmed[..at], ending.to_owned()))
+    });
+    let (stem, extension) = kept.unwrap_or_else(|| (trimmed, format!(".{}", extensions[0])));
     let stem = truncate_to_bytes(stem, MAX_NAME_BYTES - extension.len());
     // Windows refuses names that end in a dot or a space.
     let stem = stem.trim_end_matches(['.', ' ']).trim_end();
@@ -792,6 +902,121 @@ mod tests {
         let mut late = vec![b' '; 1100];
         late.extend_from_slice(PDF);
         assert_eq!(check_pdf(&late), Err(SaveError::NotPdf));
+    }
+
+    #[test]
+    fn reads_the_kind_of_an_export() {
+        assert_eq!(ExportKind::parse(Some("png")), Ok(ExportKind::Png));
+        assert_eq!(ExportKind::parse(Some("jpeg")), Ok(ExportKind::Jpeg));
+        assert_eq!(ExportKind::parse(Some("zip")), Ok(ExportKind::Zip));
+        assert_eq!(ExportKind::parse(Some("text")), Ok(ExportKind::Text));
+        // PDFs have their own command; anything else is not understood.
+        for other in [Some("pdf"), Some("PNG"), Some("exe"), Some(""), None] {
+            assert_eq!(ExportKind::parse(other), Err(SaveError::InvalidRequest));
+        }
+    }
+
+    #[test]
+    fn accepts_png_images_only_as_png() {
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0";
+        assert_eq!(ExportKind::Png.check(png), Ok(()));
+        assert_eq!(
+            ExportKind::Png.check(b"\x89PNG\r\n\x1a\n"),
+            Err(SaveError::WrongContent)
+        );
+        assert_eq!(ExportKind::Png.check(PDF), Err(SaveError::WrongContent));
+        assert_eq!(ExportKind::Png.check(b""), Err(SaveError::WrongContent));
+        assert_eq!(ExportKind::Jpeg.check(png), Err(SaveError::WrongContent));
+    }
+
+    #[test]
+    fn accepts_complete_jpeg_images_only_as_jpeg() {
+        let jpeg = b"\xFF\xD8\xFF\xE0\0\x10JFIF\0\x01\x01\0\0\x01\0\x01\0\0\xFF\xD9";
+        assert_eq!(ExportKind::Jpeg.check(jpeg), Ok(()));
+        // Cut short: no end of image.
+        assert_eq!(
+            ExportKind::Jpeg.check(&jpeg[..jpeg.len() - 2]),
+            Err(SaveError::WrongContent)
+        );
+        assert_eq!(
+            ExportKind::Jpeg.check(b"\xFF\xD8\xFF\xD9"),
+            Ok(()),
+            "the smallest image that starts and ends"
+        );
+        assert_eq!(
+            ExportKind::Jpeg.check(b"\xFF\xD9"),
+            Err(SaveError::WrongContent)
+        );
+        assert_eq!(
+            ExportKind::Jpeg.check(b"MZ\x90\0\xFF\xD9"),
+            Err(SaveError::WrongContent)
+        );
+    }
+
+    #[test]
+    fn accepts_zip_archives_only_as_zip() {
+        assert_eq!(ExportKind::Zip.check(b"PK\x03\x04\x14\0\0\x08\0\0"), Ok(()));
+        let mut empty = b"PK\x05\x06".to_vec();
+        empty.resize(22, 0);
+        assert_eq!(ExportKind::Zip.check(&empty), Ok(()));
+        // An end record with something after it is not an empty archive.
+        empty.push(0);
+        assert_eq!(ExportKind::Zip.check(&empty), Err(SaveError::WrongContent));
+        assert_eq!(
+            ExportKind::Zip.check(b"MZ\x90\0PK\x03\x04"),
+            Err(SaveError::WrongContent)
+        );
+        assert_eq!(ExportKind::Zip.check(b""), Err(SaveError::WrongContent));
+    }
+
+    #[test]
+    fn accepts_utf8_text_without_nul_characters_only_as_text() {
+        assert_eq!(
+            ExportKind::Text.check("Résumé — page 1\n\n日本語\n".as_bytes()),
+            Ok(())
+        );
+        assert_eq!(ExportKind::Text.check(b""), Ok(()));
+        assert_eq!(
+            ExportKind::Text.check(b"caf\xE9"),
+            Err(SaveError::WrongContent)
+        );
+        assert_eq!(
+            ExportKind::Text.check(b"MZ\0\0binary"),
+            Err(SaveError::WrongContent)
+        );
+    }
+
+    #[test]
+    fn proposes_names_with_the_extension_of_the_export() {
+        let name = |kind: ExportKind, header: &str| kind.suggested_file_name(Some(header));
+        assert_eq!(
+            name(ExportKind::Png, "Report-page-01.png"),
+            "Report-page-01.png"
+        );
+        assert_eq!(
+            name(ExportKind::Png, "Report-page-01"),
+            "Report-page-01.png"
+        );
+        assert_eq!(name(ExportKind::Jpeg, "Photo.JPEG"), "Photo.JPEG");
+        assert_eq!(name(ExportKind::Jpeg, "Photo.jpg"), "Photo.jpg");
+        assert_eq!(name(ExportKind::Jpeg, "Photo"), "Photo.jpg");
+        assert_eq!(
+            name(ExportKind::Zip, "Report%20(images)"),
+            "Report (images).zip"
+        );
+        assert_eq!(
+            name(ExportKind::Text, "Report%20(text).txt"),
+            "Report (text).txt"
+        );
+        // The data decides the extension, not the name.
+        assert_eq!(name(ExportKind::Text, "run.sh"), "run.sh.txt");
+        assert_eq!(name(ExportKind::Zip, "..%2F..%2Fevil.exe"), "evil.exe.zip");
+        assert_eq!(name(ExportKind::Png, "a.pdf"), "a.pdf.png");
+        assert_eq!(name(ExportKind::Text, "..."), "Document.txt");
+        assert_eq!(ExportKind::Text.suggested_file_name(None), "Document.txt");
+        let long = name(ExportKind::Jpeg, &"x".repeat(500));
+        assert_eq!(long.len(), 200);
+        assert!(long.ends_with(".jpg"));
     }
 
     #[test]

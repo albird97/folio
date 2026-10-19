@@ -6,6 +6,7 @@ import type {
   KeyValueStorage,
   PlatformAdapter,
   RuntimeFeatures,
+  SaveFileKind,
 } from './types';
 
 export function createMemoryStorage(initial: Record<string, unknown> = {}): KeyValueStorage & {
@@ -42,7 +43,7 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
   const hover = new Channel<boolean>();
   const picks: IncomingFile[][] = [];
   const clipboard: string[] = [];
-  const saved: Array<{ name: string; bytes: Uint8Array }> = [];
+  const saved: Array<{ name: string; bytes: Uint8Array; kind: SaveFileKind }> = [];
   const written: Array<{ handle: string; bytes: Uint8Array }> = [];
   const titles: string[] = [];
   const unsaved: boolean[] = [];
@@ -63,12 +64,12 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
     setWindowTitle: (title) => {
       titles.push(title);
     },
-    saveFileAs: async ({ suggestedName, bytes, keepAccess }) => {
-      saved.push({ name: suggestedName, bytes: bytes.slice() });
+    saveFileAs: async ({ suggestedName, bytes, kind = 'pdf', keepAccess }) => {
+      saved.push({ name: suggestedName, bytes: bytes.slice(), kind });
       return {
         status: 'saved',
         name: suggestedName,
-        handle: keepAccess ? `memory-${saved.length}` : null,
+        handle: keepAccess && kind === 'pdf' ? `memory-${saved.length}` : null,
       };
     },
     writeFile: async ({ handle, bytes }) => {

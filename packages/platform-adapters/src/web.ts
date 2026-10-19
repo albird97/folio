@@ -8,6 +8,7 @@ import type {
   RecoveryStore,
   RuntimeFeatures,
   RuntimePlatform,
+  SaveFileKind,
   Unsubscribe,
 } from './types';
 
@@ -72,14 +73,16 @@ export function downloadFile(name: string, data: Blob, doc: Document = globalThi
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/** Downloads bytes as a file of the given kind (with its MIME type). */
 export function downloadBytes(
   name: string,
   bytes: Uint8Array,
+  kind: SaveFileKind = 'pdf',
   doc: Document = globalThis.document,
 ): void {
   downloadFile(
     name,
-    new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }),
+    new Blob([bytes as Uint8Array<ArrayBuffer>], { type: SAVE_FILE_TYPES[kind].mimeType }),
     doc,
   );
 }
@@ -97,6 +100,25 @@ export function safeFileName(name: string, extension: string): string {
     .slice(0, 200);
   const base = cleaned.length > 0 ? cleaned : 'Document';
   return base.toLowerCase().endsWith(`.${extension}`) ? base : `${base}.${extension}`;
+}
+
+/** The extension and MIME type of each kind of file Folio saves. */
+export const SAVE_FILE_TYPES: Readonly<
+  Record<SaveFileKind, { extension: string; mimeType: string }>
+> = {
+  pdf: { extension: 'pdf', mimeType: 'application/pdf' },
+  png: { extension: 'png', mimeType: 'image/png' },
+  jpeg: { extension: 'jpg', mimeType: 'image/jpeg' },
+  zip: { extension: 'zip', mimeType: 'application/zip' },
+  text: { extension: 'txt', mimeType: 'text/plain;charset=utf-8' },
+};
+
+/** A safe download name for a file of this kind, ending in its extension. */
+export function fileNameFor(kind: SaveFileKind, name: string): string {
+  if (kind === 'pdf') return pdfFileName(name);
+  // Both spellings are JPEG's; only a name with neither gets ".jpg".
+  if (kind === 'jpeg' && /\.jpeg$/i.test(name.trim())) return safeFileName(name, 'jpeg');
+  return safeFileName(name, SAVE_FILE_TYPES[kind].extension);
 }
 
 /** Opens a hidden `<input type="file">`. Resolves to [] when the user cancels. */
@@ -250,9 +272,9 @@ export function createWebPlatformAdapter(options: WebAdapterOptions = {}): Platf
     setWindowTitle(title) {
       globalThis.document.title = title;
     },
-    async saveFileAs({ suggestedName, bytes }) {
-      const name = pdfFileName(suggestedName);
-      downloadBytes(name, bytes);
+    async saveFileAs({ suggestedName, bytes, kind = 'pdf' }) {
+      const name = fileNameFor(kind, suggestedName);
+      downloadBytes(name, bytes, kind);
       return { status: 'downloaded', name };
     },
     async writeFile() {

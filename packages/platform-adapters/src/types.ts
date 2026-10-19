@@ -104,13 +104,22 @@ export const APP_COMMANDS: readonly AppCommand[] = [
   'ask-ai',
 ];
 
+/**
+ * What a saved file contains: a PDF, a page image, a ZIP archive of several
+ * files or plain text (UTF-8). Platforms check that the bytes are of this
+ * kind and give the file the matching extension.
+ */
+export type SaveFileKind = 'pdf' | 'png' | 'jpeg' | 'zip' | 'text';
+
 export interface SaveFileRequest {
   /** File name to propose, e.g. "Report.pdf". */
   suggestedName: string;
   bytes: Uint8Array;
+  /** Default: 'pdf'. */
+  kind?: SaveFileKind;
   /**
    * Keep write access to the chosen file so later saves can update it (Save
-   * As). Platforms that cannot (browser downloads) ignore it.
+   * As). Only for PDFs; platforms that cannot (browser downloads) ignore it.
    */
   keepAccess?: boolean;
 }
@@ -291,7 +300,10 @@ export interface PlatformAdapter {
   onNativeDragHover(listener: (hovering: boolean) => void): Unsubscribe;
   writeClipboardText(text: string): Promise<void>;
   setWindowTitle(title: string): void;
-  /** Saves a new PDF file (never overwrites the open document without the user choosing it). */
+  /**
+   * Saves a new file, a PDF unless `kind` says otherwise (never overwrites the
+   * open document without the user choosing it).
+   */
   saveFileAs(request: SaveFileRequest): Promise<SaveFileResult>;
   /** Overwrites a local file the user opened or saved (only after they chose Save). */
   writeFile(request: WriteFileRequest): Promise<WriteFileResult>;
