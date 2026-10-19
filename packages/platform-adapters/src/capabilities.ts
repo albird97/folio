@@ -72,6 +72,16 @@ const NATIVE_MESSAGING_NOTE =
   'Receives documents from the Chrome extension after File › Connect to Chrome… and asks before opening each one; declined documents are deleted.';
 const CLIPBOARD_NOTE =
   'Selected page text, document property values, and comments (copy, cut, paste, also between documents); images on the clipboard paste as added images.';
+const FORMS_NOTE =
+  'Text (multi-line, comb, password), check boxes, radio buttons, drop-down and list boxes filled in on the page, with undo, crash recovery and printing; values saved as the form’s own (other readers show them) or flattened into the pages. XFA forms are shown as saved but cannot be filled in; form scripts (calculations, formatting) do not run.';
+const SIGNATURES_NOTE =
+  'Draw (mouse, trackpad, pen or touch), type in a bundled handwriting font, or use a PNG, JPEG or WebP picture with its paper made transparent; placed with a click (Enter: middle of the page) or into a signature field, then moved and resized like images. A picture of a signature, not a digital (certificate) signature. Optionally remembered (up to five)';
+const OCR_NOTE =
+  'Tools › Recognize text (OCR): English, Indonesian and Chinese (Simplified, Traditional), read on this device with the bundled Tesseract engine; nothing is downloaded or uploaded. Recognized text can be searched, selected, copied and highlighted, and is saved into the PDF as invisible text. Pages must show their text upright.';
+const STAMPS_NOTE =
+  'Page numbers (“1”, “Page 1”, “Page 1 of 12”, “1 / 12” or custom text with {page} and {total}) at the top or bottom, left, centre or right, and a text watermark at any of nine positions, angle and opacity, over or under the content, on all pages or a range. They show on the pages straight away, can be undone, and are drawn into the pages when saving or printing, in the standard PDF fonts (characters those fonts lack are saved as “?” and the user is told), marked as artifacts for assistive technology. This adds new content; it does not edit the pages’ own text.';
+const UPDATES_NOTE =
+  'Check for Updates…, and Check for Updates Automatically (off by default; at most once a day). Updates must be signed with Folio’s key for the version announced; unsaved work is asked about before Folio restarts. The feed is this repository’s GitHub releases, which users cannot reach while the repository is private.';
 const RECENT_NOTE =
   'Start screen list and File › Open Recent; only names reach the UI, and files that moved are reported.';
 
@@ -253,7 +263,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     plannedPhase: null,
     targets: all(
       full(
-        'Whole-document search with highlights, a results list, match case and whole words; ignores accents and finds words drawn in separate pieces. Scanned pages without a text layer cannot be searched until OCR arrives (Phase 6).',
+        'Whole-document search with highlights, a results list, match case and whole words; ignores accents and finds words drawn in separate pieces. Scanned pages are searchable after Tools › Recognize text (OCR).',
       ),
     ),
     verification:
@@ -400,9 +410,10 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'watermarks',
     area: 'Editing',
     feature: 'Page numbers and watermarks',
-    plannedPhase: 6,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: all(full(STAMPS_NOTE)),
+    verification:
+      'Layout unit tests (every rotation, position and user unit, shrinking to fit); export tests re-open results with PDF.js (text where the layout puts it, order under and over the content, extracts, duplicated and blank pages, protected files) and check them with qpdf; e2e in Chromium for the desktop UI and the extension, reading saved files back, with axe and a pixel check of the under-the-content preview.',
   },
   // Saving & export
   {
@@ -530,25 +541,36 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'forms',
     area: 'Advanced tools',
     feature: 'Fill forms',
-    plannedPhase: 6,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: all(full(FORMS_NOTE)),
+    verification:
+      'Unit tests of the engine (saved values re-read with PDF.js and pdf-lib, encryption kept), the exporter (flattening; results re-opened with PDF.js and checked with qpdf), the store and the form layer; e2e in Chromium for the desktop UI and the extension, reading saved files back with pdf-lib; axe in both themes.',
   },
   {
     id: 'signatures',
     area: 'Advanced tools',
     feature: 'Place signatures',
-    plannedPhase: 6,
-    targets: all(none()),
-    verification: '—',
+    plannedPhase: null,
+    targets: {
+      macos: full(`${SIGNATURES_NOTE} in the app’s settings on this computer.`),
+      windows: full(`${SIGNATURES_NOTE} in the app’s settings on this computer.`),
+      chrome: full(`${SIGNATURES_NOTE} in the extension’s local storage on this computer.`),
+    },
+    verification:
+      'Unit tests for cropping, background removal, stored-signature checks and placement geometry; e2e (Chromium) in the desktop UI (draw, type, import, remember across a reload, a signature field, a turned page, copying, permissions, axe in both themes) reading saved files back with pdf-lib, and in the extension (a typed signature with the bundled font under the extension’s CSP).',
   },
   {
     id: 'ocr',
     area: 'Advanced tools',
-    feature: 'OCR',
-    plannedPhase: 6,
-    targets: all(none('Planned as a bundled, on-device engine; no cloud OCR by default.')),
-    verification: '—',
+    feature: 'Recognize text in scanned pages (OCR)',
+    plannedPhase: 7,
+    targets: {
+      macos: unverified('macos', OCR_NOTE),
+      windows: unverified('windows', OCR_NOTE),
+      chrome: full(OCR_NOTE),
+    },
+    verification:
+      'Unit tests: data validation, pixel↔page mapping at every rotation with a crop box, real Tesseract in Node on a scanned fixture, exporter output re-opened with PDF.js and checked with qpdf (rendering unchanged). E2E (Chromium): search, highlight, copy, save and re-open, undo and axe in the desktop UI; the extension editor with no CSP violations or network requests.',
   },
   {
     id: 'password-protect',
@@ -679,14 +701,18 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   {
     id: 'auto-update',
     area: 'App and platform',
-    feature: 'Automatic updates',
+    feature: 'Automatic updates (opt-in)',
     plannedPhase: 7,
     targets: {
-      macos: none('Requires an updater signing key and a release feed.'),
-      windows: none('Requires an updater signing key and a release feed.'),
-      chrome: none('Will be handled by the Chrome Web Store once published.'),
+      macos: unverified('macos', `Folio › ${UPDATES_NOTE}`),
+      windows: unverified(
+        'windows',
+        `Help › ${UPDATES_NOTE} Installs through the per-user NSIS installer.`,
+      ),
+      chrome: none('Handled by the Chrome Web Store once published.'),
     },
-    verification: '—',
+    verification:
+      'Rust unit and property tests (the setting, the daily rule, versions, messages, configuration, menu wiring, no updater permission for the page); a locally built signed bundle verified against the configured key. No update has been installed end to end.',
   },
   {
     id: 'installers',
@@ -715,7 +741,7 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
       ),
     },
     verification:
-      'Unit tests of the protocol against a scripted host; e2e (Chromium, Linux) sends documents from the side panel and the editor to the real desktop host binary, with the permission granted at install in a test copy of the extension (Chrome’s prompt cannot be automated).',
+      'Unit tests of the protocol against a scripted host, and property tests that fuzz the host’s framing and messages; e2e (Chromium, Linux) sends documents from the side panel and the editor to the real desktop host binary, with the permission granted at install in a test copy of the extension (Chrome’s prompt cannot be automated).',
     runtimeFeature: 'nativeMessaging',
   },
   // Extension surfaces
