@@ -1,6 +1,7 @@
 export * from './ids';
 export * from './geometry';
 export * from './annotation-layout';
+export * from './recognized-text';
 export * from './types';
 export * from './create';
 export * from './operations';
