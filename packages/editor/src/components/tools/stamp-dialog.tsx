@@ -23,7 +23,7 @@ import { useWorkspaceContext } from '../../context';
 import { PERMISSION_MESSAGES } from '../../store/editing';
 import type { WorkspaceDocument } from '../../store/workspace';
 import { displaySize, pageSource } from '../../viewer/geometry';
-import { PRIORITY, renderCacheKey } from '../../viewer/resources';
+import { pageFormRevision, PRIORITY, renderCacheKey } from '../../viewer/resources';
 import { StampMarks } from '../../viewer/stamp-layer';
 import { ThumbnailView } from '../../viewer/thumbnail-view';
 import { useDevicePixelRatio } from '../../viewer/use-device-pixel-ratio';
@@ -319,6 +319,7 @@ function StampPreview({
           scale={scale}
           ratio={ratio}
           priority={PRIORITY.visiblePage}
+          formRevision={pageFormRevision(doc, page)}
         />
         <StampMarks
           page={page}

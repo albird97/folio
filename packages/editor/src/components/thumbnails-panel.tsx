@@ -13,7 +13,7 @@ import {
 import { useWorkspaceContext } from '../context';
 import type { WorkspaceDocument } from '../store/workspace';
 import { displaySize, pageSource, userRotation } from '../viewer/geometry';
-import { PRIORITY, renderCacheKey } from '../viewer/resources';
+import { pageFormRevision, PRIORITY, renderCacheKey } from '../viewer/resources';
 import { ThumbnailView } from '../viewer/thumbnail-view';
 import { useDevicePixelRatio } from '../viewer/use-device-pixel-ratio';
 import { usePageCommands } from '../hooks/use-page-commands';
@@ -400,6 +400,7 @@ export function ThumbnailsPanel({
                       scale={scale}
                       ratio={ratio}
                       priority={PRIORITY.thumbnail + Math.min(999, Math.abs(index - currentIndex))}
+                      formRevision={pageFormRevision(doc, page)}
                     />
                   </span>
                 </span>

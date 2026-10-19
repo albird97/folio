@@ -61,6 +61,7 @@ function document(): WorkspaceDocument {
     saveTarget: null,
     diskSha256: null,
     recoveryId: 'doc-1',
+    formRevision: {},
   };
 }
 

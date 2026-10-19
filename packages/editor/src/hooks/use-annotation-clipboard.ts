@@ -60,12 +60,17 @@ export function useAnnotationClipboard(
     const element = scrollRef.current;
     if (!element) return;
     const focused = () => element.contains(document.activeElement);
+    // Form fields on the pages copy, cut and paste their own text.
+    const typing = () =>
+      !!document.activeElement?.closest('input, textarea, select, [contenteditable="true"]');
     const current = () => workspace.getState().documents.find((entry) => entry.key === key);
 
     /** Whether a copy or cut would take the selected annotations. */
     const copying = () => {
       const latest = current();
-      if (!latest?.editor || !focused() || latest.selection.annotations.length === 0) return false;
+      if (!latest?.editor || !focused() || typing() || latest.selection.annotations.length === 0) {
+        return false;
+      }
       // Selected page text is copied as usual.
       return window.getSelection()?.isCollapsed !== false;
     };
@@ -190,7 +195,7 @@ export function useAnnotationClipboard(
 
     const pasteTarget = () => {
       const latest = current();
-      if (!latest?.editor || !focused() || !latest.permissions.annotate) return null;
+      if (!latest?.editor || !focused() || typing() || !latest.permissions.annotate) return null;
       const { model } = latest.editor;
       return model.pages.find((entry) => entry.id === latest.view?.currentPageId) ?? pages[0];
     };

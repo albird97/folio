@@ -20,6 +20,11 @@ function isEditable(target: EventTarget | null): boolean {
   return (target instanceof HTMLElement && target.isContentEditable) || !!target.closest(EDITABLE);
 }
 
+/** Fields with an undo history of their own: text being typed (a list has none). */
+function undoesItself(target: EventTarget | null): boolean {
+  return isEditable(target) && !(target instanceof HTMLSelectElement);
+}
+
 /** Where a command came from: a native menu, a key press, or a control in the page. */
 type CommandSource = 'menu' | 'keyboard' | 'ui';
 
@@ -62,7 +67,7 @@ export function useCommands(): (command: AppCommand) => void {
         }
       };
       // A native Edit menu's Undo while typing undoes the typing.
-      if (FIELD_COMMANDS.has(command) && isEditable(document.activeElement)) {
+      if (FIELD_COMMANDS.has(command) && undoesItself(document.activeElement)) {
         document.execCommand(command);
         return;
       }
@@ -220,7 +225,7 @@ export function useCommands(): (command: AppCommand) => void {
         [AppCommand, readonly string[]]
       >) {
         // Undo and redo in a text field undo the typing, as everywhere else.
-        if (editable && FIELD_COMMANDS.has(command)) continue;
+        if (FIELD_COMMANDS.has(command) && undoesItself(event.target)) continue;
         if (
           keys.some(
             (keyCombo) =>

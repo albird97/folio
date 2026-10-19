@@ -159,46 +159,11 @@ async function flattenedImages(bytes: Uint8Array) {
  * does. No control in this build opens it that way, so the test reaches the
  * workspace's UI store through React's internals.
  */
-async function signFieldDialog(
-  page: Page,
-  rect: { x: number; y: number; width: number; height: number },
-) {
-  await page.evaluate((field) => {
-    interface Stores {
-      ui: { getState(): { openDialog(request: unknown): void } };
-      workspace: {
-        getState(): {
-          activeKey: string;
-          documents: Array<{ key: string; editor: { model: { pages: Array<{ id: string }> } } }>;
-        };
-      };
-    }
-    interface Fiber {
-      memoizedProps?: { value?: Partial<Stores> } | null;
-      child: Fiber | null;
-      sibling: Fiber | null;
-    }
-    const root = document.getElementById('root') as unknown as Record<string, Fiber>;
-    const container = Object.keys(root).find((key) => key.startsWith('__reactContainer$'))!;
-    const pending: Array<Fiber | null> = [root[container]!];
-    while (pending.length > 0) {
-      const fiber = pending.pop();
-      if (!fiber) continue;
-      const value = fiber.memoizedProps?.value;
-      if (value?.ui && value.workspace) {
-        const { activeKey, documents } = value.workspace.getState();
-        const doc = documents.find((entry) => entry.key === activeKey)!;
-        value.ui.getState().openDialog({
-          kind: 'signature',
-          docKey: activeKey,
-          field: { pageId: doc.editor.model.pages[0]!.id, rect: field },
-        });
-        return;
-      }
-      pending.push(fiber.child, fiber.sibling);
-    }
-    throw new Error('The workspace was not found.');
-  }, rect);
+/** Clicks the Sign button the form layer puts over a signature field. */
+async function signFieldDialog(page: Page) {
+  const sign = page.getByRole('button', { name: 'Sign signature' });
+  await sign.scrollIntoViewIfNeeded();
+  await sign.click();
   const dialog = signatureDialog(page);
   await expect(dialog.getByRole('tablist', { name: 'How to sign' })).toBeVisible();
   return dialog;
@@ -458,20 +423,23 @@ test.describe('signatures', () => {
   });
 
   test('signs a signature field: the signature fits the field', async ({ page }) => {
-    await open(page, 'basic-3-pages.pdf');
-    const field = { x: 100, y: 100, width: 200, height: 60 };
-    const dialog = await signFieldDialog(page, field);
+    await open(page, 'form-fields.pdf');
+    // The fixture's signature field, on page 2.
+    const field = { x: 72, y: 376, width: 220, height: 64 };
+    const dialog = await signFieldDialog(page);
     await expect(dialog).toContainText('for the signature field');
     await dialog.getByRole('tab', { name: 'Type' }).click();
     await dialog.getByRole('textbox', { name: 'Your name' }).fill('Grace Hopper');
     await dialog.getByRole('button', { name: 'Sign' }).click();
     await expect(dialog).toBeHidden();
     // No placing: it is in the field at once, and selected.
-    await expect(annotationGroups(page)).toHaveCount(1);
+    await expect(annotationGroups(page, 2)).toHaveCount(1);
     await expect(page.getByRole('region', { name: 'Selected comment' })).toContainText('Signature');
     await expect(tool(page, 'Select')).toHaveAttribute('aria-checked', 'true');
+    // The signed field shows its signature, not the button.
+    await expect(page.getByRole('button', { name: 'Sign signature' })).toHaveCount(0);
 
-    const [signature] = (await savedSignatures(await saveAs(page)))[0]!;
+    const [signature] = (await savedSignatures(await saveAs(page)))[1]!;
     const [x1, y1, x2, y2] = signature!.rect as [number, number, number, number];
     expect(x1).toBeGreaterThan(field.x);
     expect(y1).toBeGreaterThan(field.y);

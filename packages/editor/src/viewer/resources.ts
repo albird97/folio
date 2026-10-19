@@ -1,3 +1,5 @@
+import { sourcePageKey, type PageModel } from '@folio/document-model';
+import type { WorkspaceDocument } from '../store/workspace';
 import { CanvasCache } from './canvas-cache';
 import { RenderScheduler } from './render-scheduler';
 
@@ -25,6 +27,23 @@ export const renderCacheKey = (docKey: string, sourceId: string) => `${docKey}/$
 
 export const pageVariant = (cacheKey: string, rotation: number, scale: number, ratio: number) =>
   `${cacheKey}|r${rotation}@${scale.toFixed(4)}x${ratio.toFixed(2)}`;
+
+/** How often the form fields shown on a page changed (see `WorkspaceDocument.formRevision`). */
+export function pageFormRevision(doc: WorkspaceDocument, page: PageModel): number {
+  return page.source.kind === 'source'
+    ? (doc.formRevision[sourcePageKey(page.source.sourceId, page.source.pageIndex)] ?? 0)
+    : 0;
+}
+
+/**
+ * Ends the variant of a rendering that shows filled-in form values, so a
+ * change draws the page again. Pages whose fields never changed keep
+ * their plain variants.
+ */
+export const formVariant = (revision: number) => (revision > 0 ? `|f${revision}` : '');
+
+/** The form revision a rendering shows (see `formVariant`). */
+export const variantFormRevision = (variant: string) => Number(/\|f(\d+)$/.exec(variant)?.[1] ?? 0);
 
 /** Drops cached renderings of documents that are no longer open. */
 export function forgetDocuments(openKeys: ReadonlySet<string>): void {

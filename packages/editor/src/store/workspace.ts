@@ -25,6 +25,8 @@ import {
   type DocumentStamps,
   type DocumentViewState,
   type EditorDocumentState,
+  type FormFieldId,
+  type FormFieldValue,
   type Operation,
   type PageId,
   type RecognizedText,
@@ -35,6 +37,7 @@ import {
 import {
   isPdfError,
   PdfError,
+  sameFieldValue,
   sha256Hex,
   toSourceDescriptor,
   type PageInfoUpdate,
@@ -56,6 +59,7 @@ import {
   blankPageLike,
   duplicatePagesOperation,
   editPermissions,
+  fieldLabel,
   inDocumentOrder,
   pagesLabel,
   PERMISSION_MESSAGES,
@@ -143,6 +147,11 @@ export interface WorkspaceDocument {
   diskSha256: string | null;
   /** Identifies the document's crash-recovery record. */
   recoveryId: string;
+  /**
+   * How often the form fields shown on each page of the opened file changed
+   * (by `sourcePageKey`): the viewer draws a page again when its count does.
+   */
+  formRevision: Readonly<Record<string, number>>;
 }
 
 export type InsertOutcome =
@@ -162,6 +171,8 @@ export interface ExportRequest {
   unprotected?: boolean;
   /** Leave out Folio's annotations (printing without comments). */
   withoutAnnotations?: boolean;
+  /** Burn the form's fields into the pages; the copy has no form left to fill in. */
+  flattenForms?: boolean;
 }
 
 export interface WorkspaceState {
@@ -226,6 +237,12 @@ export interface WorkspaceState {
     options: { label: string; coalesceKey?: string },
   ): boolean;
   deleteAnnotations(key: string, ids: AnnotationId[]): void;
+  /**
+   * Fills in a field of the document's form ("Fill in <label>"; `label`
+   * defaults to the field's name). Typing into one field is one undo step.
+   * Returns false when nothing changed.
+   */
+  fillFormField(key: string, fieldId: FormFieldId, value: FormFieldValue, label?: string): boolean;
   updateMetadata(key: string, patch: Partial<DocumentMetadata>): void;
   /**
    * Sets or removes (null) the page numbers or the watermark. They change
@@ -423,6 +440,7 @@ function newDocument(key: string, file: IncomingFile): WorkspaceDocument {
         : null,
     diskSha256: null,
     recoveryId: newRecoveryId(),
+    formRevision: {},
   };
 }
 
@@ -637,20 +655,22 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         entry.bytes ??= await entry.file.read();
         const bytes = entry.bytes;
         const handle = await engine.open(bytes, password === undefined ? {} : { password });
+        const formFields = await handle.getFormFields();
         if (!resources.has(key)) {
           // The tab was closed while the document was loading.
           await handle.destroy();
           return;
         }
         entry.handle = handle;
-        const model = createDocumentModel(
-          toSourceDescriptor(handle.info, {
+        const model = createDocumentModel({
+          ...toSourceDescriptor(handle.info, {
             fileName: entry.file.name,
             byteLength: bytes.byteLength,
             sha256: await sha256Hex(bytes),
             origin: entry.file.origin,
           }),
-        );
+          formFields,
+        });
         const sourceId = Object.keys(model.sources)[0] as SourceId;
         addSource(key, sourceId, {
           bytes,
@@ -768,6 +788,12 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
           return { status: 'failed', message: `${source.fileName} could not be opened.` };
         }
       }
+      // Pages render and save with the recovered values from the start.
+      const primaryHandle = opened[0]!.entry.handle;
+      await primaryHandle.getFormFields();
+      primaryHandle.setFormValues(
+        Object.values(model.formFields).map((field) => [field.name, field.value] as const),
+      );
       const key = nextKey();
       const primaryBytes = opened[0]!.entry.bytes;
       const file: IncomingFile = {
@@ -847,6 +873,33 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       return changes;
     }
 
+    /**
+     * Fills the engine's form with the field values that differ between the
+     * document's model and `model` (only fields of the opened file can be
+     * filled in), and counts a new revision for every page that shows them.
+     */
+    function syncForm(
+      key: string,
+      doc: WorkspaceDocument,
+      model: DocumentModel,
+    ): Partial<WorkspaceDocument> {
+      const before = doc.editor?.model.formFields;
+      const handle = resources.get(key)?.handle;
+      const sourceId = Object.keys(model.sources)[0] as SourceId | undefined;
+      if (!before || before === model.formFields || !handle || !sourceId) return {};
+      const changed = Object.values(model.formFields)
+        .filter((field) => before[field.id] !== field)
+        .map((field) => [field.name, field.value] as const);
+      const pages = handle.setFormValues(changed);
+      if (pages.length === 0) return {};
+      const formRevision = { ...doc.formRevision };
+      for (const pageIndex of pages) {
+        const page = sourcePageKey(sourceId, pageIndex);
+        formRevision[page] = (formRevision[page] ?? 0) + 1;
+      }
+      return { formRevision };
+    }
+
     /** Runs a change of the editor state; reports operations that do not fit the document. */
     function commit(
       key: string,
@@ -873,7 +926,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         resultsStale =
           !samePageSequence(doc.editor.model.pages, editor.model.pages) ||
           doc.editor.model.textLayers !== editor.model.textLayers;
-        return { editor, ...reconcile(doc, editor.model) };
+        return { editor, ...reconcile(doc, editor.model), ...syncForm(key, doc, editor.model) };
       });
       if (failure) {
         notify(
@@ -930,15 +983,19 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       const entry = resources.get(key);
       if (!doc?.editor || !doc.info || !entry) throw new Error('The document is not open.');
       const { exportPdf } = await import('@folio/pdf-core/export');
-      const sources = new Map(
-        [...entry.sources].map(([id, source]) => [
-          id,
-          source.password === undefined
-            ? { bytes: source.bytes }
-            : { bytes: source.bytes, password: source.password },
-        ]),
-      );
       const primary = [...entry.sources.values()][0];
+      // Values filled in become the opened file's own form values (with their
+      // appearances), on which the rest of the document is assembled.
+      const filled = (await primary?.handle.saveFormValues()) ?? null;
+      const sources = new Map(
+        [...entry.sources].map(([id, source]) => {
+          const bytes = filled && source === primary ? filled : source.bytes;
+          return [
+            id,
+            source.password === undefined ? { bytes } : { bytes, password: source.password },
+          ];
+        }),
+      );
       const model = doc.editor.model;
       return exportPdf({
         model: request.withoutAnnotations
@@ -948,6 +1005,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         assets: entry.assets,
         ...(request.pageIds ? { pageIds: request.pageIds } : {}),
         ...(request.flatten === undefined ? {} : { flatten: request.flatten }),
+        ...(request.flattenForms ? { flattenForms: true } : {}),
         // Saved copies stay as protected as the opened file.
         protection:
           doc.info.encryption === 'none' || request.unprotected
@@ -1340,6 +1398,24 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
           key,
           { type: 'annotations/remove', ids },
           { label: ids.length === 1 ? 'Delete comment' : `Delete ${ids.length} comments` },
+        );
+      },
+
+      fillFormField(key, fieldId, value, label) {
+        const doc = find(key);
+        const field = doc?.editor?.model.formFields[fieldId];
+        if (!doc || !field || field.readOnly || doc.info?.forms !== 'acroform') return false;
+        // Signature fields are signed with the signature tool; buttons take no value.
+        if (field.type === 'signature' || field.type === 'button') return false;
+        if (sameFieldValue(field.value, value) || !allowed(key, 'fillForms')) return false;
+        const name = label?.trim() || fieldLabel(field.name);
+        return apply(
+          key,
+          { type: 'forms/set-values', values: [{ id: fieldId, value }] },
+          {
+            label: `Fill in ${name.length > 60 ? `${name.slice(0, 59)}…` : name}`,
+            coalesceKey: `form:${fieldId}`,
+          },
         );
       },
 

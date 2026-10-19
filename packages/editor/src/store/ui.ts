@@ -195,6 +195,8 @@ export interface UiState {
   style: AnnotationStyle;
   /** Written into new annotations as their author; empty leaves it out. */
   authorName: string;
+  /** Tint the fields of forms that can be filled in. */
+  highlightFields: boolean;
   /** The languages text was last recognized in (never empty). */
   ocrLanguages: OcrLanguage[];
   dialog: DialogRequest | null;
@@ -214,6 +216,7 @@ export interface UiState {
   setStyle(changes: Partial<Omit<AnnotationStyle, 'colors'>>): void;
   setToolColor(tool: keyof AnnotationStyle['colors'], color: HexColor): void;
   setAuthorName(name: string): void;
+  setHighlightFields(highlight: boolean): void;
   setOcrLanguages(languages: OcrLanguage[]): void;
   openDialog(dialog: DialogRequest): void;
   closeDialog(): void;
@@ -229,6 +232,7 @@ type Persisted = Pick<
   | 'sidebarTab'
   | 'style'
   | 'authorName'
+  | 'highlightFields'
   | 'ocrLanguages'
 >;
 
@@ -275,6 +279,7 @@ function sanitize(value: unknown): Partial<Persisted> {
   const style = sanitizeStyle(raw.style);
   if (style) out.style = style;
   if (typeof raw.authorName === 'string') out.authorName = raw.authorName.slice(0, 200);
+  if (typeof raw.highlightFields === 'boolean') out.highlightFields = raw.highlightFields;
   if (Array.isArray(raw.ocrLanguages)) {
     const languages = [...new Set(raw.ocrLanguages.filter(isOcrLanguage))];
     if (languages.length > 0) out.ocrLanguages = languages;
@@ -289,6 +294,7 @@ const persistedOf = (state: UiState): Persisted => ({
   sidebarTab: state.sidebarTab,
   style: state.style,
   authorName: state.authorName,
+  highlightFields: state.highlightFields,
   ocrLanguages: state.ocrLanguages,
 });
 
@@ -308,6 +314,7 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     pendingSignature: null,
     style: DEFAULT_STYLE,
     authorName: '',
+    highlightFields: true,
     ocrLanguages: ['eng'],
     dialog: null,
     transfers: [],
@@ -330,6 +337,7 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
         style: { ...state.style, colors: { ...state.style.colors, [tool]: color } },
       })),
     setAuthorName: (authorName) => set({ authorName: authorName.slice(0, 200) }),
+    setHighlightFields: (highlightFields) => set({ highlightFields }),
     setOcrLanguages: (languages) => {
       if (languages.length > 0) set({ ocrLanguages: [...new Set(languages)] });
     },

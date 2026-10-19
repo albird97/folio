@@ -14,6 +14,8 @@ export type FixtureName =
   | 'encrypted-rc4.pdf'
   | 'outline-and-text.pdf'
   | 'filled-form.pdf'
+  | 'form-fields.pdf'
+  | 'xfa-form.pdf'
   | 'scanned-pages.pdf'
   | 'not-a-pdf.pdf'
   | 'empty.pdf'

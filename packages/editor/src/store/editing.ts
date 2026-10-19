@@ -27,6 +27,8 @@ export interface EditPermissions {
   modify: boolean;
   /** Copy pages out into new documents (extract, split). */
   extract: boolean;
+  /** Fill in the fields of the document's form. */
+  fillForms: boolean;
 }
 
 export const ALL_PERMISSIONS: EditPermissions = {
@@ -34,6 +36,7 @@ export const ALL_PERMISSIONS: EditPermissions = {
   assemble: true,
   modify: true,
   extract: true,
+  fillForms: true,
 };
 
 export function editPermissions(info: PdfDocumentInfo | null): EditPermissions {
@@ -45,6 +48,8 @@ export function editPermissions(info: PdfDocumentInfo | null): EditPermissions {
     assemble: flags.assemble || flags.modify,
     modify: flags.modify,
     extract: flags.copy,
+    // Changing annotations includes filling in the form (bit 6 or bit 9).
+    fillForms: flags.fillForms || flags.annotate,
   };
 }
 
@@ -54,7 +59,14 @@ export const PERMISSION_MESSAGES: Record<keyof EditPermissions, string> = {
   assemble: 'The author of this document does not allow changing its pages.',
   modify: 'The author of this document does not allow changing it.',
   extract: 'The author of this document does not allow copying its content.',
+  fillForms: 'The author of this document does not allow filling in its form.',
 };
+
+/** A field's name for people: the last part of its full name, without an index ("f1_01[0]"). */
+export function fieldLabel(name: string): string {
+  const last = name.slice(name.lastIndexOf('.') + 1).replace(/\[\d+\]$/, '');
+  return last || name;
+}
 
 function correctPage(
   page: PageModel,

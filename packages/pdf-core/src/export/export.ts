@@ -12,6 +12,7 @@ import { degrees, EncryptedPDFError, PDFDocument, PDFPage } from '@cantoo/pdf-li
 import type { PdfPermissions } from '../engine';
 import { AnnotationWriter, type AssetData } from './annotations';
 import { StandardFontSet } from './fonts';
+import { drawMissingAppearances, flattenFormFields } from './forms';
 import { writeMetadata } from './metadata';
 import {
   collectGarbage,
@@ -49,6 +50,8 @@ export interface ExportOptions {
   pageIds?: readonly PageId[];
   /** Default: the document's `exportConfig.flattenAnnotations`. */
   flatten?: boolean;
+  /** Draw the form fields into the pages and leave the form out (they can no longer be filled in). */
+  flattenForms?: boolean;
   /** Encrypt the result. Callers pass the original's protection to keep it protected. */
   protection?: Protection | null;
   now?: Date;
@@ -59,7 +62,9 @@ export type ExportWarning =
    * Added text, page numbers or a watermark used characters the standard
    * fonts cannot show; they became "?".
    */
-  'unsupported-characters';
+  | 'unsupported-characters'
+  /** Form fields drawn for a copy without the form had such characters, drawn as "?". */
+  | 'unsupported-form-characters';
 
 export interface ExportResult {
   bytes: Uint8Array;
@@ -184,8 +189,13 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     if (batch) batch.push({ slot, pageIndex });
     else batches.set(sourceId, [{ slot, pageIndex }]);
   }
+  /** Form fields drawn for copies without their form showed characters as "?". */
+  let lossyFields = false;
   for (const [sourceId, batch] of batches) {
-    const source = sourceId === originalId && basePages.length > 0 ? doc : await load(sourceId);
+    const own = sourceId === originalId && basePages.length > 0;
+    const source = own ? doc : await load(sourceId);
+    // Copied pages leave their file's form behind: their fields need drawing.
+    if (!own) lossyFields = drawMissingAppearances(source) || lossyFields;
     if (batch.some(({ pageIndex }) => pageIndex >= source.getPageCount())) {
       throw new ExportError('unreadable-source', 'A page of a source document is missing.');
     }
@@ -211,6 +221,15 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     basePages.map((page) => page.ref.tag),
     output.map((entry) => entry.page),
   );
+  const fonts = new StandardFontSet(doc);
+  // Before Folio's additions, so stamps and flattened comments are drawn over the fields.
+  if (options.flattenForms) {
+    lossyFields = drawMissingAppearances(doc, fonts) || lossyFields;
+    flattenFormFields(
+      doc,
+      output.map((entry) => entry.page),
+    );
+  }
 
   // Recognized text, page numbers, watermark and annotations.
   const pageAnnotations = new Map<PageId, Annotation[]>();
@@ -224,7 +243,6 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     const ref = model.assets[id];
     if (ref) assets.set(id, { ref, bytes });
   }
-  const fonts = new StandardFontSet(doc);
   const stamper = new StampWriter(doc, fonts);
   const recognized = new RecognizedTextWriter(doc, model, options.assets);
   const writer = new AnnotationWriter(doc, assets, fonts);
@@ -268,9 +286,16 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
       permissions: toUserPermissions(options.protection.permissions),
     });
   }
-  const bytes = await doc.save({ useObjectStreams: true, rewrite: true, addDefaultPage: false });
-  return {
-    bytes,
-    warnings: writer.lossyText || stamper.lossyText ? ['unsupported-characters'] : [],
-  };
+  // Appearances are Folio's to draw (`drawMissingAppearances`): pdf-lib would
+  // redraw every field of a form it was asked about, and fail on removed ones.
+  const bytes = await doc.save({
+    useObjectStreams: true,
+    rewrite: true,
+    addDefaultPage: false,
+    updateFieldAppearances: false,
+  });
+  const warnings: ExportWarning[] = [];
+  if (writer.lossyText || stamper.lossyText) warnings.push('unsupported-characters');
+  if (lossyFields) warnings.push('unsupported-form-characters');
+  return { bytes, warnings };
 }
