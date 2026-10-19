@@ -573,6 +573,29 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
       'Unit tests: data validation, pixel↔page mapping at every rotation with a crop box, real Tesseract in Node on a scanned fixture, exporter output re-opened with PDF.js and checked with qpdf (rendering unchanged). E2E (Chromium): search, highlight, copy, save and re-open, undo and axe in the desktop UI; the extension editor with no CSP violations or network requests.',
   },
   {
+    id: 'ask-ai',
+    area: 'Advanced tools',
+    feature: 'Ask Claude about a document (opt-in, your own Anthropic API key)',
+    plannedPhase: null,
+    targets: {
+      macos: {
+        level: 'external-service',
+        note: 'Off until you turn it on with your own Anthropic API key, kept in the macOS Keychain. When you ask, the text of the chosen pages (not the file) and your questions go to Anthropic’s API through Folio’s native proxy; the page cannot read the key or reach other servers. Built in CI; the Keychain and the proxy have not been tried on a real Mac.',
+      },
+      windows: {
+        level: 'external-service',
+        note: 'As on macOS, with the key in the Windows Credential Manager. Built in CI; not tried on a real Windows PC.',
+      },
+      chrome: {
+        level: 'external-service',
+        note: 'Off until you turn it on with your own Anthropic API key, kept in this browser profile’s extension storage (never synced). Chrome asks for access to api.anthropic.com; only the service worker sends requests, and removing that access forgets the key.',
+      },
+    },
+    verification:
+      'Unit tests of prompt building (a cached prefix, one block per page), token limits, error mapping and every transport (the Rust proxy against a local server, the Tauri channel, the service worker port) with mocked API streams; e2e in Chromium for the desktop UI (web adapter) and the extension (service worker requests routed). Tests never call the real API.',
+    runtimeFeature: 'aiAssistant',
+  },
+  {
     id: 'password-protect',
     area: 'Advanced tools',
     feature: 'Add password protection',

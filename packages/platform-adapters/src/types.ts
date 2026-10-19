@@ -274,6 +274,35 @@ export interface RuntimeFeatures {
   clipboardWrite: boolean;
   browserTabIntegration: boolean;
   nativeMessaging: boolean;
+  /** Ask Claude about a document with the user's own Anthropic API key (opt-in). */
+  aiAssistant: boolean;
+}
+
+/**
+ * Ask Claude (opt-in): the user's own Anthropic API key, which the platform
+ * keeps (the OS keychain on desktop, extension storage in Chrome), and the
+ * only way Folio reaches Anthropic's API. Page code never reads the key back.
+ */
+export interface AiService {
+  /** Whether a key is stored. */
+  hasKey(): Promise<boolean>;
+  /**
+   * Stores the user's key, replacing any other. Call it straight from a
+   * click: the extension asks Chrome for access to Anthropic's API first.
+   * Resolves `false` when that access was refused (nothing is stored);
+   * rejects with `AiTransportError` (`invalid-key`) for text that
+   * cannot be a key.
+   */
+  setKey(key: string): Promise<boolean>;
+  /** Deletes the stored key (and, in the extension, the access to Anthropic's API). */
+  forgetKey(): Promise<void>;
+  /**
+   * The `fetch` the Anthropic SDK uses. It sends only `POST` requests to
+   * Anthropic's messages and token counting endpoints, with an allow-list of
+   * headers (see `ai.ts`), adds the stored key and streams the answer back.
+   * Fails with `AiTransportError` for anything else.
+   */
+  fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
 }
 
 export interface PlatformAdapter {
@@ -324,4 +353,6 @@ export interface PlatformAdapter {
    * from a click: Chrome may ask for permission first.
    */
   sendToDesktop?(request: SendToDesktopRequest): Promise<SendToDesktopResult>;
+  /** Ask Claude: present when `features.aiAssistant` is true. */
+  ai?: AiService;
 }

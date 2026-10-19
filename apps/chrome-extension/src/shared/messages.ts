@@ -5,6 +5,8 @@ import { activityKindSchema, type ActivityEntry } from './activity';
  * Every runtime message is validated against this schema by the service
  * worker. Messages carry no document bytes and no document content: the
  * only optional detail is a file name, stored only if the user opted in.
+ * The user's Anthropic API key goes to the worker once, when they set up
+ * Ask Claude, and never comes back.
  */
 export const MAX_MESSAGE_BYTES = 8 * 1024;
 
@@ -28,6 +30,9 @@ export const messageSchema = z.discriminatedUnion('type', [
     url: z.string().min(1).max(4096),
   }),
   z.object({ type: z.literal('status/get') }),
+  z.object({ type: z.literal('ai/status') }),
+  z.object({ type: z.literal('ai/set-key'), key: z.string().min(1).max(512) }),
+  z.object({ type: z.literal('ai/forget-key') }),
 ]);
 
 export type ExtensionMessage = z.infer<typeof messageSchema>;
@@ -36,8 +41,13 @@ export interface ExtensionStatus {
   version: string;
 }
 
+/** Ask Claude's state in the worker: whether a key is stored (never the key). */
+export interface AiStatus {
+  hasKey: boolean;
+}
+
 export type MessageResponse =
-  | { ok: true; activity?: ActivityEntry[]; status?: ExtensionStatus }
+  | { ok: true; activity?: ActivityEntry[]; status?: ExtensionStatus; ai?: AiStatus }
   | { ok: false; error: 'invalid-message' | 'forbidden-sender' | 'failed' };
 
 export function parseMessage(value: unknown): ExtensionMessage | null {

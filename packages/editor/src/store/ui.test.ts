@@ -96,7 +96,25 @@ describe('ui store', () => {
       authorName: '',
       highlightFields: true,
       ocrLanguages: ['eng'],
+      ai: { enabled: false, model: 'claude-opus-5-5' },
     });
+  });
+
+  it('remembers whether Ask Claude is on and its model, keeping only known models', async () => {
+    const storage = createMemoryStorage({
+      [UI_STORAGE_KEY]: { ai: { enabled: 'yes', model: 'gpt-4', apiKey: 'sk-ant-leaked' } },
+    });
+    const store = createUiStore(storage);
+    await settle();
+    expect(store.getState().ai).toEqual({ enabled: false, model: 'claude-opus-5-5' });
+    store.getState().setAiSettings({ enabled: true });
+    store.getState().setAiSettings({ model: 'claude-haiku-5-5' });
+    await settle();
+    // Only the consent and the model are stored: never a key.
+    expect(storage.data.get(UI_STORAGE_KEY)).toMatchObject({
+      ai: { enabled: true, model: 'claude-haiku-5-5' },
+    });
+    expect(JSON.stringify(storage.data.get(UI_STORAGE_KEY))).not.toContain('sk-ant');
   });
 
   it('remembers the languages text was recognized in, keeping only known ones', async () => {

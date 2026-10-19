@@ -1,3 +1,4 @@
+import { createMemoryAiService } from './ai';
 import { createMemoryRecoveryStore } from './recovery';
 import { Channel, WEB_FEATURES } from './web';
 import type {
@@ -48,6 +49,8 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
   const unsaved: boolean[] = [];
   let printed = 0;
   const recovery = createMemoryRecoveryStore();
+  // Tests answer Ask Claude's requests themselves; nothing reaches a network.
+  let aiFetch: typeof fetch = () => Promise.reject(new TypeError('No network in tests.'));
   const adapter: PlatformAdapter = {
     platform: 'web',
     os: 'unknown',
@@ -84,6 +87,7 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
     setUnsavedChanges: (value) => {
       unsaved.push(value);
     },
+    ai: createMemoryAiService((input, init) => aiFetch(input, init)),
   };
   return {
     adapter,
@@ -100,5 +104,9 @@ export function createMemoryPlatformAdapter(features: Partial<RuntimeFeatures> =
     deliver: (files: IncomingFile[]) => incoming.emit(files),
     command: (command: AppCommand) => commands.emit(command),
     hover: (value: boolean) => hover.emit(value),
+    /** Answers Ask Claude's requests (after the adapter checked them and added the key). */
+    answerAi: (send: typeof fetch) => {
+      aiFetch = send;
+    },
   };
 }

@@ -17,4 +17,4 @@ export const OPTIONAL_PERMISSION_EXPLANATIONS: Record<string, string> = {
 
 /** Why Folio asks to read a site, shown next to the sites it may read. */
 export const HOST_ACCESS_EXPLANATION =
-  'Folio asks to read a site only when you open a PDF from it, and uses that access only to download PDFs you choose. You can remove access here at any time.';
+  'Folio asks to read a site only when you open a PDF from it, and uses that access only to download PDFs you choose. Access to api.anthropic.com is for Ask Claude; removing it also forgets your API key. You can remove access here at any time.';

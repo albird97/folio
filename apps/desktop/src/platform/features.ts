@@ -16,4 +16,5 @@ export const TAURI_FEATURES: RuntimeFeatures = {
   clipboardWrite: true,
   browserTabIntegration: false,
   nativeMessaging: true,
+  aiAssistant: true,
 };

@@ -7,6 +7,7 @@ import {
   type PlatformAdapter,
   type RuntimeFeatures,
 } from '@folio/platform-adapters';
+import { createExtensionAiService } from '../shared/ai';
 import { createChromeStorage } from '../shared/chrome-storage';
 import { requestDesktopAccess, sendToDesktop } from '../shared/desktop';
 import { downloadPdf, originPattern, parseWebUrl } from '../shared/web-pdf';
@@ -71,5 +72,6 @@ export function createChromePlatformAdapter(): PlatformAdapter & {
       if (!(await requestDesktopAccess())) return { status: 'permission-denied' };
       return sendToDesktop({ name, bytes: await bytes() }, onProgress ? { onProgress } : {});
     },
+    ai: createExtensionAiService(),
   };
 }

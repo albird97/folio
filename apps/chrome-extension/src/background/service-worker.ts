@@ -4,11 +4,14 @@
  * chrome.storage and IndexedDB, and every listener is registered
  * synchronously at the top level.
  */
+import { AI_HOST_PERMISSION, normalizeAiKey } from '@folio/platform-adapters';
 import { appendActivity, redactActivity, type ActivityEntry } from '../shared/activity';
+import { AI_KEY_STORAGE, AI_PORT } from '../shared/ai';
 import { parseMessage, type MessageResponse } from '../shared/messages';
 import { newHandoffId, purgeExpiredHandoffs } from '../shared/handoff';
 import { ACTIVITY_KEY, DEFAULT_SETTINGS, parseSettings, SETTINGS_KEY } from '../shared/settings';
 import { FETCH_PORT, OPEN_URL_JOB_PREFIX, parseWebUrl } from '../shared/web-pdf';
+import { readAiKey, serveAiPort } from './ai-port';
 import { serveFetchPort } from './fetch-port';
 
 async function readActivity(): Promise<ActivityEntry[]> {
@@ -92,16 +95,42 @@ async function handle(
         ok: true,
         status: { version: chrome.runtime.getManifest().version },
       };
+    case 'ai/status':
+      return { ok: true, ai: { hasKey: (await readAiKey()) !== null } };
+    case 'ai/set-key': {
+      const key = normalizeAiKey(message.key);
+      if (!key) return { ok: false, error: 'invalid-message' };
+      await chrome.storage.local.set({ [AI_KEY_STORAGE]: key });
+      return { ok: true };
+    }
+    case 'ai/forget-key':
+      // Turning Ask Claude off also gives up the access to Anthropic's API.
+      await chrome.storage.local.remove(AI_KEY_STORAGE);
+      await chrome.permissions.remove({ origins: [AI_HOST_PERMISSION] }).catch(() => false);
+      return { ok: true };
   }
 }
 
-// Downloads for "Open from a web address", one port per download.
+// Downloads for "Open from a web address", one port per download, and
+// requests to Anthropic's API for Ask Claude, one port per request.
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== FETCH_PORT || !isTrustedSender(port.sender)) {
+  if (!isTrustedSender(port.sender)) {
     port.disconnect();
-    return;
+  } else if (port.name === FETCH_PORT) {
+    serveFetchPort(port);
+  } else if (port.name === AI_PORT) {
+    serveAiPort(port);
+  } else {
+    port.disconnect();
   }
-  serveFetchPort(port);
+});
+
+// Removing Folio's access to Anthropic's API (in the options page or
+// Chrome's settings) forgets the key too, so Ask Claude asks again.
+chrome.permissions.onRemoved.addListener((removed) => {
+  if (removed.origins?.includes(AI_HOST_PERMISSION)) {
+    void chrome.storage.local.remove(AI_KEY_STORAGE);
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

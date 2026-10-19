@@ -10,6 +10,7 @@ import type {
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { SignatureImage } from '../signature/render';
 import { isOcrLanguage, type OcrLanguage } from '../ocr/languages';
+import { DEFAULT_AI_MODEL, isAiModel, type AiModel } from '../ai/models';
 
 export type SidebarTab = 'pages' | 'outline' | 'comments' | 'results';
 export const SIDEBAR_TABS: readonly SidebarTab[] = ['pages', 'outline', 'comments', 'results'];
@@ -180,6 +181,18 @@ export interface PendingSignature {
   image: SignatureImage;
 }
 
+/**
+ * Ask Claude's settings. Only the user's consent and model choice are kept
+ * here; the API key stays with the platform (keychain, extension storage).
+ */
+export interface AiSettings {
+  /** The user turned Ask Claude on and agreed to send document text when they ask. */
+  enabled: boolean;
+  model: AiModel;
+}
+
+export const DEFAULT_AI_SETTINGS: AiSettings = { enabled: false, model: DEFAULT_AI_MODEL };
+
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {
   theme: ThemePreference;
@@ -199,6 +212,7 @@ export interface UiState {
   highlightFields: boolean;
   /** The languages text was last recognized in (never empty). */
   ocrLanguages: OcrLanguage[];
+  ai: AiSettings;
   dialog: DialogRequest | null;
   /** Documents the Chrome extension sent, waiting for the user to accept them. */
   transfers: TransferRequest[];
@@ -218,6 +232,7 @@ export interface UiState {
   setAuthorName(name: string): void;
   setHighlightFields(highlight: boolean): void;
   setOcrLanguages(languages: OcrLanguage[]): void;
+  setAiSettings(changes: Partial<AiSettings>): void;
   openDialog(dialog: DialogRequest): void;
   closeDialog(): void;
   queueTransfer(request: TransferRequest): void;
@@ -234,6 +249,7 @@ type Persisted = Pick<
   | 'authorName'
   | 'highlightFields'
   | 'ocrLanguages'
+  | 'ai'
 >;
 
 export const UI_STORAGE_KEY = 'workspace-ui';
@@ -284,6 +300,13 @@ function sanitize(value: unknown): Partial<Persisted> {
     const languages = [...new Set(raw.ocrLanguages.filter(isOcrLanguage))];
     if (languages.length > 0) out.ocrLanguages = languages;
   }
+  if (typeof raw.ai === 'object' && raw.ai !== null) {
+    const ai = raw.ai as Record<string, unknown>;
+    out.ai = {
+      enabled: ai.enabled === true,
+      model: isAiModel(ai.model) ? ai.model : DEFAULT_AI_MODEL,
+    };
+  }
   return out;
 }
 
@@ -296,6 +319,7 @@ const persistedOf = (state: UiState): Persisted => ({
   authorName: state.authorName,
   highlightFields: state.highlightFields,
   ocrLanguages: state.ocrLanguages,
+  ai: state.ai,
 });
 
 /** A question still waiting when its dialog goes away gets the cautious answer. */
@@ -316,6 +340,7 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     authorName: '',
     highlightFields: true,
     ocrLanguages: ['eng'],
+    ai: DEFAULT_AI_SETTINGS,
     dialog: null,
     transfers: [],
     hydrated: false,
@@ -341,6 +366,7 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     setOcrLanguages: (languages) => {
       if (languages.length > 0) set({ ocrLanguages: [...new Set(languages)] });
     },
+    setAiSettings: (changes) => set((state) => ({ ai: { ...state.ai, ...changes } })),
     openDialog: (dialog) => {
       settle(get().dialog);
       set({ dialog });

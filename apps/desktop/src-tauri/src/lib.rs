@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod close_guard;
 mod commands;
 mod connect;
@@ -353,6 +354,7 @@ pub fn run() {
         .manage(CloseGuard::default())
         .manage(RecentMenu(Mutex::new(None)))
         .manage(updates::Updates::default())
+        .manage(ai::AiProxy::new(ai::platform_store(data_dir.as_deref())))
         .setup(move |app| {
             // Only the process the single-instance plugin kept gets here.
             #[cfg(not(target_os = "macos"))]
@@ -443,6 +445,11 @@ pub fn run() {
             commands::take_pending_transfers,
             commands::answer_transfer,
             commands::native_messaging_status,
+            commands::ai_key_status,
+            commands::ai_set_key,
+            commands::ai_forget_key,
+            commands::ai_request,
+            commands::ai_cancel,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Folio")

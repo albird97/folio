@@ -11,6 +11,8 @@ import {
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { useStore, type StoreApi } from 'zustand';
+import { AI_HOST_PERMISSION } from '@folio/platform-adapters';
+import { AI_KEY_STORAGE } from '../shared/ai';
 import { checkDesktop, requestDesktopAccess, type DesktopStatus } from '../shared/desktop';
 import { sendMessage } from '../shared/messages';
 import {
@@ -124,6 +126,7 @@ function useGrantedAccess() {
 
 /** "https://example.com/*" → "example.com (https)". */
 const describeOrigin = (pattern: string) => {
+  if (pattern === AI_HOST_PERMISSION) return 'api.anthropic.com (Ask Claude)';
   const match = /^(https?):\/\/([^/]+)\//.exec(pattern);
   return match ? `${match[2]}${match[1] === 'http' ? ' (http)' : ''}` : pattern;
 };
@@ -229,6 +232,53 @@ function DesktopConnection() {
   );
 }
 
+/** Whether an Anthropic API key is stored, kept current as it changes. */
+function useAiKeyStored() {
+  const [stored, setStored] = useState<boolean | null>(null);
+  useEffect(() => {
+    const load = () =>
+      void sendMessage({ type: 'ai/status' }).then((response) =>
+        setStored(response.ok && response.ai?.hasKey === true),
+      );
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'local' && AI_KEY_STORAGE in changes) load();
+    };
+    load();
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
+  return stored;
+}
+
+function AskClaude({ ui }: { ui: StoreApi<UiState> }) {
+  const enabled = useStore(ui, (state) => state.ai.enabled);
+  const setAiSettings = useStore(ui, (state) => state.setAiSettings);
+  const stored = useAiKeyStored();
+  if (stored === null) return null;
+  const on = enabled && stored;
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <p className="max-w-prose text-xs text-ink-muted" role="status">
+        {on
+          ? 'On. Your Anthropic API key is stored in this browser profile for Folio, and is never synced.'
+          : stored
+            ? 'Off. An Anthropic API key is still stored in this browser profile.'
+            : 'Off. To turn it on, choose Tools › Ask Claude… in the editor.'}
+      </p>
+      <Button
+        size="sm"
+        disabled={!enabled && !stored}
+        onClick={() => {
+          setAiSettings({ enabled: false });
+          void sendMessage({ type: 'ai/forget-key' });
+        }}
+      >
+        Turn off and forget key
+      </Button>
+    </div>
+  );
+}
+
 function Options({ ui }: { ui: StoreApi<UiState> }) {
   const theme = useStore(ui, (state) => state.theme);
   const setTheme = useStore(ui, (state) => state.setTheme);
@@ -313,6 +363,13 @@ function Options({ ui }: { ui: StoreApi<UiState> }) {
             <div className="mt-5">
               <SiteAccess />
             </div>
+          </Section>
+
+          <Section
+            title="Ask Claude"
+            description="Optional, and off unless you turn it on. When you ask Claude about a document in the editor, Folio sends the text of its pages and your questions to Anthropic’s API with your own API key. Nothing is sent until you ask."
+          >
+            <AskClaude ui={ui} />
           </Section>
 
           <Section

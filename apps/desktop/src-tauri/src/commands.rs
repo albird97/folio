@@ -1,3 +1,4 @@
+use crate::ai::{AiError, AiProxy, ProxyRequest, RelayEvent, RelayMessage};
 use crate::close_guard::CloseGuard;
 use crate::files::{self, FileError, FileGrants, LaunchQueue, OpenedFiles, MAX_FILE_BYTES};
 use crate::incoming::{self, IncomingError, TransferQueue, TransferRequest};
@@ -8,7 +9,7 @@ use crate::save::{self, SaveError, WriteOutcome};
 use crate::{paths, Storage};
 use serde::Serialize;
 use std::path::PathBuf;
-use tauri::ipc::{InvokeBody, Request, Response};
+use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request, Response};
 use tauri::{AppHandle, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tokio::task::block_in_place;
@@ -48,7 +49,8 @@ command_error_from!(
     SaveError,
     RecoveryError,
     IncomingError,
-    RegistrationError
+    RegistrationError,
+    AiError
 );
 
 #[derive(Debug, Serialize)]
@@ -482,4 +484,62 @@ pub async fn native_messaging_status() -> Result<Status, CommandError> {
     Ok(block_in_place(|| {
         native_messaging::status(&locations, &exe)
     }))
+}
+
+/// Ask Claude: whether the user's API key is stored (never the key itself).
+#[tauri::command]
+pub async fn ai_key_status(proxy: State<'_, AiProxy>) -> Result<bool, CommandError> {
+    Ok(block_in_place(|| proxy.has_key())?)
+}
+
+/// Stores the user's API key in the OS credential store.
+#[tauri::command]
+pub async fn ai_set_key(proxy: State<'_, AiProxy>, key: String) -> Result<(), CommandError> {
+    Ok(block_in_place(|| proxy.set_key(&key))?)
+}
+
+/// Deletes the stored API key.
+#[tauri::command]
+pub async fn ai_forget_key(proxy: State<'_, AiProxy>) -> Result<(), CommandError> {
+    Ok(block_in_place(|| proxy.forget_key())?)
+}
+
+/// Sends one request of the webview's Anthropic SDK to Anthropic's API with
+/// the stored key (see `ai.rs` for what is allowed) and streams the answer
+/// back on `events`: a JSON head (`{type: "head", status, headers}`), the
+/// body in binary chunks, then `{type: "end"}` or `{type: "error"}`.
+/// Requests that are refused, or fail before an answer starts, reject.
+#[tauri::command]
+pub async fn ai_request(
+    proxy: State<'_, AiProxy>,
+    id: String,
+    request: ProxyRequest,
+    events: Channel<Response>,
+) -> Result<(), CommandError> {
+    let json = |message: RelayMessage<'_>| {
+        let text = serde_json::to_string(&message).unwrap_or_default();
+        events
+            .send(Response::new(InvokeResponseBody::Json(text)))
+            .is_ok()
+    };
+    proxy
+        .relay(&id, request, |event| match event {
+            RelayEvent::Head { status, headers } => json(RelayMessage::Head {
+                status,
+                headers: &headers,
+            }),
+            RelayEvent::Chunk(bytes) => events.send(Response::new(bytes)).is_ok(),
+            RelayEvent::End => json(RelayMessage::End),
+            RelayEvent::Failed => json(RelayMessage::Error {
+                code: AiError::Network.code(),
+            }),
+        })
+        .await?;
+    Ok(())
+}
+
+/// Stops a request started with `ai_request` (the SDK aborted it).
+#[tauri::command]
+pub fn ai_cancel(proxy: State<'_, AiProxy>, id: String) {
+    proxy.cancel(&id);
 }
