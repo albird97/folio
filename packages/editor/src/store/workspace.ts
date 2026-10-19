@@ -19,6 +19,7 @@ import {
   type AssetRef,
   type DocumentMetadata,
   type DocumentModel,
+  type DocumentStamps,
   type DocumentViewState,
   type EditorDocumentState,
   type Operation,
@@ -220,6 +221,11 @@ export interface WorkspaceState {
   ): boolean;
   deleteAnnotations(key: string, ids: AnnotationId[]): void;
   updateMetadata(key: string, patch: Partial<DocumentMetadata>): void;
+  /**
+   * Sets or removes (null) the page numbers or the watermark. They change
+   * what the pages show, so the document must allow changes.
+   */
+  setStamps(key: string, stamps: Partial<DocumentStamps>, label: string): boolean;
   /**
    * Keeps image bytes for annotations (PNG or JPEG, already decoded and
    * re-encoded by the caller). The returned asset goes into the model with
@@ -1267,6 +1273,11 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
           { type: 'metadata/update', patch: patchValues },
           { label: 'Edit document properties', coalesceKey: 'metadata' },
         );
+      },
+
+      setStamps(key, stamps, label) {
+        if (!allowed(key, 'modify')) return false;
+        return apply(key, { type: 'stamps/set', stamps }, { label });
       },
 
       async registerImage(key, bytes, mimeType) {
