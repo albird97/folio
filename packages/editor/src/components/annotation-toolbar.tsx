@@ -21,6 +21,7 @@ import {
   MousePointer2,
   PenLine,
   Redo2,
+  Signature,
   Square,
   StickyNote,
   Strikethrough,
@@ -71,13 +72,18 @@ const TOOL_META: Record<Tool, { label: string; icon: ReactNode; hint: string }> 
     hint: 'Click or drag to add a text box (new text, not an edit of the page’s text)',
   },
   image: { label: 'Add image', icon: <ImagePlus {...icon} />, hint: 'Click to add a picture' },
+  signature: {
+    label: 'Sign',
+    icon: <Signature {...icon} />,
+    hint: 'Add a picture of your signature',
+  },
 };
 
 const GROUPS: readonly (readonly Tool[])[] = [
   ['select'],
   ['highlight', 'underline', 'strikeout'],
   ['note', 'ink', 'rectangle', 'ellipse', 'line', 'arrow'],
-  ['text', 'image'],
+  ['text', 'image', 'signature'],
 ];
 
 const STROKE_WIDTHS = [1, 2, 3, 5, 8] as const;
@@ -135,7 +141,7 @@ export function ColorSwatches({
 function ToolStyle({ tool, style }: { tool: Tool; style: AnnotationStyle }) {
   const setToolColor = useUi((state) => state.setToolColor);
   const setStyle = useUi((state) => state.setStyle);
-  if (tool === 'select' || tool === 'image') return null;
+  if (tool === 'select' || tool === 'image' || tool === 'signature') return null;
   const color = style.colors[tool];
   const stroked =
     tool === 'ink' ||
@@ -264,7 +270,7 @@ function ToolStyle({ tool, style }: { tool: Tool; style: AnnotationStyle }) {
  * pages of an open document.
  */
 export function AnnotationToolbar({ doc }: { doc: WorkspaceDocument }) {
-  const { workspace, profile, shortcutPlatform } = useWorkspaceContext();
+  const { workspace, ui, profile, shortcutPlatform } = useWorkspaceContext();
   const tool = useUi((state) => state.tool);
   const setTool = useUi((state) => state.setTool);
   const style = useUi((state) => state.style);
@@ -287,7 +293,13 @@ export function AnnotationToolbar({ doc }: { doc: WorkspaceDocument }) {
         value={active}
         aria-label="Tool"
         onValueChange={(value) => {
-          if (value) setTool(value as Tool);
+          // Sign starts in its dialog (also while placing, to choose again):
+          // its tool only places the signature chosen there.
+          if (value === 'signature' || (!value && active === 'signature')) {
+            ui.getState().openDialog({ kind: 'signature', docKey: doc.key });
+          } else if (value) {
+            setTool(value as Tool);
+          }
         }}
         className="flex items-center gap-0.5"
       >

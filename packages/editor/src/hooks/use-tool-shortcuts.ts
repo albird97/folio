@@ -18,12 +18,15 @@ export const TOOL_KEYS: Readonly<Record<string, Tool>> = {
   i: 'image',
 };
 
+/** Opens the signature dialog: a signature is drawn or chosen before it is placed. */
+const SIGN_KEY = 's';
+
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 
 /**
  * Letters pick tools while a document is open and nothing is being typed
  * (V Select, H Highlight, U Underline, K Strikethrough, N Note, P Draw,
- * R Rectangle, O Ellipse, L Line, A Arrow, T Text, I Image).
+ * R Rectangle, O Ellipse, L Line, A Arrow, T Text, I Image, S Sign).
  */
 export function useToolShortcuts(): void {
   const { workspace, ui } = useWorkspaceContext();
@@ -39,14 +42,16 @@ export function useToolShortcuts(): void {
       ) {
         return;
       }
-      const tool = TOOL_KEYS[event.key.toLowerCase()];
-      if (!tool) return;
+      const letter = event.key.toLowerCase();
+      const tool = TOOL_KEYS[letter];
+      if (!tool && letter !== SIGN_KEY) return;
       const state = workspace.getState();
       const doc = state.documents.find((entry) => entry.key === state.activeKey);
       if (doc?.status !== 'ready') return;
       if (tool !== 'select' && !doc.permissions.annotate) return;
       event.preventDefault();
-      ui.getState().setTool(tool);
+      if (tool) ui.getState().setTool(tool);
+      else ui.getState().openDialog({ kind: 'signature', docKey: doc.key });
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
