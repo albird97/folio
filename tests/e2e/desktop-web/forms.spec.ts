@@ -196,6 +196,17 @@ test.describe('forms', () => {
 
     const sign = page.getByRole('button', { name: 'Sign signature' });
     await sign.scrollIntoViewIfNeeded();
+    // Pages, and the controls over them, look the same in the dark theme.
+    const colors = () =>
+      sign.evaluate((button) => {
+        const style = getComputedStyle(button);
+        return [style.color, style.borderColor, style.backgroundColor];
+      });
+    const light = await colors();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    expect(await colors()).toEqual(light);
+    await expectAccessible(page, 'form fields (dark)');
     await sign.click();
     await expect(page.getByRole('dialog')).toBeVisible();
   });

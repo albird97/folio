@@ -50,14 +50,16 @@ function typedPasswords(handle: PdfDocumentHandle): Map<string, string> {
 /**
  * Controls lie over the fields drawn on the page. Text stays invisible
  * until a control has focus: the page shows each value as it is saved.
+ * Pages stay white in both themes, so the colours over them are the
+ * light theme's (focus: --folio-focus, accent: --folio-accent).
  */
 const CONTROL =
   'absolute m-0 box-border rounded-none border-0 bg-transparent p-0 text-transparent [font-family:Helvetica,Arial,sans-serif]';
 /** Typing shows on white, in the field's colour. */
 const TYPING =
-  'focus:bg-white focus:text-[color:var(--field-color)] focus:outline-2 focus:outline-focus';
+  'focus:bg-white focus:text-[color:var(--field-color)] focus:outline-2 focus:outline-[oklch(0.58_0.12_210)]';
 const FOCUS_RING =
-  'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus';
+  'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[oklch(0.58_0.12_210)]';
 /** The tint of fields that can be filled in, over white pages in both themes. */
 const TINT = 'bg-[oklch(0.62_0.11_210/0.13)] hover:bg-[oklch(0.62_0.11_210/0.22)]';
 
@@ -512,8 +514,8 @@ function FormLayerView({ doc, page, position, box, viewRotation, handle, tool }:
             type="button"
             aria-label={`Sign ${label}`}
             className={cn(
-              'absolute flex items-center justify-center gap-1 overflow-hidden rounded-xs text-xs font-medium text-accent-soft-ink',
-              'border border-dashed border-accent bg-[oklch(0.95_0.03_205/0.85)] hover:bg-[oklch(0.92_0.04_205/0.9)]',
+              'absolute flex items-center justify-center gap-1 overflow-hidden rounded-xs text-xs font-medium text-[oklch(0.37_0.08_210)]',
+              'border border-dashed border-[oklch(0.5_0.092_210)] bg-[oklch(0.95_0.03_205/0.85)] hover:bg-[oklch(0.92_0.04_205/0.9)]',
               FOCUS_RING,
             )}
             style={frame(placement, widget.rect)}
