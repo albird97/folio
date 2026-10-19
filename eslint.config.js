@@ -74,6 +74,7 @@ export default tseslint.config(
       '**/*.config.ts',
       '**/vite/**',
       'apps/chrome-extension/scripts/**',
+      'docs/**/*.mjs',
       '**/*.test.ts',
     ],
     languageOptions: { globals: { ...globals.node } },
