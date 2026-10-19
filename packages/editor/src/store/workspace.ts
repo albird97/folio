@@ -46,7 +46,12 @@ import {
   type PdfEngine,
   type PdfErrorCode,
 } from '@folio/pdf-core';
-import type { CompressionOptions, ExportResult, Protection } from '@folio/pdf-core/export';
+import type {
+  CompressionOptions,
+  ExportOptions,
+  ExportResult,
+  Protection,
+} from '@folio/pdf-core/export';
 import type { IncomingFile } from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { pageTextWithRecognized } from '../ocr/page-text';
@@ -994,7 +999,8 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       const doc = find(key);
       const entry = resources.get(key);
       if (!doc?.editor || !doc.info || !entry) throw new Error('The document is not open.');
-      const { exportPdf } = await import('@folio/pdf-core/export');
+      // Written in a worker (on this thread where there are none), so the page stays responsive.
+      const { exportInWorker } = await import('@folio/pdf-core/export');
       const primary = [...entry.sources.values()][0];
       // Values filled in become the opened file's own form values (with their
       // appearances), on which the rest of the document is assembled.
@@ -1011,7 +1017,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         }),
       );
       const model = doc.editor.model;
-      return exportPdf({
+      const options: ExportOptions = {
         model: {
           ...model,
           ...(request.withoutAnnotations ? { annotations: {} as typeof model.annotations } : {}),
@@ -1031,7 +1037,10 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
                 ? null
                 : { userPassword: primary?.password ?? '', permissions: doc.info.permissions })),
         ...(request.compression ? { compression: request.compression } : {}),
-      });
+      };
+      // The filled-in copy is the store's alone, so it moves to the worker
+      // instead of being copied; the sources' own bytes are copied.
+      return exportInWorker(options, filled ? [filled] : []);
     }
 
     return {

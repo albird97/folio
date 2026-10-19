@@ -2,7 +2,8 @@ import type { FormFieldId } from '@folio/document-model';
 import { PDFDocument } from '@cantoo/pdf-lib';
 import { createPdfEngine, extractText } from '@folio/pdf-core';
 import { memoryFile } from '@folio/platform-adapters';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+import { FakeExportWorker } from '../../../../tests/setup/export-worker';
 import { nodeWorkerSrc, readFixture, type FixtureName } from '../../../../tests/setup/fixtures';
 import { createWorkspaceStore, type WorkspaceStore } from './workspace';
 
@@ -17,6 +18,19 @@ async function openFixture(name: FixtureName) {
 
 const model = (store: WorkspaceStore, key: string) =>
   store.getState().documents.find((entry) => entry.key === key)!.editor!.model;
+
+/** The value of the form fixture's "name" field in a saved file. */
+const nameIn = async (bytes: Uint8Array) =>
+  (await PDFDocument.load(bytes, { updateMetadata: false }))
+    .getForm()
+    .getTextField('name')
+    .getText() ?? '';
+
+async function fillName(store: WorkspaceStore, key: string, value: string) {
+  await expect.poll(() => Object.keys(model(store, key).formFields).length).toBeGreaterThan(0);
+  const field = Object.values(model(store, key).formFields).find((entry) => entry.name === 'name')!;
+  expect(store.getState().fillFormField(key, field.id as FormFieldId, value)).toBe(true);
+}
 
 async function textOf(bytes: Uint8Array) {
   const handle = await engine.open(bytes);
@@ -60,16 +74,7 @@ describe('workspace store: exports for the export tools', () => {
 
   it('leaves out values filled in with Folio when asked', async () => {
     const { store, key } = await openFixture('form-fields.pdf');
-    await expect.poll(() => Object.keys(model(store, key).formFields).length).toBeGreaterThan(0);
-    const field = Object.values(model(store, key).formFields).find(
-      (entry) => entry.name === 'name',
-    )!;
-    expect(store.getState().fillFormField(key, field.id as FormFieldId, 'Grace Hopper')).toBe(true);
-    const nameIn = async (bytes: Uint8Array) =>
-      (await PDFDocument.load(bytes, { updateMetadata: false }))
-        .getForm()
-        .getTextField('name')
-        .getText() ?? '';
+    await fillName(store, key, 'Grace Hopper');
     expect(await nameIn((await store.getState().exportDocument(key)).bytes)).toBe('Grace Hopper');
     const original = await nameIn(readFixture('form-fields.pdf'));
     expect(
@@ -91,5 +96,26 @@ describe('workspace store: exports for the export tools', () => {
     expect(progress).toEqual([]);
     expect(store.getState().documents[0]!.editor!.history.past).toHaveLength(0);
     await store.getState().close(key);
+  });
+
+  it('exports in a worker where there is one, and keeps the document’s own bytes', async () => {
+    vi.stubGlobal('Worker', FakeExportWorker);
+    FakeExportWorker.reset();
+    try {
+      const { store, key } = await openFixture('form-fields.pdf');
+      await fillName(store, key, 'Grace Hopper');
+      // The filled-in copy moves to the worker; the opened file is copied,
+      // so every later export still has it.
+      expect(await nameIn((await store.getState().exportDocument(key)).bytes)).toBe('Grace Hopper');
+      expect(await nameIn((await store.getState().exportDocument(key)).bytes)).toBe('Grace Hopper');
+      const plain = await store.getState().exportDocument(key, { withoutFormValues: true });
+      expect(await nameIn(plain.bytes)).toBe(await nameIn(readFixture('form-fields.pdf')));
+      expect(FakeExportWorker.created).toHaveLength(3);
+      expect(FakeExportWorker.created.every((worker) => worker.terminated)).toBe(true);
+      expect(store.getState().documents[0]!.busy).toBeNull();
+      await store.getState().close(key);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
