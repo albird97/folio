@@ -2,7 +2,7 @@ import { undoLabel, type FormFieldDescriptor, type SourceId } from '@folio/docum
 import type { FormWidget, PdfDocumentInfo, PdfEngine } from '@folio/pdf-core';
 import { fakeDocumentHandle } from '@folio/pdf-core/testing';
 import { createMemoryPlatformAdapter, memoryFile } from '@folio/platform-adapters';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useWorkspace, useWorkspaceContext, WorkspaceProvider } from '../context';
 import { PERMISSION_MESSAGES } from '../store/editing';
@@ -172,18 +172,16 @@ describe('form layer', () => {
     expect([name.style.left, name.style.top, name.style.width]).toEqual(['72px', '108px', '200px']);
   });
 
-  it('commits typing after a pause or at Enter, and Escape restores the value', async () => {
+  it('fills in text as it is typed, one undo step per field; Escape restores it', async () => {
     const { workspace, key, field, setFormValues } = await setup();
     const name = screen.getByRole('textbox', { name: 'Full name' }) as HTMLInputElement;
     act(() => name.focus());
     fireEvent.change(name, { target: { value: 'Ada' } });
-    expect(field('person.name').value).toBe('');
-    await waitFor(() => expect(field('person.name').value).toBe('Ada'));
+    // Nothing waits: a save started by a shortcut or a menu right now has it.
+    expect(field('person.name').value).toBe('Ada');
     expect(setFormValues).toHaveBeenLastCalledWith([['person.name', 'Ada']]);
     fireEvent.change(name, { target: { value: 'Ada Lovelace' } });
-    fireEvent.keyDown(name, { key: 'Enter' });
-    expect(field('person.name').value).toBe('Ada Lovelace');
-    // Typing into one field is one step to undo.
+    expect(name.value).toBe('Ada Lovelace');
     const editor = () => workspace.getState().documents[0]!.editor!;
     expect(editor().history.past).toHaveLength(1);
     expect(undoLabel(editor())).toBe('Fill in Full name');

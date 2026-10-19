@@ -211,6 +211,16 @@ test.describe('forms', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
   });
 
+  test('saves what was just typed when a shortcut saves from the field', async ({ page }) => {
+    await open(page, 'form-fields.pdf');
+    const name = page.getByRole('textbox', { name: 'Full name' });
+    await name.click();
+    await page.keyboard.type('Grace Hopper');
+    const saved = await download(page, () => page.keyboard.press('Control+Shift+S'));
+    expect((await formValues(saved)).name).toBe('Grace Hopper');
+    await expect(name).toBeFocused();
+  });
+
   test('explains XFA forms and leaves them as drawn', async ({ page }) => {
     await open(page, 'xfa-form.pdf');
     await expect(page.getByRole('region', { name: 'Form' })).toHaveText(

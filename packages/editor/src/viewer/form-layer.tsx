@@ -25,8 +25,6 @@ import { fieldLabel } from '../store/editing';
 import { displayRotation, displaySpaceSize, mapRect, pageToDisplay } from './geometry';
 import type { PageOverlayProps } from './page-overlays';
 
-/** Typing reaches the document (its pages, history and recovery) once it pauses this long. */
-const TYPING_COMMIT_MS = 300;
 /** Line height PDF.js gives field text, in font sizes. */
 const LINE_FACTOR = 1.35;
 
@@ -139,51 +137,13 @@ function TextControl({
 }: ControlProps<TextWidget>) {
   const fill = useFill(docKey, field.id, label);
   const value = typeof field.value === 'string' ? field.value : '';
-  /** What is being typed, while the field has focus. */
-  const [draft, setDraft] = useState<string | null>(null);
-  const typing = useRef<{
-    atFocus: string;
-    unsaved: string | null;
-    timer?: ReturnType<typeof setTimeout>;
-  }>({ atFocus: '', unsaved: null });
-
-  const commit = () => {
-    const state = typing.current;
-    clearTimeout(state.timer);
-    if (state.unsaved === null) return;
-    const next = state.unsaved;
-    state.unsaved = null;
-    fill(next);
-  };
-  // Typing is never lost, even when the page scrolls away before it is committed.
-  useEffect(() => {
-    const state = typing.current;
-    return () => {
-      clearTimeout(state.timer);
-      if (state.unsaved !== null) fill(state.unsaved);
-      state.unsaved = null;
-    };
-  }, [fill]);
-
-  const type = (next: string) => {
-    const state = typing.current;
-    setDraft(next);
-    state.unsaved = next;
-    clearTimeout(state.timer);
-    state.timer = setTimeout(commit, TYPING_COMMIT_MS);
-  };
+  /** The value the field had when it got focus, which Escape gives back. */
+  const atFocus = useRef('');
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    if (!editable) return;
-    if (event.key === 'Escape') {
-      // Back to the value the field had when it got focus.
-      event.preventDefault();
-      type(typing.current.atFocus);
-      commit();
-    } else if (event.key === 'Enter' && (!widget.multiLine || event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      commit();
-    }
+    if (event.key !== 'Escape' || !editable) return;
+    event.preventDefault();
+    fill(atFocus.current);
   };
 
   const { ppu } = placement;
@@ -209,7 +169,9 @@ function TextControl({
   const props = {
     'aria-label': label,
     readOnly: !editable,
-    value: draft ?? value,
+    // Each change reaches the document at once (typing into one field is one
+    // undo step), so a save or print started in any way has all of it.
+    value,
     maxLength: widget.maxLength ?? undefined,
     className: cn(
       CONTROL,
@@ -219,24 +181,19 @@ function TextControl({
     ),
     style,
     onFocus: () => {
-      typing.current.atFocus = value;
-      if (editable) setDraft(value);
-    },
-    onBlur: () => {
-      commit();
-      setDraft(null);
+      atFocus.current = value;
     },
     onKeyDown,
   };
   return widget.multiLine ? (
-    <textarea {...props} onChange={(event) => editable && type(event.currentTarget.value)} />
+    <textarea {...props} onChange={(event) => editable && fill(event.currentTarget.value)} />
   ) : (
     <input
       {...props}
       type="text"
       autoComplete="off"
       spellCheck={false}
-      onChange={(event) => editable && type(event.currentTarget.value)}
+      onChange={(event) => editable && fill(event.currentTarget.value)}
     />
   );
 }
