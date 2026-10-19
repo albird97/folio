@@ -399,7 +399,11 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
       advisories.
 - [x] Accessibility: visible keyboard focus rings everywhere (they were invisible with Tailwind 4),
       axe in both themes on every new dialog and surface.
-- [ ] Export off the main thread (Web Worker) and measured.
+- [x] Export off the main thread: `exportInWorker` runs pdf-lib (and image re-encoding) in a
+      same-origin module Web Worker on desktop and in the extension, transferring buffers,
+      propagating error codes and warnings, cancellable, with the main thread as fallback (Node,
+      tests). The longest main-thread task while saving 5,000 stamped pages fell from about 0.55 s
+      to none, and while compressing two 4000×2700 photos from about 0.8 s to none (Chromium).
 - [ ] Verify the native integrations on a real Mac and a real Windows PC.
 - [ ] Screen reader passes (VoiceOver, Narrator, ChromeVox).
 - [ ] Public release feed and signed, notarized installers (credentials).
@@ -481,8 +485,8 @@ that annotations, flattened content and added text look the same as in Folio.
 
 - The editing UI in WKWebView (macOS) and WebView2 (Windows); it is the same web code, verified in
   Chromium.
-- Very large edits: exporting runs on the main thread, so saving a document of hundreds of
-  megabytes pauses the UI while pdf-lib writes it.
+- Very large edits: exporting ran on the main thread, so saving a document of hundreds of
+  megabytes paused the UI while pdf-lib wrote it (moved to a Web Worker in Phase 7).
 
 ### Phase 2 results
 
@@ -581,7 +585,7 @@ nothing beyond that is claimed here.
   (such as Chinese or emoji) are saved as "?" (Folio warns). Form fields and tagged structure on
   pages copied from other files are kept as drawn but not merged into the document's form or
   structure tree. Changing a signed document invalidates its signatures (Folio says so when
-  saving). Exporting runs on the main thread.
+  saving).
 - **Search:** scanned pages have no text until Tools › Recognize text; right-to-left and vertical
   text are untested; results stop at 10,000 matches (the find bar says so).
 - **macOS and Windows:** the native dialogs, drag and drop, menus, shortcuts, file association,

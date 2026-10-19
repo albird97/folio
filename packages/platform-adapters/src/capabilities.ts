@@ -515,6 +515,27 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
       'Unit tests on the text fixture and recognized text; e2e (Chromium) copies and saves it from the desktop UI, the editor and the side panel, including a page read by OCR.',
   },
   {
+    id: 'export-worker',
+    area: 'Saving and export',
+    feature: 'Saving without freezing the window (export in a worker)',
+    plannedPhase: 7,
+    targets: {
+      macos: unverified(
+        'macos',
+        'Save, print, extract, split and Reduce file size write the PDF in a Web Worker.',
+      ),
+      windows: unverified(
+        'windows',
+        'Save, print, extract, split and Reduce file size write the PDF in a Web Worker.',
+      ),
+      chrome: full(
+        'Save, print, extract, split and Reduce file size write the PDF in a Web Worker of the extension’s own.',
+      ),
+    },
+    verification:
+      'Unit tests drive the worker client through a stand-in worker (the same output as the in-page exporter, error codes, warnings, progress, cancelling, transfer and copy, fallback). E2E (Chromium): saving 5,000 stamped pages and compressing two large photos leave no main-thread task over 250 ms (0.55 s and 0.8 s before); the extension’s export worker loads with no CSP violation.',
+  },
+  {
     id: 'printing',
     area: 'Saving and export',
     feature: 'Print',

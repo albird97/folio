@@ -445,7 +445,8 @@ workflow's build step to produce signed releases. Never commit them.
 
 ## Privacy
 
-- Documents are read and rendered locally (PDF.js runs in a worker inside the app). Nothing is
+- Documents are read and rendered locally (PDF.js runs in a worker inside the app; saving and
+  compressing run in a separate worker, so large documents don't freeze the window). Nothing is
   uploaded, and there are no analytics. The only remote services are opt-in: **Ask Claude** sends
   the text of the pages you choose and your questions to Anthropic's API with your own key, when
   you ask; **Check for Updates** asks GitHub for the release feed (sending nothing about you or
