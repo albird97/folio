@@ -99,7 +99,7 @@ function formsLabel(forms: 'none' | 'acroform' | 'xfa', fields: number): string 
 }
 
 const FIELD =
-  'w-full min-w-0 rounded-sm bg-transparent px-1.5 py-0.5 text-xs text-ink outline-none hover:bg-hover focus-visible:bg-raised focus-visible:shadow-[inset_0_0_0_1px_var(--folio-focus)]';
+  'w-full min-w-0 rounded-sm bg-transparent px-1.5 py-0.5 text-xs text-ink outline-hidden hover:bg-hover focus-visible:bg-raised focus-visible:shadow-[inset_0_0_0_1px_var(--folio-focus)]';
 
 /** A document property that can be changed in place. */
 function EditableRow({

@@ -15,7 +15,7 @@ import { ColorSwatches } from './annotation-toolbar';
 import { AnnotationIcon, annotationLabel } from './comments-panel';
 
 const FIELD =
-  'w-full rounded-md bg-raised px-2 py-1.5 text-xs text-ink shadow-[inset_0_0_0_1px_var(--folio-border-strong)] outline-none focus-visible:shadow-[inset_0_0_0_2px_var(--folio-focus)]';
+  'w-full rounded-md bg-raised px-2 py-1.5 text-xs text-ink shadow-[inset_0_0_0_1px_var(--folio-border-strong)] outline-hidden focus-visible:shadow-[inset_0_0_0_2px_var(--folio-focus)]';
 
 /** Settings of the selected annotations: colour, opacity, line, font and text. */
 export function AnnotationInspector({ doc }: { doc: WorkspaceDocument }) {

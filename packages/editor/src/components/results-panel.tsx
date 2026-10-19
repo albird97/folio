@@ -157,8 +157,8 @@ export function ResultsPanel({ doc, onFind }: { doc: WorkspaceDocument; onFind()
                   onClick={() => choose(index, false)}
                   onKeyDown={(event) => onKeyDown(event, index)}
                   className={cn(
-                    'flex size-full flex-col justify-center gap-0.5 rounded-md px-2 text-left outline-none',
-                    'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus',
+                    'flex size-full flex-col justify-center gap-0.5 rounded-md px-2 text-left outline-hidden',
+                    'focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus',
                     current ? 'bg-accent-soft text-accent-soft-ink' : 'hover:bg-hover',
                   )}
                 >

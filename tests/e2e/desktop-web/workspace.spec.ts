@@ -50,6 +50,27 @@ test.describe('desktop workspace (web adapter)', () => {
     await expectAccessible(page, 'workspace with document');
   });
 
+  test('shows a focus ring on controls reached with the keyboard', async ({ page }) => {
+    await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
+      'basic-3-pages.pdf',
+    ]);
+    await pageRendered(page);
+    // Controls that hide the browser's outline must draw their own when focused
+    // from the keyboard (Tailwind's outline-none would hide that one too).
+    const outlineOf = (name: string) =>
+      page.getByRole('radio', { name, exact: true }).evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { style: style.outlineStyle, width: style.outlineWidth };
+      });
+    const select = page.getByRole('radio', { name: 'Select', exact: true });
+    await select.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(page.getByRole('radio', { name: 'Highlight', exact: true })).toBeFocused();
+    const ring = await outlineOf('Highlight');
+    expect(ring.style).not.toBe('none');
+    expect(ring.width).toBe('2px');
+  });
+
   test('panels and theme follow the toolbar and persist across reloads', async ({ page }) => {
     await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
       'basic-3-pages.pdf',

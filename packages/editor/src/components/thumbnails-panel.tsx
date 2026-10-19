@@ -376,8 +376,8 @@ export function ThumbnailsPanel({
                 onPointerUp={(event) => endDrag(event, false)}
                 onPointerCancel={(event) => endDrag(event, true)}
                 className={cn(
-                  'absolute inset-x-2 flex flex-col items-center justify-center gap-2 rounded-md outline-none select-none',
-                  'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus',
+                  'absolute inset-x-2 flex flex-col items-center justify-center gap-2 rounded-md outline-hidden select-none',
+                  'focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus',
                   isSelected ? 'bg-accent-soft' : current ? 'bg-hover' : 'hover:bg-hover',
                 )}
                 style={{ top: slotTop(index), height: THUMBNAIL_SLOT }}

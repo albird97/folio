@@ -110,9 +110,9 @@ export function ColorSwatches({
           aria-label="None"
           onClick={() => onChange(null)}
           className={cn(
-            'relative size-6 rounded-full border border-line-strong bg-raised outline-none',
+            'relative size-6 rounded-full border border-line-strong bg-raised outline-hidden',
             'after:absolute after:inset-x-0.5 after:top-1/2 after:h-px after:-rotate-45 after:bg-danger',
-            'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus',
+            'focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-focus',
             value === null && 'ring-2 ring-accent ring-offset-1 ring-offset-raised',
           )}
         />
@@ -126,8 +126,8 @@ export function ColorSwatches({
           aria-label={color}
           onClick={() => onChange(color)}
           className={cn(
-            'size-6 rounded-full border border-[oklch(0_0_0/0.18)] outline-none',
-            'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus',
+            'size-6 rounded-full border border-[oklch(0_0_0/0.18)] outline-hidden',
+            'focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-focus',
             value === color && 'ring-2 ring-accent ring-offset-1 ring-offset-raised',
           )}
           style={{ backgroundColor: color }}
@@ -155,7 +155,7 @@ function ToolStyle({ tool, style }: { tool: Tool; style: AnnotationStyle }) {
       <DropdownMenuTrigger asChild>
         <ToolbarPrimitive.Button
           aria-label={`${TOOL_META[tool].label} style`}
-          className="ml-1 inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-xs text-ink-muted outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-focus"
+          className="ml-1 inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-xs text-ink-muted outline-hidden hover:bg-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus"
         >
           <span
             aria-hidden
@@ -313,8 +313,8 @@ export function AnnotationToolbar({ doc }: { doc: WorkspaceDocument }) {
                   aria-label={TOOL_META[value].label}
                   disabled={value !== 'select' && !editable}
                   className={cn(
-                    'inline-flex size-8 items-center justify-center rounded-md text-ink outline-none',
-                    'hover:bg-hover focus-visible:outline-2 focus-visible:outline-focus',
+                    'inline-flex size-8 items-center justify-center rounded-md text-ink outline-hidden',
+                    'hover:bg-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus',
                     'disabled:pointer-events-none disabled:opacity-45',
                     'data-[state=on]:bg-accent-soft data-[state=on]:text-accent-soft-ink',
                   )}

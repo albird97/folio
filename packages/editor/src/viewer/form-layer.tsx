@@ -56,9 +56,9 @@ const CONTROL =
   'absolute m-0 box-border rounded-none border-0 bg-transparent p-0 text-transparent [font-family:Helvetica,Arial,sans-serif]';
 /** Typing shows on white, in the field's colour. */
 const TYPING =
-  'focus:bg-white focus:text-[color:var(--field-color)] focus:outline-2 focus:outline-[oklch(0.58_0.12_210)]';
+  'focus:bg-white focus:text-[color:var(--field-color)] focus:outline-2 focus:outline-solid focus:outline-[oklch(0.58_0.12_210)]';
 const FOCUS_RING =
-  'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[oklch(0.58_0.12_210)]';
+  'focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-[oklch(0.58_0.12_210)]';
 /** The tint of fields that can be filled in, over white pages in both themes. */
 const TINT = 'bg-[oklch(0.62_0.11_210/0.13)] hover:bg-[oklch(0.62_0.11_210/0.22)]';
 

@@ -63,7 +63,7 @@ const SOURCE_LABELS: Record<Source, string> = {
 const MAX_NAME_LENGTH = 80;
 
 /** Every tab is as tall as the tallest, so the dialog keeps its place when switching. */
-const PANEL = 'flex min-h-[19rem] flex-col pt-3 outline-none';
+const PANEL = 'flex min-h-[19rem] flex-col pt-3 outline-hidden';
 
 const inkDot = (ink: Ink) => (
   <span
@@ -404,8 +404,8 @@ function SignatureForm({
                   value={value}
                   ref={value === 'draw' ? drawTabRef : undefined}
                   className={cn(
-                    '-mb-px inline-flex h-8 items-center border-b-2 border-transparent px-3 text-sm font-medium text-ink-muted outline-none',
-                    'hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus',
+                    '-mb-px inline-flex h-8 items-center border-b-2 border-transparent px-3 text-sm font-medium text-ink-muted outline-hidden',
+                    'hover:text-ink focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus',
                     'data-[state=active]:border-accent data-[state=active]:text-ink',
                   )}
                 >
@@ -430,9 +430,9 @@ function SignatureForm({
                       aria-label={`Saved signature ${index + 1}`}
                       onClick={() => setChosen(signature.id)}
                       className={cn(
-                        'flex h-[4.5rem] w-full items-center justify-center rounded-md bg-page px-10 py-2 outline-none',
+                        'flex h-[4.5rem] w-full items-center justify-center rounded-md bg-page px-10 py-2 outline-hidden',
                         'shadow-[inset_0_0_0_1px_var(--folio-border-strong)]',
-                        'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus',
+                        'focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-focus',
                         chosen === signature.id &&
                           'ring-2 ring-accent ring-offset-1 ring-offset-raised',
                       )}

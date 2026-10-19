@@ -807,7 +807,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onClick={onClick}
-      className="h-full w-full touch-pan-x touch-pan-y overflow-auto outline-none [scrollbar-gutter:stable] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+      className="h-full w-full touch-pan-x touch-pan-y overflow-auto outline-hidden [scrollbar-gutter:stable] focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
     >
       {layout ? (
         <div className="relative" style={{ width: layout.width, height: layout.height }}>

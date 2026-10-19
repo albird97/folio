@@ -102,7 +102,7 @@ export function FindBar({ doc, onClose }: { doc: WorkspaceDocument; onClose(): v
           placeholder="Find in document"
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={onKeyDown}
-          className="h-full min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-subtle [&::-webkit-search-cancel-button]:hidden"
+          className="h-full min-w-0 flex-1 bg-transparent text-sm text-ink outline-hidden placeholder:text-ink-subtle [&::-webkit-search-cancel-button]:hidden"
         />
         <span
           id={SUMMARY_ID}

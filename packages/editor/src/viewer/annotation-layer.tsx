@@ -929,7 +929,7 @@ function TextEditor({
       color: annotation.color,
     };
     className =
-      'absolute resize-none overflow-hidden border border-dashed border-accent bg-[oklch(1_0_0/0.75)] outline-none [color-scheme:light]';
+      'absolute resize-none overflow-hidden border border-dashed border-accent bg-[oklch(1_0_0/0.75)] outline-hidden [color-scheme:light]';
   } else {
     const icon = toDisplay({
       x: annotation.position.x,
@@ -944,7 +944,7 @@ function TextEditor({
       height: 120,
     };
     className =
-      'absolute z-10 resize-none rounded-md border border-line bg-raised p-2 text-sm text-ink shadow-pop outline-none focus-visible:outline-2 focus-visible:outline-focus';
+      'absolute z-10 resize-none rounded-md border border-line bg-raised p-2 text-sm text-ink shadow-pop outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus';
   }
 
   return (

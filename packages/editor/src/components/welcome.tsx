@@ -60,7 +60,7 @@ function RecentFiles() {
             <button
               type="button"
               onClick={() => open(file)}
-              className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left outline-none hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+              className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left outline-hidden hover:bg-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
             >
               <FileText
                 size={ICON.md}

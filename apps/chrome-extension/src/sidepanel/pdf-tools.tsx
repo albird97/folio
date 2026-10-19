@@ -261,7 +261,7 @@ export function PdfTools({
             onClick={() => choose(entry.id)}
             className={cn(
               'flex items-center gap-2 rounded-md border px-2.5 py-2 text-left text-xs font-medium',
-              'outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-focus',
+              'outline-hidden hover:bg-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus',
               tool === entry.id
                 ? 'border-accent bg-accent-soft text-accent-soft-ink'
                 : 'border-line',

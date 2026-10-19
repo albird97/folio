@@ -62,8 +62,8 @@ export function Sidebar({
               key={value}
               value={value}
               className={cn(
-                'inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs font-medium text-ink-muted outline-none',
-                'hover:text-ink focus-visible:outline-2 focus-visible:outline-focus',
+                'inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs font-medium text-ink-muted outline-hidden',
+                'hover:text-ink focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus',
                 'data-[state=active]:bg-hover data-[state=active]:text-ink',
               )}
             >
@@ -86,10 +86,10 @@ export function Sidebar({
             </Tabs.Trigger>
           ))}
         </Tabs.List>
-        <Tabs.Content value="pages" className="min-h-0 flex-1 outline-none">
+        <Tabs.Content value="pages" className="min-h-0 flex-1 outline-hidden">
           <ThumbnailsPanel doc={doc} pages={pages} view={view} sourceHandle={sourceHandle} />
         </Tabs.Content>
-        <Tabs.Content value="outline" className="min-h-0 flex-1 outline-none">
+        <Tabs.Content value="outline" className="min-h-0 flex-1 outline-hidden">
           <OutlinePanel
             key={doc.key}
             docKey={doc.key}
@@ -98,10 +98,10 @@ export function Sidebar({
             sourceId={sourceId}
           />
         </Tabs.Content>
-        <Tabs.Content value="comments" className="min-h-0 flex-1 outline-none">
+        <Tabs.Content value="comments" className="min-h-0 flex-1 outline-hidden">
           <CommentsPanel doc={doc} />
         </Tabs.Content>
-        <Tabs.Content value="results" className="min-h-0 flex-1 pt-2 outline-none">
+        <Tabs.Content value="results" className="min-h-0 flex-1 pt-2 outline-hidden">
           <ResultsPanel doc={doc} onFind={onFind} />
         </Tabs.Content>
       </Tabs.Root>

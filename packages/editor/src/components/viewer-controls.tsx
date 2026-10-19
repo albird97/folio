@@ -75,7 +75,7 @@ export function PageControls({
           onFocus={(event) => event.currentTarget.select()}
           onBlur={() => setDraft(null)}
           onKeyDown={onKeyDown}
-          className="h-7 rounded-md bg-raised text-center text-sm text-ink shadow-[inset_0_0_0_1px_var(--folio-border-strong)] outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--folio-focus)] focus-visible:outline-2 focus-visible:outline-focus/35"
+          className="h-7 rounded-md bg-raised text-center text-sm text-ink shadow-[inset_0_0_0_1px_var(--folio-border-strong)] outline-hidden focus-visible:shadow-[inset_0_0_0_1px_var(--folio-focus)] focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus/35"
           style={{ width: `${Math.max(3, String(pages.length).length + 1.5)}ch` }}
         />
         <span aria-hidden className="whitespace-nowrap">

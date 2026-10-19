@@ -35,7 +35,7 @@ import { useDevicePixelRatio } from '../../viewer/use-device-pixel-ratio';
  */
 
 export const SELECT =
-  'h-8 w-full rounded-md bg-raised px-2 text-sm text-ink shadow-[inset_0_0_0_1px_var(--folio-border-strong)] outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--folio-focus)] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus/35';
+  'h-8 w-full rounded-md bg-raised px-2 text-sm text-ink shadow-[inset_0_0_0_1px_var(--folio-border-strong)] outline-hidden focus-visible:shadow-[inset_0_0_0_1px_var(--folio-focus)] focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-0 focus-visible:outline-focus/35';
 
 /** A label in the form's left column. */
 export const ROW_LABEL = 'text-xs font-medium text-ink-muted';

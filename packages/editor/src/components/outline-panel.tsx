@@ -214,8 +214,8 @@ export function OutlinePanel({
             onKeyDown={(event) => onKeyDown(event, row)}
             title={item.url ?? undefined}
             className={cn(
-              'flex min-h-7 cursor-default items-center gap-1 rounded-sm py-1 pr-2 text-xs outline-none',
-              'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus',
+              'flex min-h-7 cursor-default items-center gap-1 rounded-sm py-1 pr-2 text-xs outline-hidden',
+              'focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus',
               disabled ? 'text-ink-muted' : 'hover:bg-hover',
             )}
             style={{ paddingLeft: 4 + (row.level - 1) * 14 }}

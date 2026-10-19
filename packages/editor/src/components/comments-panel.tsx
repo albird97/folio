@@ -202,8 +202,8 @@ export function CommentsPanel({ doc }: { doc: WorkspaceDocument }) {
               onKeyDown={(event) => onKeyDown(event, annotation)}
               aria-current={selected.has(annotation.id) || undefined}
               className={cn(
-                'flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none',
-                'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus',
+                'flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-hidden',
+                'focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus',
                 selected.has(annotation.id) ? 'bg-accent-soft' : 'hover:bg-hover',
               )}
             >
