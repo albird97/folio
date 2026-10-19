@@ -244,7 +244,7 @@ export interface WatermarkStamp {
   angle: number;
   /** Drawn behind the page's content or over it. */
   layer: 'over' | 'under';
-  /** Distance from the edges of the page, in points (positions other than the centre). */
+  /** Distance from the edges of the page, in points (at the centre, it limits the text's size). */
   margin: number;
   pages: StampPageRange;
 }

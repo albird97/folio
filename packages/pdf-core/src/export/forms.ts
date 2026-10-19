@@ -9,15 +9,14 @@ import {
   PDFRef,
   PDFStream,
   PDFTextField,
-  StandardFonts,
   type PDFContext,
   type PDFDocument,
   type PDFField,
-  type PDFFont,
   type PDFObject,
   type PDFPage,
 } from '@cantoo/pdf-lib';
 import { num } from './appearance';
+import { StandardFontSet } from './fonts';
 import { isolatePageEntries } from './objects';
 
 /** Annotation flags (PDF 32000-1, 12.5.3) of widgets that are not shown. */
@@ -114,7 +113,10 @@ function drawnText(field: PDFField): string[] {
  * "?" (returns true when that happened), and a field that cannot be drawn
  * stays as it is.
  */
-export function drawMissingAppearances(doc: PDFDocument): boolean {
+export function drawMissingAppearances(
+  doc: PDFDocument,
+  fonts: StandardFontSet = new StandardFontSet(doc),
+): boolean {
   const { context } = doc;
   const acroForm = context.lookup(doc.catalog.get(name('AcroForm')));
   // pdf-lib's form API would remove an XFA part, so such forms are left alone.
@@ -127,20 +129,17 @@ export function drawMissingAppearances(doc: PDFDocument): boolean {
   } catch {
     return false;
   }
-  let font: PDFFont | null = null;
-  let characters: ReadonlySet<number> = new Set();
+  let characters: ReadonlySet<number> | null = null;
   let lossy = false;
   for (const field of fields) {
     try {
       if (!field.needsAppearancesUpdate()) continue;
-      if (!font) {
-        font = doc.embedStandardFont(StandardFonts.Helvetica);
-        characters = new Set(font.getCharacterSet());
-      }
+      const font = fonts.font('sans');
+      characters ??= new Set(font.getCharacterSet());
       field.defaultUpdateAppearances(font);
       lossy ||= drawnText(field).some((text) =>
         Array.from(text.replace(/[\r\n\t]/g, '')).some(
-          (char) => !characters.has(char.codePointAt(0)!),
+          (char) => !characters!.has(char.codePointAt(0)!),
         ),
       );
     } catch {
@@ -204,7 +203,7 @@ export function flattenFormFields(doc: PDFDocument, pages: readonly PDFPage[]): 
       );
     }
     if (ops.length > 0) {
-      page.node.addContentStream(context.register(context.flateStream(ops.join('\n'))));
+      page.node.addContentStream(context.register(context.flateStream(`${ops.join('\n')}\n`)));
     }
     if (kept.length > 0) page.node.set(name('Annots'), context.obj(kept));
     else page.node.delete(name('Annots'));

@@ -1,5 +1,6 @@
 import {
   normalizeRotation,
+  pageStamps,
   type Annotation,
   type AssetId,
   type DocumentModel,
@@ -10,6 +11,7 @@ import {
 import { degrees, EncryptedPDFError, PDFDocument, PDFPage } from '@cantoo/pdf-lib';
 import type { PdfPermissions } from '../engine';
 import { AnnotationWriter, type AssetData } from './annotations';
+import { StandardFontSet } from './fonts';
 import { drawMissingAppearances, flattenFormFields } from './forms';
 import { writeMetadata } from './metadata';
 import {
@@ -21,6 +23,8 @@ import {
   pruneRemovedPages,
   replacePageTree,
 } from './objects';
+import { RecognizedTextWriter } from './recognized-text';
+import { StampWriter } from './stamps';
 
 export interface ExportSource {
   bytes: Uint8Array;
@@ -54,7 +58,10 @@ export interface ExportOptions {
 }
 
 export type ExportWarning =
-  /** Added text used characters the standard fonts cannot show; they became "?". */
+  /**
+   * Added text, page numbers or a watermark used characters the standard
+   * fonts cannot show; they became "?".
+   */
   | 'unsupported-characters'
   /** Form fields drawn for a copy without the form had such characters, drawn as "?". */
   | 'unsupported-form-characters';
@@ -118,9 +125,10 @@ async function loadSource(source: ExportSource | undefined, id: SourceId): Promi
 
 /**
  * Writes the document as a new PDF: pages in model order with their
- * rotation, pages from other files, blank pages, Folio's annotations and the
- * metadata. Removed pages and everything only they used are left out of the
- * file entirely, so nothing deleted can be recovered from it.
+ * rotation, pages from other files, blank pages, recognized text, page
+ * numbers and watermark, Folio's annotations and the metadata. Removed pages
+ * and everything only they used are left out of the file entirely, so
+ * nothing deleted can be recovered from it.
  */
 export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   const { model } = options;
@@ -213,16 +221,17 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     basePages.map((page) => page.ref.tag),
     output.map((entry) => entry.page),
   );
-  // Before Folio's annotations, so comments flattened too are drawn over the fields.
+  const fonts = new StandardFontSet(doc);
+  // Before Folio's additions, so stamps and flattened comments are drawn over the fields.
   if (options.flattenForms) {
-    lossyFields = drawMissingAppearances(doc) || lossyFields;
+    lossyFields = drawMissingAppearances(doc, fonts) || lossyFields;
     flattenFormFields(
       doc,
       output.map((entry) => entry.page),
     );
   }
 
-  // Annotations.
+  // Recognized text, page numbers, watermark and annotations.
   const pageAnnotations = new Map<PageId, Annotation[]>();
   for (const annotation of Object.values(model.annotations)) {
     const list = pageAnnotations.get(annotation.pageId);
@@ -234,16 +243,32 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     const ref = model.assets[id];
     if (ref) assets.set(id, { ref, bytes });
   }
-  const writer = new AnnotationWriter(doc, assets);
+  const stamper = new StampWriter(doc, fonts);
+  const recognized = new RecognizedTextWriter(doc, model, options.assets);
+  const writer = new AnnotationWriter(doc, assets, fonts);
   await writer.prepare(output.flatMap((entry) => pageAnnotations.get(entry.model.id) ?? []));
   const flatten = options.flatten ?? model.exportConfig.flattenAnnotations;
+  // Stamps number pages by their position in the whole document, also when
+  // only some pages are written (extracts, split parts, printed ranges).
+  const positions = new Map(model.pages.map((page, index) => [page.id, index]));
   for (const { model: pageModel, page } of output) {
     const annotations = pageAnnotations.get(pageModel.id) ?? [];
-    if (annotations.length === 0) continue;
+    const stamps = pageStamps(
+      pageModel,
+      model.stamps,
+      positions.get(pageModel.id)!,
+      model.pages.length,
+    );
+    const text = recognized.textOf(pageModel);
+    if (annotations.length === 0 && stamps.length === 0 && !text) continue;
     isolatePageEntries(page);
     // Model geometry is relative to the lower-left corner of the visible area.
     const origin = pageOrigin(page);
     const offset = { dx: origin.x, dy: origin.y };
+    // Recognized text (invisible) belongs to the page's image, under what Folio adds.
+    if (text) recognized.write(page, text, offset);
+    // Stamps first, so flattened annotations cover them as they do on screen.
+    stamper.draw(page, stamps, offset);
     if (flatten) writer.flatten(page, annotations, offset);
     else for (const annotation of annotations) writer.addEditable(page, annotation, offset, now);
   }
@@ -270,7 +295,7 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     updateFieldAppearances: false,
   });
   const warnings: ExportWarning[] = [];
-  if (writer.lossyText) warnings.push('unsupported-characters');
+  if (writer.lossyText || stamper.lossyText) warnings.push('unsupported-characters');
   if (lossyFields) warnings.push('unsupported-form-characters');
   return { bytes, warnings };
 }

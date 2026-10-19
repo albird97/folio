@@ -2,6 +2,7 @@ import {
   moveAnnotation,
   newAnnotationId,
   normalizeRect,
+  sourcePageKey,
   type Annotation,
   type AnnotationId,
   type DocumentViewState,
@@ -25,6 +26,7 @@ import {
 } from 'react';
 import { useUi, useWorkspaceContext } from '../context';
 import { useAnnotationClipboard } from '../hooks/use-annotation-clipboard';
+import { documentPageText, recognizedTextItems } from '../ocr/page-text';
 import type { TextMatch } from '../search/match';
 import { MARKUP_TOOLS } from '../store/ui';
 import type { NavigationTarget, WorkspaceDocument } from '../store/workspace';
@@ -54,6 +56,7 @@ import {
 import { PageView, type PageHits } from './page-view';
 import { pageFormRevision, PRIORITY, renderCacheKey } from './resources';
 import type { PageOverlayProps } from './page-overlays';
+import { SignatureLayer } from './signature-layer';
 import { StampLayer } from './stamp-layer';
 import { selectedText } from './text-markup';
 import { useDevicePixelRatio } from './use-device-pixel-ratio';
@@ -386,7 +389,8 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
           rotation: userRotation(page, view.rotation),
         });
         if (match) {
-          const item = (await handle.getPageText(sourceIndex)).items[match.start.item];
+          // Matches count text runs as search does: recognized text included.
+          const item = (await documentPageText(workspace, key, page)).items[match.start.item];
           if (item) {
             const [a = 1, b = 0, , , e = 0, f = 0] = item.transform;
             const length = Math.hypot(a, b) || 1;
@@ -777,6 +781,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
     [activeGroup, doc.search.active],
   );
 
+  const textLayers = doc.editor?.model.textLayers;
   const mounted: number[] = [];
   if (layout && range) {
     for (
@@ -816,6 +821,10 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
               activeMatch?.pageIndex === index ? activeHits : (groups.get(index)?.hits ?? null);
             const source = pageSource(page);
             const handle = source ? sourceHandle(source.sourceId) : null;
+            const layer = source
+              ? textLayers?.[sourcePageKey(source.sourceId, source.pageIndex)]
+              : undefined;
+            const recognized = layer ? workspace.getRecognizedText(key, layer.assetId) : null;
             const overlay: PageOverlayProps = {
               doc,
               page,
@@ -843,6 +852,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
                   priority={(visible ? PRIORITY.visiblePage : PRIORITY.nearbyPage) + distance}
                   hits={hits}
                   formRevision={pageFormRevision(doc, page)}
+                  recognizedText={recognized ? recognizedTextItems(recognized) : null}
                 />
                 <StampLayer {...overlay} />
                 <FormLayer {...overlay} />
@@ -857,6 +867,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
                   tool={tool}
                   editable={editable}
                 />
+                <SignatureLayer {...overlay} />
               </Fragment>
             );
           })}

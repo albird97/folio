@@ -4,7 +4,7 @@ import { useWorkspaceContext } from '../context';
 
 const WARNING_NOTES = {
   'unsupported-characters':
-    'Some characters in added text cannot be shown by the standard PDF fonts and were saved as “?”.',
+    'Some characters in added text, page numbers or the watermark cannot be shown by the standard PDF fonts and were saved as “?”.',
   'unsupported-form-characters':
     'Some characters in form fields cannot be shown by the standard PDF fonts and were drawn as “?”.',
 } as const;

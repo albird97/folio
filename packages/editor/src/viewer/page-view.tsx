@@ -1,5 +1,5 @@
 import type { Rotation } from '@folio/document-model';
-import type { PdfDocumentHandle } from '@folio/pdf-core';
+import type { PageTextItem, PdfDocumentHandle } from '@folio/pdf-core';
 import { Spinner } from '@folio/shared-ui';
 import {
   memo,
@@ -45,6 +45,11 @@ export interface PageViewProps {
   hits: PageHits | null;
   /** How often the page's form fields changed: each change draws the page again. */
   formRevision: number;
+  /**
+   * Text recognized in the page's image, in page space: selectable and
+   * highlighted after the page's own text (see `recognizedTextItems`).
+   */
+  recognizedText: readonly PageTextItem[] | null;
 }
 
 interface Shown {
@@ -138,6 +143,7 @@ export const PageView = memo(function PageView({
   priority,
   hits,
   formRevision,
+  recognizedText,
 }: PageViewProps) {
   const pageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -249,7 +255,8 @@ export const PageView = memo(function PageView({
     };
   }, [cacheKey, handle, sourceIndex, variant, zoomVariant, formRevision, scale, rotation, ratio]);
 
-  // The text layer scales with CSS variables, so only a new orientation redraws it.
+  // The text layer scales with CSS variables, so only a new orientation (or
+  // recognized text arriving or going away) redraws it.
   useEffect(() => {
     const container = textRef.current;
     if (!container || !handle) return;
@@ -259,6 +266,7 @@ export const PageView = memo(function PageView({
       const job = handle.renderTextLayer(sourceIndex, container, {
         scale: currentScale(),
         rotation,
+        ...(recognizedText ? { extraText: recognizedText } : {}),
       });
       job.promise.then(
         (result) => {
@@ -281,7 +289,7 @@ export const PageView = memo(function PageView({
       scheduler.cancel(id);
       container.replaceChildren();
     };
-  }, [cacheKey, handle, sourceIndex, rotation]);
+  }, [cacheKey, handle, sourceIndex, rotation, recognizedText]);
 
   useEffect(() => {
     // Jobs still waiting in the queue move up or down as the page scrolls.

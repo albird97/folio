@@ -47,7 +47,7 @@ import {
   type PdfPageInfo,
 } from './page-info';
 import { sniffPdf } from './sniff';
-import { pageTextFrom, type PageText, type TextContentLike } from './text';
+import { pageTextFrom, type PageText, type PageTextItem, type TextContentLike } from './text';
 
 /**
  * Folio uses PDF.js' *legacy* build on every target. The modern build calls
@@ -133,10 +133,23 @@ export interface PageViewportInfo {
   width: number;
   height: number;
   transform: number[];
+  /**
+   * The lower-left corner of the visible page area (the crop box) in user
+   * space: where page space, in which Folio places what it adds, starts.
+   */
+  origin: { x: number; y: number };
+}
+
+export interface TextLayerOptions extends ViewOptions {
+  /**
+   * Runs drawn after the page's own text, such as text recognized in the
+   * page's image. Unlike `getPageText`, their transforms are in page space.
+   */
+  extraText?: readonly PageTextItem[];
 }
 
 export interface TextLayerResult {
-  /** One element per text run of `getPageText(pageIndex).items`, in order. */
+  /** One element per text run of `getPageText(pageIndex).items`, then per extra run, in order. */
   textDivs: readonly HTMLElement[];
 }
 
@@ -162,7 +175,11 @@ export interface PdfDocumentHandle {
   /** Text runs of a page, extracted in the PDF.js worker. */
   getPageText(pageIndex: number): Promise<PageText>;
   /** Renders selectable, invisible text over a page for copy and search highlights. */
-  renderTextLayer(pageIndex: number, container: HTMLElement, options: ViewOptions): TextLayerJob;
+  renderTextLayer(
+    pageIndex: number,
+    container: HTMLElement,
+    options: TextLayerOptions,
+  ): TextLayerJob;
   getViewport(pageIndex: number, options: ViewOptions): Promise<PageViewportInfo>;
   getOutline(): Promise<OutlineItem[]>;
   /**
@@ -239,6 +256,44 @@ async function readPageRange(
 }
 
 const yieldToRenders = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/** The text layer's font name for extra runs (PDF.js names the PDF's own fonts differently). */
+const EXTRA_TEXT_FONT = 'folio-extra-text';
+
+/**
+ * The page's text content followed by extra runs given in page space, moved
+ * into user space and drawn in a generic font (as PDF.js does for text whose
+ * font is not available), its proportions those of a typical sans-serif.
+ */
+function withExtraText(
+  content: TextContentLike,
+  extra: readonly PageTextItem[] | undefined,
+  view: readonly number[],
+): TextContentLike {
+  if (!extra || extra.length === 0) return content;
+  const [x = 0, y = 0] = view;
+  return {
+    items: [
+      ...content.items,
+      ...extra.map(({ str, hasEOL, width, height, transform }) => {
+        const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = transform;
+        return {
+          str,
+          hasEOL,
+          width,
+          height,
+          transform: [a, b, c, d, e + x, f + y],
+          dir: 'ltr',
+          fontName: EXTRA_TEXT_FONT,
+        };
+      }),
+    ],
+    styles: {
+      ...content.styles,
+      [EXTRA_TEXT_FONT]: { fontFamily: 'sans-serif', ascent: 0.8, descent: -0.2, vertical: false },
+    },
+  };
+}
 
 function classify(error: unknown, usedPassword: boolean): PdfError {
   if (error instanceof PdfError) return error;
@@ -429,7 +484,11 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
     return pageTextFrom(await this.#textContent(pageIndex));
   }
 
-  renderTextLayer(pageIndex: number, container: HTMLElement, options: ViewOptions): TextLayerJob {
+  renderTextLayer(
+    pageIndex: number,
+    container: HTMLElement,
+    options: TextLayerOptions,
+  ): TextLayerJob {
     let cancelled = false;
     let layer: TextLayer | null = null;
     const promise = (async (): Promise<TextLayerResult | null> => {
@@ -440,7 +499,7 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
       if (cancelled || this.#destroyed) return null;
       container.replaceChildren();
       layer = new TextLayer({
-        textContentSource: content as never,
+        textContentSource: withExtraText(content, options.extraText, page.view) as never,
         container,
         viewport: this.#viewport(page, options),
       });
@@ -468,7 +527,13 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
 
   async getViewport(pageIndex: number, options: ViewOptions): Promise<PageViewportInfo> {
     const viewport = this.#viewport(await this.#getPage(pageIndex), options);
-    return { width: viewport.width, height: viewport.height, transform: [...viewport.transform] };
+    const [x = 0, y = 0] = viewport.viewBox;
+    return {
+      width: viewport.width,
+      height: viewport.height,
+      transform: [...viewport.transform],
+      origin: { x, y },
+    };
   }
 
   async getOutline(): Promise<OutlineItem[]> {

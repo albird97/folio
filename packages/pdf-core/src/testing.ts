@@ -46,6 +46,7 @@ export function fakeDocumentHandle(
       width: 612 * scale,
       height: 792 * scale,
       transform: [scale, 0, 0, -scale, 0, 792 * scale],
+      origin: { x: 0, y: 0 },
     }),
     getOutline: async () => [],
     getFormFields: async () => [],

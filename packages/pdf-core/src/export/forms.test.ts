@@ -261,7 +261,7 @@ describe('exportPdf: forms', () => {
     const contents = flat.getPage(0).node.Contents() as PDFArray;
     const last = contents.lookup(contents.size() - 1) as PDFRawStream;
     expect(new TextDecoder().decode(decodePDFRawStream(last).decode())).toMatch(
-      /^\/OC \/FlatOC[\w-]* BDC q .* cm \/FlatField[\w-]* Do Q EMC$/,
+      /^\/OC \/FlatOC[\w-]* BDC q .* cm \/FlatField[\w-]* Do Q EMC\n$/,
     );
     await expectValidPdf(bytes);
   });

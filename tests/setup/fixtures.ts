@@ -16,6 +16,7 @@ export type FixtureName =
   | 'filled-form.pdf'
   | 'form-fields.pdf'
   | 'xfa-form.pdf'
+  | 'scanned-pages.pdf'
   | 'not-a-pdf.pdf'
   | 'empty.pdf'
   | 'header-only.pdf';
@@ -28,6 +29,20 @@ export function readFixture(name: FixtureName): Uint8Array {
 export function nodeWorkerSrc(): string {
   const require = createRequire(import.meta.url);
   return pathToFileURL(require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs')).href;
+}
+
+/**
+ * A canvas pages can be drawn into in Node tests: PDF.js' own canvas package
+ * (@napi-rs/canvas), which implements the parts of HTMLCanvasElement the
+ * engine and the OCR runner use (getContext('2d'), toBlob).
+ */
+export function createNodeCanvas(): HTMLCanvasElement {
+  const require = createRequire(import.meta.url);
+  const pdfjs = createRequire(require.resolve('pdfjs-dist/package.json'));
+  const { createCanvas } = pdfjs('@napi-rs/canvas') as {
+    createCanvas(width: number, height: number): unknown;
+  };
+  return createCanvas(1, 1) as HTMLCanvasElement;
 }
 
 /**
@@ -105,9 +120,13 @@ export async function makePng(
   return png;
 }
 
-/** Runs `qpdf --check`; resolves null when qpdf is not installed. */
+/**
+ * Runs `qpdf --check` (with the open password of a protected file); resolves
+ * null when qpdf is not installed.
+ */
 export async function qpdfCheck(
   bytes: Uint8Array,
+  password?: string,
 ): Promise<{ ok: boolean; output: string } | null> {
   const { spawnSync } = await import('node:child_process');
   const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
@@ -116,7 +135,8 @@ export async function qpdfCheck(
   try {
     const file = join(dir, 'check.pdf');
     writeFileSync(file, bytes);
-    const result = spawnSync('qpdf', ['--check', file], { encoding: 'utf8' });
+    const args = password === undefined ? [] : [`--password=${password}`];
+    const result = spawnSync('qpdf', [...args, '--check', file], { encoding: 'utf8' });
     if (result.error) return null;
     // Exit code 3 means warnings only; 2 means errors.
     return { ok: result.status === 0, output: `${result.stdout}${result.stderr}` };

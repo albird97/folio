@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { ocrAssets } from '@folio/editor/vite-plugin';
 import { pdfjsAssets } from '@folio/pdf-core/vite-plugin';
 import { defineConfig, type Plugin } from 'vite';
 
@@ -27,7 +28,7 @@ function manifest(): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), pdfjsAssets(), manifest()],
+  plugins: [react(), tailwindcss(), pdfjsAssets(), ocrAssets(), manifest()],
   // Extension pages are served from chrome-extension://<id>/, so asset URLs must be relative.
   base: './',
   build: {

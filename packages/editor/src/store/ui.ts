@@ -8,6 +8,8 @@ import type {
   TransferRequest,
 } from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
+import type { SignatureImage } from '../signature/render';
+import { isOcrLanguage, type OcrLanguage } from '../ocr/languages';
 
 export type SidebarTab = 'pages' | 'outline' | 'comments' | 'results';
 export const SIDEBAR_TABS: readonly SidebarTab[] = ['pages', 'outline', 'comments', 'results'];
@@ -25,7 +27,9 @@ export type Tool =
   | 'line'
   | 'arrow'
   | 'text'
-  | 'image';
+  | 'image'
+  /** Places the signature chosen in the signature dialog (`pendingSignature`). */
+  | 'signature';
 
 export const TOOLS: readonly Tool[] = [
   'select',
@@ -40,6 +44,7 @@ export const TOOLS: readonly Tool[] = [
   'arrow',
   'text',
   'image',
+  'signature',
 ];
 
 /** Tools that mark text selected in the page's text layer. */
@@ -47,7 +52,7 @@ export const MARKUP_TOOLS: ReadonlySet<Tool> = new Set(['highlight', 'underline'
 
 /** Colours and sizes new annotations get; remembered between sessions. */
 export interface AnnotationStyle {
-  colors: Record<Exclude<Tool, 'select' | 'image'>, HexColor>;
+  colors: Record<Exclude<Tool, 'select' | 'image' | 'signature'>, HexColor>;
   /** Pen and outline width, in points. */
   strokeWidth: number;
   fontSize: number;
@@ -169,6 +174,12 @@ export const TOOL_DIALOG_KINDS = {
   'ask-ai': 'ask-ai',
 } as const satisfies Record<ToolDialogCommand, DialogRequest['kind']>;
 
+/** A signature chosen in the signature dialog, to place in the document it was chosen for. */
+export interface PendingSignature {
+  docKey: string;
+  image: SignatureImage;
+}
+
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {
   theme: ThemePreference;
@@ -176,11 +187,18 @@ export interface UiState {
   rightPanelOpen: boolean;
   sidebarTab: SidebarTab;
   tool: Tool;
+  /**
+   * The signature the Signature tool places, held in memory only (never
+   * stored); null with every other tool.
+   */
+  pendingSignature: PendingSignature | null;
   style: AnnotationStyle;
   /** Written into new annotations as their author; empty leaves it out. */
   authorName: string;
   /** Tint the fields of forms that can be filled in. */
   highlightFields: boolean;
+  /** The languages text was last recognized in (never empty). */
+  ocrLanguages: OcrLanguage[];
   dialog: DialogRequest | null;
   /** Documents the Chrome extension sent, waiting for the user to accept them. */
   transfers: TransferRequest[];
@@ -191,11 +209,15 @@ export interface UiState {
   /** Shows the sidebar on the given tab. */
   showSidebar(tab: SidebarTab): void;
   setSidebarTab(tab: SidebarTab): void;
+  /** Picks a tool; another tool drops the signature being placed. */
   setTool(tool: Tool): void;
+  /** Picks the Signature tool to place `signature` on a page. */
+  startPlacingSignature(signature: PendingSignature): void;
   setStyle(changes: Partial<Omit<AnnotationStyle, 'colors'>>): void;
   setToolColor(tool: keyof AnnotationStyle['colors'], color: HexColor): void;
   setAuthorName(name: string): void;
   setHighlightFields(highlight: boolean): void;
+  setOcrLanguages(languages: OcrLanguage[]): void;
   openDialog(dialog: DialogRequest): void;
   closeDialog(): void;
   queueTransfer(request: TransferRequest): void;
@@ -211,6 +233,7 @@ type Persisted = Pick<
   | 'style'
   | 'authorName'
   | 'highlightFields'
+  | 'ocrLanguages'
 >;
 
 export const UI_STORAGE_KEY = 'workspace-ui';
@@ -257,6 +280,10 @@ function sanitize(value: unknown): Partial<Persisted> {
   if (style) out.style = style;
   if (typeof raw.authorName === 'string') out.authorName = raw.authorName.slice(0, 200);
   if (typeof raw.highlightFields === 'boolean') out.highlightFields = raw.highlightFields;
+  if (Array.isArray(raw.ocrLanguages)) {
+    const languages = [...new Set(raw.ocrLanguages.filter(isOcrLanguage))];
+    if (languages.length > 0) out.ocrLanguages = languages;
+  }
   return out;
 }
 
@@ -268,6 +295,7 @@ const persistedOf = (state: UiState): Persisted => ({
   style: state.style,
   authorName: state.authorName,
   highlightFields: state.highlightFields,
+  ocrLanguages: state.ocrLanguages,
 });
 
 /** A question still waiting when its dialog goes away gets the cautious answer. */
@@ -283,9 +311,11 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     rightPanelOpen: true,
     sidebarTab: 'pages',
     tool: 'select',
+    pendingSignature: null,
     style: DEFAULT_STYLE,
     authorName: '',
     highlightFields: true,
+    ocrLanguages: ['eng'],
     dialog: null,
     transfers: [],
     hydrated: false,
@@ -294,7 +324,13 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
     showSidebar: (tab) => set({ leftPanelOpen: true, sidebarTab: tab }),
     setSidebarTab: (tab) => set({ sidebarTab: tab }),
-    setTool: (tool) => set({ tool }),
+    setTool: (tool) =>
+      set((state) => {
+        // The Signature tool only exists with a signature to place.
+        if (tool === 'signature') return state.pendingSignature ? { tool } : state;
+        return { tool, pendingSignature: null };
+      }),
+    startPlacingSignature: (signature) => set({ tool: 'signature', pendingSignature: signature }),
     setStyle: (changes) => set((state) => ({ style: { ...state.style, ...changes } })),
     setToolColor: (tool, color) =>
       set((state) => ({
@@ -302,6 +338,9 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
       })),
     setAuthorName: (authorName) => set({ authorName: authorName.slice(0, 200) }),
     setHighlightFields: (highlightFields) => set({ highlightFields }),
+    setOcrLanguages: (languages) => {
+      if (languages.length > 0) set({ ocrLanguages: [...new Set(languages)] });
+    },
     openDialog: (dialog) => {
       settle(get().dialog);
       set({ dialog });
