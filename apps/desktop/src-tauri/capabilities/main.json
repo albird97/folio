@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Least-privilege permissions for Folio's main window. There is no filesystem plugin: files are only reachable through tokens issued by Folio's own commands after the user chooses them (dialog, drop, launch, recent files, an accepted transfer from the Chrome extension), new files are only written to a location the user picks in the native save dialog, and Save writes back only through a token, refusing files that changed on disk (PDF data only in both cases, except exports to a location the user picks: page images, ZIP archives of them and text, each checked to be what it claims). Crash recovery data, recent files and documents from Chrome live in Folio's app data folder and are addressed by validated ids, never paths. Ask Claude (opt-in) keeps the user's Anthropic API key in the OS credential store, which the webview cannot read, and its requests go through a Rust proxy that only reaches Anthropic's messages and token counting endpoints. The window permissions cover the title and the tab strip's drag region (drag to move, double-click to zoom or maximize).",
+  "description": "Least-privilege permissions for Folio's main window. There is no filesystem plugin: files are only reachable through tokens issued by Folio's own commands after the user chooses them (dialog, drop, launch, recent files, an accepted transfer from the Chrome extension), new files are only written to a location the user picks in the native save dialog, and Save writes back only through a token, refusing files that changed on disk (PDF data only in both cases, except exports to a location the user picks: page images, ZIP archives of them and text, each checked to be what it claims). Printing on macOS hands PDF data from the webview to the system's print dialog in memory; nothing is written to disk. Crash recovery data, recent files and documents from Chrome live in Folio's app data folder and are addressed by validated ids, never paths. Ask Claude (opt-in) keeps the user's Anthropic API key in the OS credential store, which the webview cannot read, and its requests go through a Rust proxy that only reaches Anthropic's messages and token counting endpoints. The window permissions cover the title and the tab strip's drag region (drag to move, double-click to zoom or maximize).",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -17,6 +17,7 @@
     "allow-save-file-as",
     "allow-write-granted-file",
     "allow-print-window",
+    "allow-print-pdf",
     "allow-app-info",
     "allow-recovery-list",
     "allow-recovery-save-snapshot",

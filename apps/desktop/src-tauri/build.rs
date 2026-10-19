@@ -12,6 +12,7 @@ fn main() {
             "save_file_as",
             "write_granted_file",
             "print_window",
+            "print_pdf",
             "app_info",
             "recovery_list",
             "recovery_save_snapshot",

@@ -3,6 +3,7 @@ use crate::close_guard::CloseGuard;
 use crate::files::{self, FileError, FileGrants, LaunchQueue, OpenedFiles, MAX_FILE_BYTES};
 use crate::incoming::{self, IncomingError, TransferQueue, TransferRequest};
 use crate::native_messaging::{self, RegistrationError, Status};
+use crate::print::{self, PrintError};
 use crate::recent::RecentFile;
 use crate::recovery::{self, RecoveryError, RecoveryRecord, RecoveryStore};
 use crate::save::{self, SaveError, WriteOutcome};
@@ -50,6 +51,7 @@ command_error_from!(
     RecoveryError,
     IncomingError,
     RegistrationError,
+    PrintError,
     AiError
 );
 
@@ -302,6 +304,21 @@ pub async fn print_window(window: WebviewWindow) -> Result<(), CommandError> {
         Ok(true) => Ok(()),
         _ => Err(failed()),
     }
+}
+
+/// macOS: prints the PDF data sent as the raw request body with PDFKit (see
+/// `print`), showing the print dialog as a sheet on the window. The job's
+/// name comes in the `x-folio-name` header. Anything that is not PDF data is
+/// refused before a dialog appears. Resolves once the dialog is closed,
+/// whether the user printed or cancelled.
+#[tauri::command]
+pub async fn print_pdf(window: WebviewWindow, request: Request<'_>) -> Result<(), CommandError> {
+    let bytes = raw_body(&request)?;
+    save::check_pdf(bytes)?;
+    let title = save::suggested_file_name(header(&request, save::NAME_HEADER));
+    // PDFKit gets its own copy on the main thread; the request body cannot
+    // go there.
+    Ok(print::print_pdf(&window, bytes.to_vec(), title).await?)
 }
 
 #[tauri::command]

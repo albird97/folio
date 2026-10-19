@@ -10,6 +10,7 @@ pub mod menu;
 pub mod native_host;
 pub mod native_messaging;
 pub mod paths;
+pub mod print;
 pub mod recent;
 pub mod recovery;
 pub mod save;
@@ -427,6 +428,7 @@ pub fn run() {
             commands::save_file_as,
             commands::write_granted_file,
             commands::print_window,
+            commands::print_pdf,
             commands::app_info,
             commands::recovery_list,
             commands::recovery_save_snapshot,
@@ -509,5 +511,44 @@ mod tests {
         assert!(dir.path().join("updates.json").is_file());
         let without = Storage::new(None, true);
         assert!(without.recovery.is_none() && without.incoming.is_none());
+    }
+
+    /// A command the webview calls must be declared in `build.rs` (which
+    /// makes its permission), granted to the window and registered; the
+    /// window is granted nothing else of Folio's.
+    #[test]
+    fn commands_are_declared_granted_and_registered_alike() {
+        fn sorted(mut names: Vec<String>) -> Vec<String> {
+            names.sort();
+            names
+        }
+        let declared = sorted(
+            include_str!("../build.rs")
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix('"')?.strip_suffix("\","))
+                .map(str::to_owned)
+                .collect(),
+        );
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main.json")).unwrap();
+        let granted = sorted(
+            capability["permissions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|permission| permission.as_str()?.strip_prefix("allow-"))
+                .map(|name| name.replace('-', "_"))
+                .collect(),
+        );
+        let registered = sorted(
+            include_str!("lib.rs")
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix("commands::")?.strip_suffix(','))
+                .map(str::to_owned)
+                .collect(),
+        );
+        assert!(declared.iter().any(|name| name == "print_pdf"));
+        assert_eq!(granted, declared);
+        assert_eq!(registered, declared);
     }
 }
