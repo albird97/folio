@@ -1,28 +1,15 @@
-import {
-  lineEnds,
-  normalizeRect,
-  type Annotation,
-  type AssetRef,
-  type FontFamily,
-} from '@folio/document-model';
+import { lineEnds, normalizeRect, type Annotation, type AssetRef } from '@folio/document-model';
 import {
   PDFHexString,
   PDFName,
   PDFString,
-  StandardFonts,
   type PDFDocument,
-  type PDFFont,
   type PDFImage,
   type PDFPage,
   type PDFRef,
 } from '@cantoo/pdf-lib';
-import { drawAnnotation, rgb, type Drawing, type EncodeText } from './appearance';
-
-const STANDARD_FONTS: Record<FontFamily, StandardFonts> = {
-  sans: StandardFonts.Helvetica,
-  serif: StandardFonts.TimesRoman,
-  mono: StandardFonts.Courier,
-};
+import { drawAnnotation, rgb, type Drawing } from './appearance';
+import type { StandardFontSet } from './fonts';
 
 const SUBTYPES: Record<Annotation['kind'], string> = {
   highlight: 'Highlight',
@@ -52,26 +39,15 @@ export interface AssetData {
 export class AnnotationWriter {
   readonly #doc: PDFDocument;
   readonly #assets: ReadonlyMap<string, AssetData>;
-  readonly #fonts = new Map<FontFamily, PDFFont>();
+  readonly #fonts: StandardFontSet;
   readonly #images = new Map<string, PDFImage>();
   lossyText = false;
 
-  constructor(doc: PDFDocument, assets: ReadonlyMap<string, AssetData>) {
+  constructor(doc: PDFDocument, assets: ReadonlyMap<string, AssetData>, fonts: StandardFontSet) {
     this.#doc = doc;
     this.#assets = assets;
+    this.#fonts = fonts;
   }
-
-  #font(family: FontFamily): PDFFont {
-    let font = this.#fonts.get(family);
-    if (!font) {
-      font = this.#doc.embedStandardFont(STANDARD_FONTS[family]);
-      this.#fonts.set(family, font);
-    }
-    return font;
-  }
-
-  readonly #encodeText: EncodeText = (text, family) =>
-    this.#font(family).encodeText(text).toString().slice(1, -1);
 
   /** Embeds the images the annotations need (asynchronous in pdf-lib). */
   async prepare(annotations: readonly Annotation[]): Promise<void> {
@@ -91,7 +67,7 @@ export class AnnotationWriter {
   /** The annotation drawn as a form XObject. */
   #appearance(annotation: Annotation, offset: { dx: number; dy: number }) {
     const { context } = this.#doc;
-    const drawing = drawAnnotation(annotation, this.#encodeText, offset);
+    const drawing = drawAnnotation(annotation, this.#fonts.encode, offset);
     this.lossyText ||= drawing.lossyText;
     const bounds = nonEmpty(drawing);
     const resources = context.obj({});
@@ -113,7 +89,7 @@ export class AnnotationWriter {
     if (drawing.fonts.size > 0) {
       const fonts = context.obj({});
       for (const [name, family] of drawing.fonts) {
-        fonts.set(PDFName.of(name), this.#font(family).ref);
+        fonts.set(PDFName.of(name), this.#fonts.font(family).ref);
       }
       resources.set(PDFName.of('Font'), fonts);
     }
