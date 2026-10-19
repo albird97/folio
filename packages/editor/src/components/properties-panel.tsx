@@ -70,13 +70,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 const empty = <span className="text-ink-subtle">—</span>;
+const textValue = (value: string) => (value ? value : empty);
 
+/** The document's form: its kind and how many fields it has. */
 function formsLabel(forms: 'none' | 'acroform' | 'xfa', fields: number): string {
   if (forms === 'xfa') return 'XFA form (not supported)';
   if (forms === 'none' || fields === 0) return 'None';
   return fields === 1 ? 'Interactive form, 1 field' : `Interactive form, ${fields} fields`;
 }
-const textValue = (value: string) => (value ? value : empty);
 
 const FIELD =
   'w-full min-w-0 rounded-sm bg-transparent px-1.5 py-0.5 text-xs text-ink outline-none hover:bg-hover focus-visible:bg-raised focus-visible:shadow-[inset_0_0_0_1px_var(--folio-focus)]';
