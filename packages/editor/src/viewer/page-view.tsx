@@ -14,7 +14,7 @@ import {
 import { matchRanges, type TextMatch } from '../search/match';
 import type { PageBox } from './layout';
 import type { SchedulableJob } from './render-scheduler';
-import { pageCache, pageVariant, scheduler } from './resources';
+import { formVariant, pageCache, pageVariant, scheduler, variantFormRevision } from './resources';
 
 /** Search matches on one page. */
 export interface PageHits {
@@ -43,6 +43,8 @@ export interface PageViewProps {
   /** Queue priority of this page's rendering (lower runs first). */
   priority: number;
   hits: PageHits | null;
+  /** How often the page's form fields changed: each change draws the page again. */
+  formRevision: number;
 }
 
 interface Shown {
@@ -135,6 +137,7 @@ export const PageView = memo(function PageView({
   ratio,
   priority,
   hits,
+  formRevision,
 }: PageViewProps) {
   const pageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -149,7 +152,8 @@ export const PageView = memo(function PageView({
     divs: readonly HTMLElement[];
   } | null>(null);
 
-  const variant = pageVariant(cacheKey, rotation, scale, ratio);
+  const zoomVariant = pageVariant(cacheKey, rotation, scale, ratio);
+  const variant = zoomVariant + formVariant(formRevision);
   const failed = failedVariant === variant;
   const currentPriority = useEffectEvent(() => priority);
   const currentScale = useEffectEvent(() => scale);
@@ -205,6 +209,15 @@ export const PageView = memo(function PageView({
           pageCache.put(sourceIndex, variant, canvas);
           mark(canvas, 'done');
           swap(host, shown, { canvas, variant, release });
+          // Renderings of the page's earlier form values are never shown again.
+          if (formRevision > 0) {
+            pageCache.removeWhere(
+              (entry, page) =>
+                page === sourceIndex &&
+                entry.startsWith(`${cacheKey}|`) &&
+                variantFormRevision(entry) < formRevision,
+            );
+          }
         },
         () => {
           if (cancelled) return;
@@ -222,7 +235,11 @@ export const PageView = memo(function PageView({
       job.queued = true;
       scheduler.schedule(id, currentPriority(), start);
     };
-    const timer = shown.current ? setTimeout(enqueue, RERENDER_DELAY_MS) : null;
+    // Only a new zoom waits; new form values are drawn at once.
+    const timer =
+      shown.current && !shown.current.variant.startsWith(zoomVariant)
+        ? setTimeout(enqueue, RERENDER_DELAY_MS)
+        : null;
     if (!timer) enqueue();
     return () => {
       cancelled = true;
@@ -230,7 +247,7 @@ export const PageView = memo(function PageView({
       if (timer) clearTimeout(timer);
       scheduler.cancel(id);
     };
-  }, [cacheKey, handle, sourceIndex, variant, scale, rotation, ratio]);
+  }, [cacheKey, handle, sourceIndex, variant, zoomVariant, formRevision, scale, rotation, ratio]);
 
   // The text layer scales with CSS variables, so only a new orientation redraws it.
   useEffect(() => {

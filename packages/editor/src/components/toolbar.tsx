@@ -213,6 +213,14 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
               >
                 {desktop ? 'Save with comments flattened…' : 'Download with comments flattened'}
               </DropdownMenuItem>
+              {doc?.info && doc.info.forms !== 'none' ? (
+                <DropdownMenuItem
+                  disabled={!doc.permissions.modify}
+                  onSelect={() => void saveAs(doc.key, { flattenForms: true })}
+                >
+                  {desktop ? 'Save with form flattened…' : 'Download with form flattened'}
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem onSelect={() => onCommand('save-copy')}>
                 {desktop ? 'Save a copy of the original…' : 'Download the original'}
               </DropdownMenuItem>

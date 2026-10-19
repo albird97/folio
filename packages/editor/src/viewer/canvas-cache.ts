@@ -79,10 +79,10 @@ export class CanvasCache {
     return this.#entries.size;
   }
 
-  /** Forgets entries whose variant matches (pinned ones stay until unpinned). */
-  removeWhere(predicate: (variant: string) => boolean): void {
+  /** Forgets entries whose variant (and page) match; pinned canvases stay until unpinned. */
+  removeWhere(predicate: (variant: string, pageIndex: number) => boolean): void {
     for (const [key, entry] of this.#entries) {
-      if (!predicate(entry.variant)) continue;
+      if (!predicate(entry.variant, entry.pageIndex)) continue;
       this.#entries.delete(key);
       if (!this.#pinned.has(key)) release(entry.canvas);
     }

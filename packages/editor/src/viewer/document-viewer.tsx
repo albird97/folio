@@ -52,7 +52,7 @@ import {
   type PageLayout,
 } from './layout';
 import { PageView, type PageHits } from './page-view';
-import { PRIORITY, renderCacheKey } from './resources';
+import { pageFormRevision, PRIORITY, renderCacheKey } from './resources';
 import type { PageOverlayProps } from './page-overlays';
 import { StampLayer } from './stamp-layer';
 import { selectedText } from './text-markup';
@@ -605,7 +605,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
     press.current = null;
     if (tool !== 'select' || !(event.target instanceof Element) || !start) return;
     if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 3) return;
-    if (event.target.closest('[data-annotation-id], [data-handle]')) return;
+    if (event.target.closest('[data-annotation-id], [data-handle], [data-form-layer]')) return;
     if (window.getSelection()?.isCollapsed === false) return;
     const pageElement = event.target.closest<HTMLElement>('.folio-page');
     const page = pageElement ? pages[Number(pageElement.dataset.page) - 1] : undefined;
@@ -687,6 +687,8 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
   }, [tool]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // Keys typed into form fields are theirs.
+    if (event.target instanceof Element && event.target.closest('[data-form-layer]')) return;
     const state = workspace.getState();
     if (event.key === 'Escape') {
       if (tool !== 'select') {
@@ -840,6 +842,7 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
                   ratio={ratio}
                   priority={(visible ? PRIORITY.visiblePage : PRIORITY.nearbyPage) + distance}
                   hits={hits}
+                  formRevision={pageFormRevision(doc, page)}
                 />
                 <StampLayer {...overlay} />
                 <FormLayer {...overlay} />

@@ -70,6 +70,12 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 const empty = <span className="text-ink-subtle">—</span>;
+
+function formsLabel(forms: 'none' | 'acroform' | 'xfa', fields: number): string {
+  if (forms === 'xfa') return 'XFA form (not supported)';
+  if (forms === 'none' || fields === 0) return 'None';
+  return fields === 1 ? 'Interactive form, 1 field' : `Interactive form, ${fields} fields`;
+}
 const textValue = (value: string) => (value ? value : empty);
 
 const FIELD =
@@ -254,17 +260,15 @@ export function PropertiesPanel({ doc }: { doc: WorkspaceDocument }) {
                   label="Commenting"
                   value={info.permissions.annotate ? 'Allowed' : 'Not allowed'}
                 />
+                <Row
+                  label="Filling in forms"
+                  value={doc.permissions.fillForms ? 'Allowed' : 'Not allowed'}
+                />
               </>
             ) : null}
             <Row
               label="Forms"
-              value={
-                info.forms === 'none'
-                  ? 'None'
-                  : info.forms === 'xfa'
-                    ? 'XFA form (not supported)'
-                    : 'Interactive form'
-              }
+              value={formsLabel(info.forms, Object.keys(model.formFields).length)}
             />
             <Row label="Signatures" value={info.hasSignatures ? 'Present' : 'None'} />
           </Section>

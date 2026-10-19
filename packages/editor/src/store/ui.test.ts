@@ -94,7 +94,21 @@ describe('ui store', () => {
       sidebarTab: 'pages',
       style: DEFAULT_STYLE,
       authorName: '',
+      highlightFields: true,
     });
+  });
+
+  it('remembers whether form fields are highlighted', async () => {
+    const storage = createMemoryStorage({ [UI_STORAGE_KEY]: { highlightFields: 'no' } });
+    const store = createUiStore(storage);
+    await settle();
+    expect(store.getState().highlightFields).toBe(true);
+    store.getState().setHighlightFields(false);
+    await settle();
+    expect(storage.data.get(UI_STORAGE_KEY)).toMatchObject({ highlightFields: false });
+    const next = createUiStore(storage);
+    await settle();
+    expect(next.getState().highlightFields).toBe(false);
   });
 
   it('remembers annotation styles, keeping only valid values', async () => {

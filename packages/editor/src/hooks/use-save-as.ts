@@ -21,6 +21,13 @@ export function saveNotes(
   ];
 }
 
+export interface SaveAsOptions {
+  /** Burn comments into the pages. */
+  flatten?: boolean;
+  /** Burn the form's fields into the pages. */
+  flattenForms?: boolean;
+}
+
 export function exportFailureMessage(error: unknown): string {
   const code = (error as { code?: string } | null)?.code;
   return code === 'wrong-password'
@@ -34,27 +41,28 @@ export function exportFailureMessage(error: unknown): string {
  * opened from is only replaced if the user picks it in the save dialog. On
  * desktop, later saves go to the chosen file. Resolves true once saved.
  */
-export function useSaveAs(): (key: string, options?: { flatten?: boolean }) => Promise<boolean> {
+export function useSaveAs(): (key: string, options?: SaveAsOptions) => Promise<boolean> {
   const { adapter, workspace } = useWorkspaceContext();
   const saving = useRef(false);
   return useCallback(
-    async (key: string, options: { flatten?: boolean } = {}) => {
+    async (key: string, options: SaveAsOptions = {}) => {
       if (saving.current) return false;
       const state = workspace.getState();
       const doc = state.documents.find((entry) => entry.key === key);
       if (!doc?.editor || doc.status !== 'ready') return false;
-      if (options.flatten && !doc.permissions.modify) {
+      const flattened = options.flatten === true || options.flattenForms === true;
+      if (flattened && !doc.permissions.modify) {
         state.showNotice('The author of this document does not allow changing its pages.');
         return false;
       }
       saving.current = true;
       try {
-        const { bytes, warnings } = await state.exportDocument(
-          key,
-          options.flatten === undefined ? {} : { flatten: options.flatten },
-        );
+        const { bytes, warnings } = await state.exportDocument(key, {
+          ...(options.flatten === undefined ? {} : { flatten: options.flatten }),
+          ...(options.flattenForms ? { flattenForms: true } : {}),
+        });
         // A flattened copy is a different document: the next Save does not go there.
-        const keepAccess = adapter.features.saveInPlace && !options.flatten;
+        const keepAccess = adapter.features.saveInPlace && !flattened;
         const result = await adapter.saveFileAs({
           suggestedName: doc.fileName,
           bytes,
@@ -62,7 +70,7 @@ export function useSaveAs(): (key: string, options?: { flatten?: boolean }) => P
         });
         if (result.status === 'cancelled') return false;
         const current = workspace.getState();
-        if (!options.flatten) current.markSaved(key);
+        if (!flattened) current.markSaved(key);
         if (result.status === 'saved' && result.handle) {
           const handle = result.handle;
           current.setSaveTarget(key, { handle, name: result.name }, await sha256Hex(bytes), () =>

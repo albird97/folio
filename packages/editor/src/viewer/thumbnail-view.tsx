@@ -1,8 +1,14 @@
 import type { Rotation } from '@folio/document-model';
 import type { PdfDocumentHandle } from '@folio/pdf-core';
-import { memo, useEffect, useEffectEvent, useLayoutEffect, useRef } from 'react';
+import { memo, useEffect, useEffectEvent, useLayoutEffect, useRef, type RefObject } from 'react';
 import type { SchedulableJob } from './render-scheduler';
-import { pageCache, scheduler, thumbnailCache } from './resources';
+import {
+  formVariant,
+  pageCache,
+  scheduler,
+  thumbnailCache,
+  variantFormRevision,
+} from './resources';
 
 export interface ThumbnailViewProps {
   /** Identifies the document and source file in the render caches. */
@@ -19,6 +25,8 @@ export interface ThumbnailViewProps {
   scale: number;
   ratio: number;
   priority: number;
+  /** How often the page's form fields changed (see `PageView`). */
+  formRevision: number;
 }
 
 /** Copies an existing page rendering instead of asking PDF.js to draw the page again. */
@@ -38,6 +46,19 @@ function downscale(
   return canvas;
 }
 
+/** The image a thumbnail shows, and the variant it was drawn for without form values. */
+interface Shown {
+  sized: string;
+  release: () => void;
+}
+
+/** Takes the image off the thumbnail. */
+function clear(host: HTMLElement, shown: RefObject<Shown | null>): void {
+  shown.current?.release();
+  shown.current = null;
+  host.replaceChildren();
+}
+
 /** A low-resolution page image for the pages panel. */
 export const ThumbnailView = memo(function ThumbnailView({
   cacheKey,
@@ -49,37 +70,43 @@ export const ThumbnailView = memo(function ThumbnailView({
   scale,
   ratio,
   priority,
+  formRevision,
 }: ThumbnailViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const shown = useRef<Shown | null>(null);
   const job = useRef<{ id: string; start: () => SchedulableJob } | null>(null);
   const currentPriority = useEffectEvent(() => priority);
-  const variant = `${cacheKey}|thumb-r${rotation}-${width}x${height}@${ratio.toFixed(2)}`;
+  const sized = `${cacheKey}|thumb-r${rotation}-${width}x${height}@${ratio.toFixed(2)}`;
+  const variant = sized + formVariant(formRevision);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host || !handle) return;
-    let unpin: (() => void) | null = null;
     const show = (canvas: HTMLCanvasElement) => {
       canvas.className = 'block size-full';
-      unpin = thumbnailCache.pin(sourceIndex, variant);
+      const release = thumbnailCache.pin(sourceIndex, variant);
       thumbnailCache.put(sourceIndex, variant, canvas);
       host.replaceChildren(canvas);
+      shown.current?.release();
+      shown.current = { sized, release };
     };
-    const release = () => {
-      unpin?.();
-      host.replaceChildren();
-    };
+    // Another size or turn starts blank; new form values keep the image until redrawn.
+    if (shown.current?.sized !== sized) clear(host, shown);
 
     const cached = thumbnailCache.get(sourceIndex, variant);
     if (cached) {
       show(cached);
-      return release;
+      return;
     }
     const rendered = pageCache.fallback(sourceIndex, `${cacheKey}|r${rotation}@`);
-    const copy = rendered ? downscale(rendered.canvas, width * ratio, height * ratio) : null;
+    // Only a rendering with the page's current form values will do.
+    const copy =
+      rendered && variantFormRevision(rendered.variant) === formRevision
+        ? downscale(rendered.canvas, width * ratio, height * ratio)
+        : null;
     if (copy) {
       show(copy);
-      return release;
+      return;
     }
 
     let cancelled = false;
@@ -114,9 +141,27 @@ export const ThumbnailView = memo(function ThumbnailView({
       cancelled = true;
       job.current = null;
       scheduler.cancel(id);
-      release();
     };
-  }, [cacheKey, handle, sourceIndex, variant, rotation, width, height, scale, ratio]);
+  }, [
+    cacheKey,
+    handle,
+    sourceIndex,
+    sized,
+    variant,
+    formRevision,
+    rotation,
+    width,
+    height,
+    scale,
+    ratio,
+  ]);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    return () => {
+      if (host) clear(host, shown);
+    };
+  }, [handle, sourceIndex]);
 
   useEffect(() => {
     if (job.current) scheduler.schedule(job.current.id, priority, job.current.start);

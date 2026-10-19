@@ -179,6 +179,8 @@ export interface UiState {
   style: AnnotationStyle;
   /** Written into new annotations as their author; empty leaves it out. */
   authorName: string;
+  /** Tint the fields of forms that can be filled in. */
+  highlightFields: boolean;
   dialog: DialogRequest | null;
   /** Documents the Chrome extension sent, waiting for the user to accept them. */
   transfers: TransferRequest[];
@@ -193,6 +195,7 @@ export interface UiState {
   setStyle(changes: Partial<Omit<AnnotationStyle, 'colors'>>): void;
   setToolColor(tool: keyof AnnotationStyle['colors'], color: HexColor): void;
   setAuthorName(name: string): void;
+  setHighlightFields(highlight: boolean): void;
   openDialog(dialog: DialogRequest): void;
   closeDialog(): void;
   queueTransfer(request: TransferRequest): void;
@@ -201,7 +204,13 @@ export interface UiState {
 
 type Persisted = Pick<
   UiState,
-  'theme' | 'leftPanelOpen' | 'rightPanelOpen' | 'sidebarTab' | 'style' | 'authorName'
+  | 'theme'
+  | 'leftPanelOpen'
+  | 'rightPanelOpen'
+  | 'sidebarTab'
+  | 'style'
+  | 'authorName'
+  | 'highlightFields'
 >;
 
 export const UI_STORAGE_KEY = 'workspace-ui';
@@ -247,6 +256,7 @@ function sanitize(value: unknown): Partial<Persisted> {
   const style = sanitizeStyle(raw.style);
   if (style) out.style = style;
   if (typeof raw.authorName === 'string') out.authorName = raw.authorName.slice(0, 200);
+  if (typeof raw.highlightFields === 'boolean') out.highlightFields = raw.highlightFields;
   return out;
 }
 
@@ -257,6 +267,7 @@ const persistedOf = (state: UiState): Persisted => ({
   sidebarTab: state.sidebarTab,
   style: state.style,
   authorName: state.authorName,
+  highlightFields: state.highlightFields,
 });
 
 /** A question still waiting when its dialog goes away gets the cautious answer. */
@@ -274,6 +285,7 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     tool: 'select',
     style: DEFAULT_STYLE,
     authorName: '',
+    highlightFields: true,
     dialog: null,
     transfers: [],
     hydrated: false,
@@ -289,6 +301,7 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
         style: { ...state.style, colors: { ...state.style.colors, [tool]: color } },
       })),
     setAuthorName: (authorName) => set({ authorName: authorName.slice(0, 200) }),
+    setHighlightFields: (highlightFields) => set({ highlightFields }),
     openDialog: (dialog) => {
       settle(get().dialog);
       set({ dialog });

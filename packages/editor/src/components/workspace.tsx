@@ -15,6 +15,7 @@ import { AnnotationToolbar } from './annotation-toolbar';
 import { Dialogs } from './dialogs';
 import { ErrorState, LoadingState, PasswordState } from './document-states';
 import { FindBar } from './find-bar';
+import { FormBar } from './form-bar';
 import { DropOverlay, NoticeToast } from './overlays';
 import { PrintLayout } from './print-layout';
 import { PropertiesPanel } from './properties-panel';
@@ -56,6 +57,7 @@ function ReadyDocument({ doc }: { doc: WorkspaceDocument }) {
   return (
     <div className="flex h-full flex-col">
       <AnnotationToolbar doc={doc} />
+      <FormBar doc={doc} />
       {doc.search.open ? (
         <FindBar
           key={doc.key}
