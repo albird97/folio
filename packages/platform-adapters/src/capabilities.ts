@@ -82,6 +82,14 @@ const STAMPS_NOTE =
   'Page numbers (“1”, “Page 1”, “Page 1 of 12”, “1 / 12” or custom text with {page} and {total}) at the top or bottom, left, centre or right, and a text watermark at any of nine positions, angle and opacity, over or under the content, on all pages or a range. They show on the pages straight away, can be undone, and are drawn into the pages when saving or printing, in the standard PDF fonts (characters those fonts lack are saved as “?” and the user is told), marked as artifacts for assistive technology. This adds new content; it does not edit the pages’ own text.';
 const UPDATES_NOTE =
   'Check for Updates…, and Check for Updates Automatically (off by default; at most once a day). Updates must be signed with Folio’s key for the version announced; unsaved work is asked about before Folio restarts. The feed is this repository’s GitHub releases, which users cannot reach while the repository is private.';
+const IMAGES_NOTE =
+  'Tools › Export pages as images: chosen pages as PNG or JPEG at 72, 150 or 300 dpi, with or without comments, form values and stamps; several pages as one ZIP file (up to 300 pages at a time).';
+const TEXT_NOTE =
+  'Tools › Export text: the text of chosen pages, including text recognized by OCR, to copy or save as .txt.';
+const PROTECT_NOTE =
+  'Tools › Password protection saves a copy with a password to open and/or restrictions on printing, copying and changes (AES-256), or without the password of a document you opened with it. Each copy is re-opened before it is saved to check the protection. Restrictions set by a document’s author stay locked.';
+const COMPRESS_NOTE =
+  'Tools › Reduce file size saves a smaller copy: lossless (compressing streams, dropping thumbnails) or re-encoding large images as JPEG (2000 or 1400 px on the long side), keeping every image whose new version is not smaller. Protected documents stay protected.';
 const RECENT_NOTE =
   'Start screen list and File › Open Recent; only names reach the UI, and files that moved are reported.';
 
@@ -478,32 +486,33 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     id: 'export-images',
     area: 'Saving and export',
     feature: 'Export pages as images',
-    plannedPhase: 6,
+    plannedPhase: 7,
     targets: {
-      macos: none('Planned for the editor (Phase 6).'),
-      windows: none('Planned for the editor (Phase 6).'),
-      chrome: full(
-        'Side panel: chosen pages as PNG or JPEG at 72, 150 or 300 dpi; several pages download as one ZIP file.',
+      macos: unverified(
+        'macos',
+        `${IMAGES_NOTE} Saved through the native save dialog, which only accepts real image or ZIP data.`,
       ),
+      windows: unverified(
+        'windows',
+        `${IMAGES_NOTE} Saved through the native save dialog, which only accepts real image or ZIP data.`,
+      ),
+      chrome: full(`${IMAGES_NOTE} Downloaded; the side panel offers the same for any PDF.`),
     },
     verification:
-      'E2E (Chromium) reads the downloaded ZIP and images back; the ZIP writer is unit-tested against Python’s zipfile.',
+      'Unit tests of page images, ZIP output (the writer is checked against Python’s zipfile) and the Rust content checks; e2e (Chromium) in the desktop UI, the editor and the side panel reads the ZIP and images back. The native save dialog cannot be automated.',
   },
   {
     id: 'extract-text',
     area: 'Saving and export',
     feature: 'Extract text',
-    plannedPhase: 6,
+    plannedPhase: 7,
     targets: {
-      macos: none('Planned for the editor (Phase 6); page text can be selected and copied today.'),
-      windows: none(
-        'Planned for the editor (Phase 6); page text can be selected and copied today.',
-      ),
-      chrome: full(
-        'Side panel: text of chosen pages, line by line, to copy or download as .txt. Scanned pages need OCR, which Folio does not have yet.',
-      ),
+      macos: unverified('macos', `${TEXT_NOTE} Saved through the native save dialog.`),
+      windows: unverified('windows', `${TEXT_NOTE} Saved through the native save dialog.`),
+      chrome: full(`${TEXT_NOTE} Downloaded; the side panel offers the same for any PDF.`),
     },
-    verification: 'Unit tests on the text fixture; e2e (Chromium) copies and downloads it.',
+    verification:
+      'Unit tests on the text fixture and recognized text; e2e (Chromium) copies and saves it from the desktop UI, the editor and the side panel, including a page read by OCR.',
   },
   {
     id: 'printing',
@@ -598,18 +607,34 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
   {
     id: 'password-protect',
     area: 'Advanced tools',
-    feature: 'Add password protection',
-    plannedPhase: 6,
-    targets: all(none()),
-    verification: '—',
+    feature: 'Password protection',
+    plannedPhase: 7,
+    targets: {
+      macos: unverified('macos', PROTECT_NOTE),
+      windows: unverified('windows', PROTECT_NOTE),
+      chrome: full(PROTECT_NOTE),
+    },
+    verification:
+      'Export tests check every protected copy with qpdf (--check and --show-encryption with the password) and PDF.js, including that strings are not readable without the password; e2e (Chromium) reads protected, re-protected and unprotected copies back with pdf-lib.',
   },
   {
     id: 'compression',
     area: 'Advanced tools',
-    feature: 'Compress PDFs',
-    plannedPhase: 6,
-    targets: all(none()),
-    verification: '—',
+    feature: 'Reduce file size',
+    plannedPhase: 7,
+    targets: {
+      macos: unverified(
+        'macos',
+        `${COMPRESS_NOTE} Re-encoding images uses the browser engine’s image decoder, so far only tried in Chromium.`,
+      ),
+      windows: unverified(
+        'windows',
+        `${COMPRESS_NOTE} Re-encoding images uses the browser engine’s image decoder, so far only tried in Chromium.`,
+      ),
+      chrome: full(COMPRESS_NOTE),
+    },
+    verification:
+      'Unit tests compress Flate and JPEG images (predictors, soft masks, every skipped image type), compare rendered pixels and run qpdf; e2e (Chromium) reduces a document with a large photo and re-opens it.',
   },
   // App & platform
   {
