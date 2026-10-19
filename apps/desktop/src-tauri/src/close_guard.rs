@@ -13,6 +13,9 @@ pub enum CloseIntent {
     Window,
     /// Quit Folio (Quit menu item, ⌘Q).
     Quit,
+    /// Quit to install an update the user agreed to, and start again (see
+    /// `updates`).
+    Update,
 }
 
 #[derive(Debug, Default)]
@@ -138,6 +141,21 @@ mod tests {
     }
 
     #[test]
+    fn an_update_waits_for_the_same_answer_as_quitting() {
+        let guard = CloseGuard::default();
+        // Nothing unsaved: the update is installed right away.
+        assert!(!guard.intercept(CloseIntent::Update));
+        guard.set_enabled(true);
+        assert!(guard.intercept(CloseIntent::Update));
+        assert_eq!(guard.confirm(), Some(CloseIntent::Update));
+        // Kept working: nothing is carried out later.
+        guard.set_enabled(true);
+        assert!(guard.intercept(CloseIntent::Update));
+        assert!(guard.cancel());
+        assert_eq!(guard.confirm(), None);
+    }
+
+    #[test]
     fn saving_everything_drops_a_pending_request() {
         let guard = CloseGuard::default();
         guard.set_enabled(true);
@@ -151,7 +169,7 @@ mod tests {
 
 /// The webview calls `set_close_guard`, `confirm_close` and `cancel_close`
 /// whenever it likes: whatever the order, a confirmation carries out only a
-/// close or quit Folio itself asked about, and only once.
+/// close, quit or update Folio itself asked about, and only once.
 #[cfg(test)]
 mod properties {
     use super::*;
@@ -164,12 +182,16 @@ mod properties {
         SetEnabled(bool),
         Confirm,
         Cancel,
-        /// From Folio: the window's close button, Quit.
+        /// From Folio: the window's close button, Quit, an update.
         Intercept(CloseIntent),
     }
 
     fn call() -> impl Strategy<Value = Call> {
-        let intent = prop::sample::select(vec![CloseIntent::Window, CloseIntent::Quit]);
+        let intent = prop::sample::select(vec![
+            CloseIntent::Window,
+            CloseIntent::Quit,
+            CloseIntent::Update,
+        ]);
         prop_oneof![
             any::<bool>().prop_map(Call::SetEnabled),
             Just(Call::Confirm),

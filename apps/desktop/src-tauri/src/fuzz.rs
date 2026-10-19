@@ -142,7 +142,7 @@ fn key() -> BoxedStrategy<String> {
     prop_oneof![
         3 => prop::sample::select(vec![
             "type", "name", "size", "sha256", "transfer", "index", "data", "id", "path",
-            "title", "savedAt", "createdAt", "openedAt",
+            "title", "savedAt", "createdAt", "openedAt", "checkAutomatically", "lastCheck",
             "allowed_origins",
         ])
         .prop_map(str::to_owned),

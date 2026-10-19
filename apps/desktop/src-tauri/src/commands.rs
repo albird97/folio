@@ -413,10 +413,12 @@ pub fn confirm_close(app: AppHandle, guard: State<'_, CloseGuard>) -> bool {
 }
 
 /// The user chose to keep the window open: forgets the request, so a later
-/// close is asked about (and carried out) on its own. Returns whether there
-/// was a request.
+/// close is asked about (and carried out) on its own, and does not install
+/// an update that was waiting for this answer. Returns whether there was a
+/// request.
 #[tauri::command]
-pub fn cancel_close(guard: State<'_, CloseGuard>) -> bool {
+pub fn cancel_close(app: AppHandle, guard: State<'_, CloseGuard>) -> bool {
+    crate::updates::kept_working(&app);
     guard.cancel()
 }
 

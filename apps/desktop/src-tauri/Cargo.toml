@@ -32,6 +32,15 @@ uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 base64 = "0.22"
 dirs = "7"
+# Opt-in updates (see `updates.rs`): checked, verified and installed in Rust;
+# the webview has no updater permission. Without the `zip` feature: Folio's
+# updates are the installers and `.app.tar.gz` themselves (Tauri 2 artifacts),
+# never zip archives, and the `zip` crate it brings has known advisories.
+tauri-plugin-updater = { version = "2.14", default-features = false, features = [
+  "rustls-tls",
+  "system-proxy",
+] }
+semver = "1"
 
 # macOS routes files opened while Folio runs to the running app itself.
 [target.'cfg(not(target_os = "macos"))'.dependencies]

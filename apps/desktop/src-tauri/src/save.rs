@@ -156,7 +156,7 @@ pub fn clean_display_text(text: &str, max_bytes: usize) -> String {
 
 /// The longest prefix of `text` that fits in `max` bytes, cut between
 /// characters.
-fn truncate_to_bytes(text: &str, max: usize) -> &str {
+pub(crate) fn truncate_to_bytes(text: &str, max: usize) -> &str {
     if text.len() <= max {
         return text;
     }
