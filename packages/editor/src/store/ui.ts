@@ -8,6 +8,7 @@ import type {
   TransferRequest,
 } from '@folio/platform-adapters';
 import { createStore, type StoreApi } from 'zustand/vanilla';
+import { isOcrLanguage, type OcrLanguage } from '../ocr/languages';
 
 export type SidebarTab = 'pages' | 'outline' | 'comments' | 'results';
 export const SIDEBAR_TABS: readonly SidebarTab[] = ['pages', 'outline', 'comments', 'results'];
@@ -179,6 +180,8 @@ export interface UiState {
   style: AnnotationStyle;
   /** Written into new annotations as their author; empty leaves it out. */
   authorName: string;
+  /** The languages text was last recognized in (never empty). */
+  ocrLanguages: OcrLanguage[];
   dialog: DialogRequest | null;
   /** Documents the Chrome extension sent, waiting for the user to accept them. */
   transfers: TransferRequest[];
@@ -193,6 +196,7 @@ export interface UiState {
   setStyle(changes: Partial<Omit<AnnotationStyle, 'colors'>>): void;
   setToolColor(tool: keyof AnnotationStyle['colors'], color: HexColor): void;
   setAuthorName(name: string): void;
+  setOcrLanguages(languages: OcrLanguage[]): void;
   openDialog(dialog: DialogRequest): void;
   closeDialog(): void;
   queueTransfer(request: TransferRequest): void;
@@ -201,7 +205,13 @@ export interface UiState {
 
 type Persisted = Pick<
   UiState,
-  'theme' | 'leftPanelOpen' | 'rightPanelOpen' | 'sidebarTab' | 'style' | 'authorName'
+  | 'theme'
+  | 'leftPanelOpen'
+  | 'rightPanelOpen'
+  | 'sidebarTab'
+  | 'style'
+  | 'authorName'
+  | 'ocrLanguages'
 >;
 
 export const UI_STORAGE_KEY = 'workspace-ui';
@@ -247,6 +257,10 @@ function sanitize(value: unknown): Partial<Persisted> {
   const style = sanitizeStyle(raw.style);
   if (style) out.style = style;
   if (typeof raw.authorName === 'string') out.authorName = raw.authorName.slice(0, 200);
+  if (Array.isArray(raw.ocrLanguages)) {
+    const languages = [...new Set(raw.ocrLanguages.filter(isOcrLanguage))];
+    if (languages.length > 0) out.ocrLanguages = languages;
+  }
   return out;
 }
 
@@ -257,6 +271,7 @@ const persistedOf = (state: UiState): Persisted => ({
   sidebarTab: state.sidebarTab,
   style: state.style,
   authorName: state.authorName,
+  ocrLanguages: state.ocrLanguages,
 });
 
 /** A question still waiting when its dialog goes away gets the cautious answer. */
@@ -274,6 +289,7 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     tool: 'select',
     style: DEFAULT_STYLE,
     authorName: '',
+    ocrLanguages: ['eng'],
     dialog: null,
     transfers: [],
     hydrated: false,
@@ -289,6 +305,9 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
         style: { ...state.style, colors: { ...state.style.colors, [tool]: color } },
       })),
     setAuthorName: (authorName) => set({ authorName: authorName.slice(0, 200) }),
+    setOcrLanguages: (languages) => {
+      if (languages.length > 0) set({ ocrLanguages: [...new Set(languages)] });
+    },
     openDialog: (dialog) => {
       settle(get().dialog);
       set({ dialog });

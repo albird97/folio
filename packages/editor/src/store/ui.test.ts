@@ -94,7 +94,26 @@ describe('ui store', () => {
       sidebarTab: 'pages',
       style: DEFAULT_STYLE,
       authorName: '',
+      ocrLanguages: ['eng'],
     });
+  });
+
+  it('remembers the languages text was recognized in, keeping only known ones', async () => {
+    const storage = createMemoryStorage({
+      [UI_STORAGE_KEY]: { ocrLanguages: ['klingon', 'ind', 'chi_sim', 'ind'] },
+    });
+    const store = createUiStore(storage);
+    await settle();
+    expect(store.getState().ocrLanguages).toEqual(['ind', 'chi_sim']);
+    store.getState().setOcrLanguages(['eng', 'chi_tra']);
+    // A choice of nothing is not remembered.
+    store.getState().setOcrLanguages([]);
+    await settle();
+    expect(storage.data.get(UI_STORAGE_KEY)).toMatchObject({ ocrLanguages: ['eng', 'chi_tra'] });
+
+    const empty = createUiStore(createMemoryStorage({ [UI_STORAGE_KEY]: { ocrLanguages: [] } }));
+    await settle();
+    expect(empty.getState().ocrLanguages).toEqual(['eng']);
   });
 
   it('remembers annotation styles, keeping only valid values', async () => {
