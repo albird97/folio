@@ -3,3 +3,4 @@ export * from './web';
 export * from './memory';
 export * from './recovery';
 export * from './capabilities';
+export * from './ai';

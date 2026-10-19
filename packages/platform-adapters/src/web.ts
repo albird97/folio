@@ -1,3 +1,4 @@
+import { createMemoryAiService } from './ai';
 import { createIndexedDbRecoveryStore } from './recovery';
 import type {
   AppCommand,
@@ -194,6 +195,7 @@ export const WEB_FEATURES: RuntimeFeatures = {
   clipboardWrite: true,
   browserTabIntegration: false,
   nativeMessaging: false,
+  aiAssistant: true,
 };
 
 /**
@@ -268,6 +270,8 @@ export function createWebPlatformAdapter(options: WebAdapterOptions = {}): Platf
     recovery: options.recovery ?? createIndexedDbRecoveryStore(),
     recentFiles: null,
     setUnsavedChanges,
+    // Development and UI tests only: the key stays in this page's memory.
+    ai: createMemoryAiService(),
     deliverFiles(files) {
       incoming.emit(files);
     },
