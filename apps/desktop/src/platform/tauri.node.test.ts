@@ -340,6 +340,25 @@ describe('desktop platform adapter', () => {
       tauri.responses.set('print_window', rejectWith('print-failed', 'No printer dialog.'));
       await expect(adapter.print()).rejects.toThrow('No printer dialog.');
     });
+
+    it('prints PDFs with the system on macOS, as raw data named in a header', async () => {
+      const adapter = await createTauriPlatformAdapter();
+      const bytes = new TextEncoder().encode('%PDF-1.7 pages to print');
+      await adapter.printPdf?.(bytes, 'Q3 / Été.pdf');
+      const call = lastCall('print_pdf');
+      expect(call.args).toBe(bytes);
+      expect(call.options?.headers).toEqual({ 'x-folio-name': 'Q3%20%2F%20%C3%89t%C3%A9.pdf' });
+      tauri.responses.set('print_pdf', rejectWith('not-pdf', 'Only PDF data can be saved.'));
+      const error = await adapter.printPdf?.(bytes, 'a.pdf').catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(NativeCommandError);
+      expect((error as NativeCommandError).code).toBe('not-pdf');
+    });
+
+    it('prints the print layout elsewhere', async () => {
+      tauri.responses.set('app_info', { version: '0.1.0', os: 'windows', arch: 'x86_64' });
+      const adapter = await createTauriPlatformAdapter();
+      expect(adapter.printPdf).toBeUndefined();
+    });
   });
 
   describe('crash recovery', () => {
