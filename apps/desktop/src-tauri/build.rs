@@ -30,6 +30,11 @@ fn main() {
             "take_pending_transfers",
             "answer_transfer",
             "native_messaging_status",
+            "ai_key_status",
+            "ai_set_key",
+            "ai_forget_key",
+            "ai_request",
+            "ai_cancel",
         ]),
     ))
     .expect("failed to run tauri-build");

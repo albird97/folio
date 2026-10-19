@@ -27,11 +27,21 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 percent-encoding = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 base64 = "0.22"
 dirs = "7"
+# Ask Claude: the user's API key in the OS credential store (platform
+# backends below; Linux builds keep it in a private file), and the proxy to
+# Anthropic's API over rustls with the `ring` provider and the system's
+# trust store (no OpenSSL).
+keyring = "3.6"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", features = ["apple-native"] }
 
 # macOS routes files opened while Folio runs to the running app itself.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
@@ -50,6 +60,7 @@ gtk = "0.18"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", features = ["windows-native"] }
 winreg = "0.56"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
@@ -61,3 +72,4 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

@@ -17,6 +17,7 @@ import {
 import { invoke, type InvokeArgs, type InvokeOptions } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { createTauriAiService } from './ai';
 import { TAURI_FEATURES } from './features';
 import menuCommands from './menu-commands.json';
 
@@ -505,5 +506,6 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
       const opened = await call<OpenedFiles>('answer_transfer', { id, accept });
       return toIncoming(opened, false);
     },
+    ai: createTauriAiService(),
   };
 }
