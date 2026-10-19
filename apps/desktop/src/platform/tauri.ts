@@ -491,6 +491,18 @@ export async function createTauriPlatformAdapter(): Promise<PlatformAdapter & { 
     async print() {
       await call<void>('print_window', undefined, undefined, 'The document could not be printed.');
     },
+    // WKWebView lays out a print against the window, not the paper (pages
+    // came out turned and shrunk), so macOS prints the PDF with PDFKit.
+    ...(info.os === 'macos' && {
+      async printPdf(bytes: Uint8Array, name: string) {
+        await call<void>(
+          'print_pdf',
+          bytes,
+          { headers: { [HEADERS.name]: headerText(name) } },
+          'The document could not be printed.',
+        );
+      },
+    }),
     recovery: createTauriRecoveryStore(),
     recentFiles,
     setUnsavedChanges(value) {

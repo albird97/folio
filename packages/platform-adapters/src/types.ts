@@ -343,6 +343,14 @@ export interface PlatformAdapter {
    * in an element that only print styles show.
    */
   print(): Promise<void>;
+  /**
+   * macOS desktop: prints a PDF itself (the pages to print, exported in
+   * memory) in the system's print dialog, scaled to the paper and turned to
+   * its orientation, instead of the print layout `print()` prints. `name` is
+   * the print job's name. Resolves once the dialog is closed, whether the
+   * user printed or cancelled.
+   */
+  printPdf?(bytes: Uint8Array, name: string): Promise<void>;
   recovery: RecoveryStore;
   recentFiles: RecentFiles | null;
   /** Lets the platform warn before unsaved work is lost (browsers' leave-page prompt). */
