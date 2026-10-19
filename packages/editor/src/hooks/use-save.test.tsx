@@ -110,7 +110,7 @@ describe('Save', () => {
       { status: 'unavailable', message: 'The file is read-only.' },
     ]);
     await act(async () => expect(await save()).toBe(true));
-    expect(memory.saved).toEqual([{ name: 'Report.pdf', bytes: EXPORTED }]);
+    expect(memory.saved).toEqual([{ name: 'Report.pdf', bytes: EXPORTED, kind: 'pdf' }]);
     expect(workspace.getState().notice?.message).toContain('Saved as Report.pdf.');
   });
 
