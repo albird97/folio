@@ -20,6 +20,7 @@ import {
   pruneRemovedPages,
   replacePageTree,
 } from './objects';
+import { addRecognizedText } from './recognized-text';
 
 export interface ExportSource {
   bytes: Uint8Array;
@@ -113,8 +114,8 @@ async function loadSource(source: ExportSource | undefined, id: SourceId): Promi
 
 /**
  * Writes the document as a new PDF: pages in model order with their
- * rotation, pages from other files, blank pages, Folio's annotations and the
- * metadata. Removed pages and everything only they used are left out of the
+ * rotation, pages from other files, blank pages, recognized text, Folio's
+ * annotations and the metadata. Removed pages and everything only they used are left out of the
  * file entirely, so nothing deleted can be recovered from it.
  */
 export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
@@ -203,6 +204,9 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     basePages.map((page) => page.ref.tag),
     output.map((entry) => entry.page),
   );
+
+  // Recognized text (OCR), as invisible text on its pages.
+  addRecognizedText(doc, model, output, options.assets);
 
   // Annotations.
   const pageAnnotations = new Map<PageId, Annotation[]>();
