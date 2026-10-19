@@ -16,6 +16,7 @@ function createFakeChrome(initial: Record<string, unknown>) {
   const data: Record<string, unknown> = structuredClone(initial);
   const pending: (() => void)[] = [];
   const changeListeners: Listener<[Record<string, chrome.storage.StorageChange>, string]>[] = [];
+  const permissionListeners: Listener<[chrome.permissions.Permissions]>[] = [];
   let onMessage: Listener<[unknown, chrome.runtime.MessageSender, (r: unknown) => void]> | null =
     null;
   let failNextSet = false;
@@ -53,6 +54,10 @@ function createFakeChrome(initial: Record<string, unknown>) {
         }
         for (const listener of changeListeners) listener(changes, 'local');
       }),
+    remove: (keys: string | string[]) =>
+      enqueue(() => {
+        for (const key of typeof keys === 'string' ? [keys] : keys) delete data[key];
+      }),
   };
 
   const chromeApi = {
@@ -73,6 +78,13 @@ function createFakeChrome(initial: Record<string, unknown>) {
     },
     tabs: { create: async () => ({}) },
     sidePanel: { setPanelBehavior: async () => undefined },
+    permissions: {
+      remove: async () => true,
+      onRemoved: {
+        addListener: (listener: Listener<[chrome.permissions.Permissions]>) =>
+          permissionListeners.push(listener),
+      },
+    },
   };
 
   return {
@@ -85,6 +97,9 @@ function createFakeChrome(initial: Record<string, unknown>) {
         const sender = { id: 'folio', url: 'chrome-extension://folio/editor.html' };
         onMessage!(message, sender, (response) => resolve(response as MessageResponse));
       }),
+    /** Chrome reports that the user removed some of Folio's permissions. */
+    removePermissions: (removed: chrome.permissions.Permissions) =>
+      permissionListeners.forEach((listener) => listener(removed)),
     /** Applies the next storage operation and lets the worker react to it. */
     async step() {
       pending.shift()?.();
@@ -185,5 +200,54 @@ describe('service worker activity log', () => {
     expect(await failed).toEqual({ ok: false, error: 'failed' });
     expect(await next).toMatchObject({ ok: true });
     expect(fake.data[ACTIVITY_KEY]).toHaveLength(1);
+  });
+});
+
+describe('service worker Ask Claude key', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const KEY = 'sk-ant-api03-test-key-0123456789';
+
+  it('stores a key, says only whether one is stored, and forgets it', async () => {
+    const fake = await loadWorker();
+    const status = async () => {
+      const response = fake.send({ type: 'ai/status' });
+      await fake.run();
+      return response;
+    };
+    expect(await status()).toEqual({ ok: true, ai: { hasKey: false } });
+
+    const set = fake.send({ type: 'ai/set-key', key: `  ${KEY}\n` });
+    await fake.run();
+    expect(await set).toEqual({ ok: true });
+    expect(fake.data['ai-api-key']).toBe(KEY);
+    // The key never comes back to a page.
+    expect(JSON.stringify(await status())).not.toContain(KEY);
+    expect(await status()).toEqual({ ok: true, ai: { hasKey: true } });
+
+    const forget = fake.send({ type: 'ai/forget-key' });
+    await fake.run();
+    expect(await forget).toEqual({ ok: true });
+    expect(fake.data).not.toHaveProperty('ai-api-key');
+  });
+
+  it('refuses text that cannot be a key', async () => {
+    const fake = await loadWorker();
+    const response = fake.send({ type: 'ai/set-key', key: 'not a key\r\nx-other: 1' });
+    await fake.run();
+    expect(await response).toEqual({ ok: false, error: 'invalid-message' });
+    expect(fake.data).not.toHaveProperty('ai-api-key');
+  });
+
+  it('forgets the key when access to Anthropic’s API is removed', async () => {
+    const fake = await loadWorker({ 'ai-api-key': KEY });
+    fake.removePermissions({ origins: ['https://example.com/*'] });
+    await fake.run();
+    expect(fake.data['ai-api-key']).toBe(KEY);
+    fake.removePermissions({ origins: ['https://api.anthropic.com/*'] });
+    await fake.run();
+    expect(fake.data).not.toHaveProperty('ai-api-key');
   });
 });
