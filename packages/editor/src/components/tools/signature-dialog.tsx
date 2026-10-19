@@ -46,7 +46,7 @@ import {
 import { PERMISSION_MESSAGES } from '../../store/editing';
 import type { DialogOf } from '../../store/ui';
 import { pickImageFile } from '../../viewer/images';
-import { PLACING_HINT } from '../../viewer/signature-layer';
+import { PAGE_VIEW, PLACING_HINT } from '../../viewer/signature-layer';
 import { Paper, SignaturePad, useCanvasPixels } from './signature-pad';
 
 type Source = 'saved' | 'draw' | 'type' | 'image';
@@ -64,8 +64,6 @@ const MAX_NAME_LENGTH = 80;
 
 /** Every tab is as tall as the tallest, so the dialog keeps its place when switching. */
 const PANEL = 'flex min-h-[19rem] flex-col pt-3 outline-none';
-
-const PAGE_VIEW = '[role="region"][aria-label="Page view"]';
 
 const inkDot = (ink: Ink) => (
   <span
@@ -215,10 +213,13 @@ function SignatureForm({
   const changeRemovePaper = async (removing: boolean) => {
     setRemovePaper(removing);
     if (!picture) return;
+    // (Placing waits while busy, so the signature shown is never out of date then.)
     setBusy(true);
     try {
       await showPicture(picture.pixels, removing);
     } catch {
+      // The signature shown is still the earlier one: so is the box.
+      setRemovePaper(!removing);
       setError('That image could not be read.');
     } finally {
       setBusy(false);
@@ -273,11 +274,7 @@ function SignatureForm({
     }
   };
 
-  const signField = async (
-    signature: SignatureImage,
-    field: { pageId: PageId; rect: Rect },
-    note: string | null,
-  ) => {
+  const signField = async (signature: SignatureImage, field: { pageId: PageId; rect: Rect }) => {
     const state = workspace.getState();
     const doc = state.documents.find((entry) => entry.key === request.docKey);
     const page = doc?.editor?.model.pages.find((entry) => entry.id === field.pageId);
@@ -285,16 +282,22 @@ function SignatureForm({
       state.showNotice('The signature field is no longer in this document.');
       return;
     }
-    const asset = await state.registerImage(request.docKey, signature.bytes, 'image/png');
-    if (!asset) return;
-    const annotation = newSignature({
-      pageId: page.id,
-      placement: fieldPlacement(page, field.rect, signature.width / signature.height),
-      assetId: asset.id,
-      author: ui.getState().authorName,
-    });
-    state.addAnnotations(request.docKey, [annotation], { label: 'Add signature', assets: [asset] });
-    if (note) state.showNotice(note);
+    try {
+      const asset = await state.registerImage(request.docKey, signature.bytes, 'image/png');
+      if (!asset) return;
+      const annotation = newSignature({
+        pageId: page.id,
+        placement: fieldPlacement(page, field.rect, signature.width / signature.height),
+        assetId: asset.id,
+        author: ui.getState().authorName,
+      });
+      state.addAnnotations(request.docKey, [annotation], {
+        label: 'Add signature',
+        assets: [asset],
+      });
+    } catch {
+      state.showNotice('The signature could not be added.');
+    }
   };
 
   const onSubmit = async (event: FormEvent) => {
@@ -308,7 +311,7 @@ function SignatureForm({
     } catch {
       // Reported below.
     }
-    // Cancelled meanwhile.
+    // Cancelled meanwhile: nothing is placed or remembered.
     if (!open.current) return;
     if (!signature) {
       setBusy(false);
@@ -319,16 +322,22 @@ function SignatureForm({
       );
       return;
     }
-    const note = await rememberIfAsked(signature);
-    if (!open.current) return;
+    // From here on the signature is used: the dialog goes, so no more cancelling.
     focusPages.current = true;
     ui.getState().closeDialog();
+    const pending = { docKey: request.docKey, image: signature };
     if (request.field) {
-      await signField(signature, request.field, note);
-      return;
+      await signField(signature, request.field);
+    } else {
+      ui.getState().startPlacingSignature(pending);
+      workspace.getState().showNotice(PLACING_HINT);
     }
-    ui.getState().startPlacingSignature(signature);
-    workspace.getState().showNotice(note ? `${note} ${PLACING_HINT}` : PLACING_HINT);
+    const note = await rememberIfAsked(signature);
+    if (note) {
+      // While it is being placed, the hint stays with the note.
+      const placing = ui.getState().pendingSignature === pending;
+      workspace.getState().showNotice(placing ? `${note} ${PLACING_HINT}` : note);
+    }
   };
 
   // At the foot of the Draw, Type and Image tabs (saved signatures are remembered already).

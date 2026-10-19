@@ -173,6 +173,12 @@ export const TOOL_DIALOG_KINDS = {
   'ask-ai': 'ask-ai',
 } as const satisfies Record<ToolDialogCommand, DialogRequest['kind']>;
 
+/** A signature chosen in the signature dialog, to place in the document it was chosen for. */
+export interface PendingSignature {
+  docKey: string;
+  image: SignatureImage;
+}
+
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {
   theme: ThemePreference;
@@ -184,7 +190,7 @@ export interface UiState {
    * The signature the Signature tool places, held in memory only (never
    * stored); null with every other tool.
    */
-  pendingSignature: SignatureImage | null;
+  pendingSignature: PendingSignature | null;
   style: AnnotationStyle;
   /** Written into new annotations as their author; empty leaves it out. */
   authorName: string;
@@ -201,7 +207,7 @@ export interface UiState {
   /** Picks a tool; another tool drops the signature being placed. */
   setTool(tool: Tool): void;
   /** Picks the Signature tool to place `signature` on a page. */
-  startPlacingSignature(signature: SignatureImage): void;
+  startPlacingSignature(signature: PendingSignature): void;
   setStyle(changes: Partial<Omit<AnnotationStyle, 'colors'>>): void;
   setToolColor(tool: keyof AnnotationStyle['colors'], color: HexColor): void;
   setAuthorName(name: string): void;

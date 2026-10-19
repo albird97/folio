@@ -29,6 +29,8 @@ const signatureDialog = (page: Page) => page.getByRole('dialog', { name: 'Add a 
 const annotationGroups = (page: Page, pageNumber = 1) =>
   page.locator(`[data-annotation-layer="${pageNumber}"] [data-annotation-id]`);
 const pageView = (page: Page) => page.getByRole('region', { name: 'Page view' });
+const placingHint = (page: Page) =>
+  page.getByRole('status').filter({ hasText: 'Click where the signature goes' });
 
 async function openSignatureDialog(page: Page) {
   await tool(page, 'Sign').click();
@@ -259,9 +261,7 @@ test.describe('signatures', () => {
     await drawOnPad(page, dialog);
     await startPlacing(dialog);
     await expect(tool(page, 'Sign')).toHaveAttribute('aria-checked', 'true');
-    await expect(
-      page.getByRole('status').filter({ hasText: 'Click where the signature goes' }),
-    ).toBeVisible();
+    await expect(placingHint(page)).toBeVisible();
 
     // A preview follows the pointer; a click puts the signature there.
     const box = await pageBox(page);
@@ -275,6 +275,7 @@ test.describe('signatures', () => {
     await expect(page.getByRole('region', { name: 'Selected comment' })).toContainText('Signature');
     await expect(tool(page, 'Select')).toHaveAttribute('aria-checked', 'true');
     await expect(pageView(page)).toBeFocused();
+    await expect(placingHint(page)).toHaveCount(0);
     const placed = (await annotationGroups(page).first().locator('image').boundingBox())!;
     expect(placed.x).toBeCloseTo(shown.x, -1);
     expect(placed.y).toBeCloseTo(shown.y, -1);
@@ -330,9 +331,12 @@ test.describe('signatures', () => {
     await expect(dialog).toBeHidden();
     await expect(pageView(page)).toBeFocused();
 
-    // Escape gives up placing; Enter puts the signature in the middle of the page.
+    // Escape gives up placing (and the hint goes); Enter puts the signature
+    // in the middle of the page.
+    await expect(placingHint(page)).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(tool(page, 'Select')).toHaveAttribute('aria-checked', 'true');
+    await expect(placingHint(page)).toHaveCount(0);
     await page.keyboard.press('s');
     await expect(dialog.getByRole('tab', { name: 'Type' })).toBeVisible();
     await dialog.getByRole('tab', { name: 'Type' }).click();
@@ -476,6 +480,27 @@ test.describe('signatures', () => {
     expect((x1 + x2) / 2).toBeCloseTo(field.x + field.width / 2, 0);
     expect((y1 + y2) / 2).toBeCloseTo(field.y + field.height / 2, 0);
     expect((x2 - x1) / (y2 - y1)).toBeCloseTo(signature!.image.width / signature!.image.height, 1);
+  });
+
+  test('places a signature only in the document it was chosen for', async ({ page }) => {
+    await chooseFiles(page, () => page.getByRole('button', { name: /Choose PDF/ }).click(), [
+      'basic-3-pages.pdf',
+      'rotated-pages.pdf',
+    ]);
+    await pageRendered(page);
+    const dialog = await openSignatureDialog(page);
+    await drawOnPad(page, dialog);
+    await startPlacing(dialog);
+    await expect(tool(page, 'Sign')).toHaveAttribute('aria-checked', 'true');
+    // Another document (whose signatures the dialog did not warn about) gives up placing.
+    await page
+      .getByRole('navigation', { name: 'Open documents' })
+      .getByRole('button', { name: /^rotated-pages\.pdf/ })
+      .click();
+    await pageRendered(page);
+    await expect(tool(page, 'Select')).toHaveAttribute('aria-checked', 'true');
+    await expect(placingHint(page)).toHaveCount(0);
+    await expect(page.locator('[data-signature-layer]')).toHaveCount(0);
   });
 
   test('keeps a signature placed on a turned page level', async ({ page }) => {

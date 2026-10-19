@@ -14,11 +14,23 @@ export const PLACING_HINT =
 /** Where keys typed into these keep their own meaning. */
 const KEEPS_KEYS =
   'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], [role="listbox"]';
-const PAGE_VIEW = '[role="region"][aria-label="Page view"]';
+/** The pages, where keyboard focus belongs once a signature is placed. */
+export const PAGE_VIEW = '[role="region"][aria-label="Page view"]';
 
 /** The page the keyboard places on: the current one (or the first, before there is one). */
 const isCurrent = ({ doc, page }: PageOverlayProps) =>
   (doc.view?.currentPageId ?? doc.editor?.model.pages[0]?.id) === page.id;
+
+/** The preview image of each signature, made once for all pages. */
+const previews = new WeakMap<SignatureImage, string>();
+function previewOf(signature: SignatureImage): string {
+  let url = previews.get(signature);
+  if (!url) {
+    url = pngDataUrl(signature.bytes);
+    previews.set(signature, url);
+  }
+  return url;
+}
 
 /**
  * Places the signature chosen in the signature dialog. While the Signature
@@ -29,9 +41,26 @@ const isCurrent = ({ doc, page }: PageOverlayProps) =>
  */
 export const SignatureLayer = memo(
   function SignatureLayer(props: PageOverlayProps) {
-    const signature = useUi((state) => state.pendingSignature);
-    if (props.tool !== 'signature' || !signature || !props.doc.permissions.annotate) return null;
-    return <Placing {...props} signature={signature} current={isCurrent(props)} />;
+    const { workspace, ui } = useWorkspaceContext();
+    const pending = useUi((state) => state.pendingSignature);
+    const placing = props.tool === 'signature' && pending !== null;
+    const elsewhere = placing && pending.docKey !== props.doc.key;
+
+    // A signature goes into the document it was chosen for (whose digital
+    // signatures the dialog warned about): showing another one gives up.
+    useEffect(() => {
+      if (elsewhere) ui.getState().setTool('select');
+    }, [elsewhere, ui]);
+
+    // The hint about placing goes with it, however placing ends.
+    useEffect(() => {
+      if (placing) return;
+      const state = workspace.getState();
+      if (state.notice?.message.endsWith(PLACING_HINT)) state.dismissNotice();
+    }, [placing, workspace]);
+
+    if (!placing || elsewhere || !props.doc.permissions.annotate) return null;
+    return <Placing {...props} signature={pending.image} current={isCurrent(props)} />;
   },
   // Pages re-render while the document scrolls; this only needs what it draws with.
   (before, after) =>
@@ -58,7 +87,7 @@ function Placing({
   const layerRef = useRef<HTMLDivElement>(null);
   /** The pointer over the page, in display space. */
   const [pointer, setPointer] = useState<Point | null>(null);
-  const preview = useMemo(() => pngDataUrl(signature.bytes), [signature]);
+  const preview = useMemo(() => previewOf(signature), [signature]);
   const display = displaySpaceSize(page, viewRotation);
   const aspect = signature.width / signature.height;
 
@@ -70,23 +99,16 @@ function Placing({
     };
   };
 
-  /** Placing is over: the hint about it goes too. */
-  const done = () => {
-    ui.getState().setTool('select');
-    const state = workspace.getState();
-    if (state.notice?.message.endsWith(PLACING_HINT)) state.dismissNotice();
-  };
-
   /** Adds the signature centred on `at` (display space). */
-  const place = (at: Point, reveal: boolean) => {
+  const place = async (at: Point, reveal: boolean) => {
     const placement = clickPlacement(page, viewRotation, at, aspect);
     // Keyboard focus goes to the pages, where Delete and the arrow keys
     // work on the new signature once it is selected.
     layerRef.current?.closest<HTMLElement>(PAGE_VIEW)?.focus({ preventScroll: true });
     // The tool is used up at once, so a quick second click adds nothing.
-    done();
-    void (async () => {
-      const state = workspace.getState();
+    ui.getState().setTool('select');
+    const state = workspace.getState();
+    try {
       const asset = await state.registerImage(doc.key, signature.bytes, 'image/png');
       if (!asset) return;
       const annotation = newSignature({
@@ -97,15 +119,18 @@ function Placing({
       });
       if (!state.addAnnotations(doc.key, [annotation], { label: 'Add signature', assets: [asset] }))
         return;
-      if (reveal) {
-        const { x, y, width, height } = placement.rect;
-        state.navigate(doc.key, {
-          pageIndex: position,
-          pagePoint: { x: x + width / 2, y: y + height / 2 },
-          align: 'center',
-        });
-      }
-    })();
+    } catch {
+      state.showNotice('The signature could not be added.');
+      return;
+    }
+    if (reveal) {
+      const { x, y, width, height } = placement.rect;
+      state.navigate(doc.key, {
+        pageIndex: position,
+        pagePoint: { x: x + width / 2, y: y + height / 2 },
+        align: 'center',
+      });
+    }
   };
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
@@ -116,7 +141,7 @@ function Placing({
     if (event.key === 'Escape') {
       // (With focus in the pages, the page view has given up placing already.)
       event.preventDefault();
-      done();
+      ui.getState().setTool('select');
     } else if (
       event.key === 'Enter' &&
       !event.defaultPrevented &&
@@ -124,7 +149,7 @@ function Placing({
       (!target || target === document.body || target.closest(PAGE_VIEW) !== null)
     ) {
       event.preventDefault();
-      place({ x: display.width / 2, y: display.height / 2 }, true);
+      void place({ x: display.width / 2, y: display.height / 2 }, true);
     }
   });
 
@@ -155,7 +180,7 @@ function Placing({
       onClick={(event) => {
         // The page view's own clicks select text markup.
         event.stopPropagation();
-        if (event.button === 0) place(toDisplay(event), false);
+        if (event.button === 0) void place(toDisplay(event), false);
       }}
     >
       {shown ? (

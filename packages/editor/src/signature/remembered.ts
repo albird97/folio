@@ -100,7 +100,8 @@ export function sanitizeRemembered(value: unknown): RememberedSignature[] {
   for (const entry of list) {
     if (signatures.length === MAX_REMEMBERED) break;
     const signature = readEntry(entry);
-    if (signature && !signatures.some((known) => known.png === signature.png)) {
+    // Ids are short hashes: should two ever match, the newer signature is kept.
+    if (signature && !signatures.some((known) => known.id === signature.id)) {
       signatures.push(signature);
     }
   }
@@ -138,7 +139,7 @@ export async function rememberSignature(
   const added = readEntry(bytesToBase64(png));
   if (!added) return null;
   const known = await loadRememberedSignatures(storage);
-  const signatures = [added, ...known.filter((signature) => signature.png !== added.png)].slice(
+  const signatures = [added, ...known.filter((signature) => signature.id !== added.id)].slice(
     0,
     MAX_REMEMBERED,
   );

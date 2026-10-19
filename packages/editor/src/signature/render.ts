@@ -35,8 +35,12 @@ export const PAD_SIZE = { width: 600, height: 200 } as const;
 const CROP_MARGIN = 4;
 /** Font size names are drawn at before they are cropped and scaled, in pixels. */
 const TYPED_FONT_SIZE = 160;
-/** Pictures are read at up to this size (long side) before they are cropped to the signature. */
-const PICTURE_SIDE = 2400;
+/**
+ * Pictures are read at up to this size (long side) before they are cropped:
+ * a signature taking a third of a photo still keeps enough detail, and the
+ * pixels worked on stay within 16 MB.
+ */
+const PICTURE_SIDE = 2000;
 
 function newCanvas(width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement('canvas');

@@ -127,7 +127,10 @@ describe('ui store', () => {
     const storage = createMemoryStorage();
     const store = createUiStore(storage);
     await settle();
-    const signature = { bytes: new Uint8Array([1, 2, 3]), width: 30, height: 10 };
+    const signature = {
+      docKey: 'a',
+      image: { bytes: new Uint8Array([1, 2, 3]), width: 30, height: 10 },
+    };
     // Without a signature there is nothing to place.
     store.getState().setTool('signature');
     expect(store.getState().tool).toBe('select');
