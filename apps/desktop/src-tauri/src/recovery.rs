@@ -791,13 +791,17 @@ mod properties {
             let base = dir.path().join("recovery");
             for (name, meta, snapshot) in &entries {
                 let folder = base.join(name);
-                // Names the file system refuses cannot be there.
+                // Names the file system refuses cannot be there. Windows may
+                // create a folder for a name it then cannot reach (trailing
+                // dots or spaces, device names), so writing is checked too.
                 if !is_one_component(name) || std::fs::create_dir_all(&folder).is_err() {
                     continue;
                 }
-                std::fs::write(folder.join(META), meta).unwrap();
-                if *snapshot {
-                    std::fs::write(folder.join(SNAPSHOT), b"{}").unwrap();
+                if std::fs::write(folder.join(META), meta).is_err() {
+                    continue;
+                }
+                if *snapshot && std::fs::write(folder.join(SNAPSHOT), b"{}").is_err() {
+                    continue;
                 }
             }
             let records = RecoveryStore::new(base.clone()).list().unwrap();

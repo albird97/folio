@@ -814,7 +814,9 @@ mod properties {
             std::fs::create_dir(&base).unwrap();
             for entry in &entries {
                 let folder = base.join(&entry.name);
-                // Names the file system refuses cannot be there.
+                // Names the file system refuses cannot be there. Windows may
+                // create a folder for a name it then cannot reach (trailing
+                // dots or spaces, device names), so writes are checked too.
                 if !is_one_component(&entry.name) || std::fs::create_dir_all(&folder).is_err() {
                     continue;
                 }
@@ -824,10 +826,11 @@ mod properties {
                     (PART_FILE, entry.part.clone()),
                     (ANNOUNCED_FILE, entry.announced.clone().map(String::into_bytes)),
                 ];
-                for (name, content) in files {
-                    if let Some(content) = content {
-                        std::fs::write(folder.join(name), content).unwrap();
-                    }
+                let reachable = files.into_iter().all(|(name, content)| {
+                    content.is_none_or(|content| std::fs::write(folder.join(name), content).is_ok())
+                });
+                if !reachable {
+                    continue;
                 }
                 if entry.accepted {
                     mark_accepted(&folder);
