@@ -121,11 +121,12 @@ export async function makePng(
 }
 
 /**
- * Runs `qpdf --check` (with the open password of a protected file); resolves
- * null when qpdf is not installed.
+ * Runs qpdf with `option` on the bytes (with the open password of a
+ * protected file); resolves null when qpdf is not installed.
  */
-export async function qpdfCheck(
+async function runQpdf(
   bytes: Uint8Array,
+  option: string,
   password?: string,
 ): Promise<{ ok: boolean; output: string } | null> {
   const { spawnSync } = await import('node:child_process');
@@ -136,7 +137,7 @@ export async function qpdfCheck(
     const file = join(dir, 'check.pdf');
     writeFileSync(file, bytes);
     const args = password === undefined ? [] : [`--password=${password}`];
-    const result = spawnSync('qpdf', [...args, '--check', file], { encoding: 'utf8' });
+    const result = spawnSync('qpdf', [...args, option, file], { encoding: 'utf8' });
     if (result.error) return null;
     // Exit code 3 means warnings only; 2 means errors.
     return { ok: result.status === 0, output: `${result.stdout}${result.stderr}` };
@@ -144,3 +145,15 @@ export async function qpdfCheck(
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/** `qpdf --check`, with the open password of a protected file. */
+export const qpdfCheck = (bytes: Uint8Array, password?: string) =>
+  runQpdf(bytes, '--check', password);
+
+/**
+ * `qpdf --show-encryption`: the file's encryption (handler, key length) and,
+ * opened with `password`, what it allows ("extract for any purpose: not
+ * allowed", …); fails for a wrong password.
+ */
+export const qpdfShowEncryption = (bytes: Uint8Array, password?: string) =>
+  runQpdf(bytes, '--show-encryption', password);

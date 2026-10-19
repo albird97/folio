@@ -21,6 +21,7 @@
     "pdfjs-dist": "6.4.299"
   },
   "devDependencies": {
+    "jpeg-js": "0.4.4",
     "vite": "^8.3.4"
   }
 }

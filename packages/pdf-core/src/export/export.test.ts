@@ -27,6 +27,7 @@ import {
   makePng,
   nodeWorkerSrc,
   qpdfCheck,
+  qpdfShowEncryption,
   readFixture,
   type FixtureName,
 } from '../../../../tests/setup/fixtures';
@@ -874,5 +875,160 @@ describe('exportPdf: document', () => {
     const reopened = await engine.open(bytes);
     expect(reopened.info.permissions).toEqual(permissions);
     await reopened.destroy();
+  });
+});
+
+describe('exportPdf: password protection', () => {
+  const RESTRICTED = {
+    print: false,
+    copy: false,
+    modify: false,
+    annotate: true,
+    fillForms: true,
+    assemble: false,
+  };
+  const ALLOWED = { ...RESTRICTED, print: true, copy: true, modify: true, assemble: true };
+
+  /** `qpdf --show-encryption` output; null (and fine locally) without qpdf. */
+  async function encryption(bytes: Uint8Array, password?: string) {
+    const result = await qpdfShowEncryption(bytes, password);
+    if (!result) expect(process.env.CI, 'qpdf must be installed on CI').toBeFalsy();
+    return result?.output ?? null;
+  }
+
+  async function expectValidProtectedPdf(bytes: Uint8Array, password: string) {
+    const result = await qpdfCheck(bytes, password);
+    if (!result) {
+      expect(process.env.CI, 'qpdf must be installed on CI').toBeFalsy();
+      return;
+    }
+    expect(result.ok, result.output).toBe(true);
+  }
+
+  it('requires a password to open and restricts what readers may do (AES-256)', async () => {
+    const { model, sources } = await fixtureModel('basic-3-pages.pdf');
+    const titled = applyOperation(model, {
+      type: 'metadata/update',
+      patch: { title: 'Quarterly secrets', author: 'Ada Lovelace' },
+    }).model;
+    const { bytes } = await exportPdf({
+      model: titled,
+      sources,
+      assets: new Map(),
+      protection: {
+        userPassword: 'open sesame',
+        ownerPassword: 'owner secret',
+        permissions: RESTRICTED,
+      },
+      now: NOW,
+    });
+    await expect(open(bytes)).rejects.toThrow(/password/i);
+    await expect(open(bytes, 'wrong')).rejects.toThrow(/password/i);
+    const opened = await open(bytes, 'open sesame');
+    expect(opened.pages).toHaveLength(3);
+    expect(opened.pages[0]!.text).toContain('quick brown fox');
+    const handle = await engine.open(bytes, { password: 'open sesame' });
+    expect(handle.info.encryption).toBe('password-protected');
+    expect(handle.info.permissions).toEqual(RESTRICTED);
+    expect(handle.info.metadata.title).toBe('Quarterly secrets');
+    await handle.destroy();
+
+    // pdf-lib encrypts streams only; strings are safe because every other
+    // object is inside an (encrypted) object stream. Nothing is in the clear.
+    const raw = latin1.decode(bytes);
+    for (const secret of ['Quarterly secrets', 'Ada Lovelace', 'quick brown fox']) {
+      expect(raw).not.toContain(secret);
+      expect(raw.replace(/\0/g, '')).not.toContain(secret);
+    }
+    expect(raw).not.toMatch(/\/Title|\/Author/);
+
+    const asUser = await encryption(bytes, 'open sesame');
+    if (asUser !== null) {
+      expect(asUser).toContain('R = 6');
+      expect(asUser).toContain('Supplied password is user password');
+      expect(asUser).toContain('stream encryption method: AESv3');
+      expect(asUser).toContain('string encryption method: AESv3');
+      expect(asUser).toContain('print high resolution: not allowed');
+      expect(asUser).toContain('extract for any purpose: not allowed');
+      expect(asUser).toContain('modify other: not allowed');
+      expect(asUser).toContain('modify document assembly: not allowed');
+      expect(asUser).toContain('modify annotations: allowed');
+      expect(asUser).toContain('modify forms: allowed');
+    }
+    const asOwner = await encryption(bytes, 'owner secret');
+    if (asOwner !== null) expect(asOwner).toContain('Supplied password is owner password');
+    const wrong = await encryption(bytes, 'wrong');
+    if (wrong !== null) expect(wrong).toContain('Incorrect password supplied');
+    await expectValidProtectedPdf(bytes, 'open sesame');
+    await expectValidProtectedPdf(bytes, 'owner secret');
+  });
+
+  it('allows everything when only a password to open is set', async () => {
+    const { model, sources } = await fixtureModel('basic-3-pages.pdf');
+    const { bytes } = await exportPdf({
+      model,
+      sources,
+      assets: new Map(),
+      protection: { userPassword: 'open sesame', permissions: null },
+      now: NOW,
+    });
+    await expect(open(bytes)).rejects.toThrow(/password/i);
+    const handle = await engine.open(bytes, { password: 'open sesame' });
+    expect(handle.info.permissions).toEqual(ALLOWED);
+    await handle.destroy();
+    const output = await encryption(bytes, 'open sesame');
+    if (output !== null) {
+      expect(output).toContain('modify anything: allowed');
+      expect(output).toContain('print high resolution: allowed');
+    }
+    await expectValidProtectedPdf(bytes, 'open sesame');
+  });
+
+  it('restricts a document that opens without a password', async () => {
+    const { model, sources } = await fixtureModel('basic-3-pages.pdf');
+    const { bytes } = await exportPdf({
+      model,
+      sources,
+      assets: new Map(),
+      protection: { userPassword: '', permissions: RESTRICTED },
+      now: NOW,
+    });
+    const handle = await engine.open(bytes);
+    expect(handle.info.encryption).toBe('owner-restricted');
+    expect(handle.info.permissions).toEqual(RESTRICTED);
+    await handle.destroy();
+    const output = await encryption(bytes);
+    if (output !== null) {
+      // The permissions password is a random one: only the empty password opens it.
+      expect(output).toContain('Supplied password is user password');
+      expect(output).toContain('print low resolution: not allowed');
+    }
+    await expectValidPdf(bytes);
+  });
+
+  it('removes protection from a document opened with its password', async () => {
+    const { model, sources } = await fixtureModel('encrypted-user-password.pdf', FIXTURE_PASSWORD);
+    const { bytes } = await exportPdf({ model, sources, assets: new Map(), protection: null });
+    const handle = await engine.open(bytes);
+    expect(handle.info.encryption).toBe('none');
+    expect(handle.info.permissions).toBeNull();
+    expect(handle.info.pageCount).toBe(3);
+    await handle.destroy();
+    const output = await encryption(bytes);
+    if (output !== null) expect(output).toContain('File is not encrypted');
+    await expectValidPdf(bytes);
+  });
+
+  it('changes the password of a protected document', async () => {
+    const { model, sources } = await fixtureModel('encrypted-user-password.pdf', FIXTURE_PASSWORD);
+    const { bytes } = await exportPdf({
+      model,
+      sources,
+      assets: new Map(),
+      protection: { userPassword: 'a new password', permissions: null },
+    });
+    await expect(open(bytes, FIXTURE_PASSWORD)).rejects.toThrow(/password/i);
+    expect((await open(bytes, 'a new password')).pages).toHaveLength(3);
+    await expectValidProtectedPdf(bytes, 'a new password');
   });
 });

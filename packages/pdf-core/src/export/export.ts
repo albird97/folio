@@ -11,6 +11,7 @@ import {
 import { degrees, EncryptedPDFError, PDFDocument, PDFPage } from '@cantoo/pdf-lib';
 import type { PdfPermissions } from '../engine';
 import { AnnotationWriter, type AssetData } from './annotations';
+import { compressDocument, type CompressionOptions } from './compress';
 import { StandardFontSet } from './fonts';
 import { drawMissingAppearances, flattenFormFields } from './forms';
 import { writeMetadata } from './metadata';
@@ -34,8 +35,15 @@ export interface ExportSource {
 
 /** How the written file is protected; mirrors what the user unlocked it with. */
 export interface Protection {
+  /** The password to open the file; '' opens it without asking (restrictions only). */
   userPassword: string;
+  /** What readers may do; null allows everything. */
   permissions: PdfPermissions | null;
+  /**
+   * The password that lifts the restrictions. Default: a random one nobody
+   * knows, so they cannot be lifted.
+   */
+  ownerPassword?: string;
 }
 
 export interface ExportOptions {
@@ -54,6 +62,8 @@ export interface ExportOptions {
   flattenForms?: boolean;
   /** Encrypt the result. Callers pass the original's protection to keep it protected. */
   protection?: Protection | null;
+  /** Make the file smaller (Reduce file size); see `compressDocument`. */
+  compression?: CompressionOptions | null;
   now?: Date;
 }
 
@@ -91,16 +101,26 @@ function randomPassword(): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+const ALLOW_ALL: PdfPermissions = {
+  print: true,
+  copy: true,
+  modify: true,
+  annotate: true,
+  fillForms: true,
+  assemble: true,
+};
+
+/** pdf-lib's flags; it denies whatever is not given, so null (no restrictions) allows all. */
 function toUserPermissions(permissions: PdfPermissions | null) {
-  if (!permissions) return undefined;
+  const allowed = permissions ?? ALLOW_ALL;
   return {
-    printing: permissions.print ? ('highResolution' as const) : false,
-    modifying: permissions.modify,
-    copying: permissions.copy,
-    annotating: permissions.annotate,
-    fillingForms: permissions.fillForms,
+    printing: allowed.print ? ('highResolution' as const) : false,
+    modifying: allowed.modify,
+    copying: allowed.copy,
+    annotating: allowed.annotate,
+    fillingForms: allowed.fillForms,
     contentAccessibility: true,
-    documentAssembly: permissions.assemble,
+    documentAssembly: allowed.assemble,
   };
 }
 
@@ -278,11 +298,14 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   }
 
   collectGarbage(doc.context);
+  if (options.compression) await compressDocument(doc, options.compression);
 
   if (options.protection) {
+    // AES-256, pdf-lib's default. It encrypts streams only: strings are
+    // protected because every other object is saved inside object streams.
     doc.encrypt({
       userPassword: options.protection.userPassword,
-      ownerPassword: randomPassword(),
+      ownerPassword: options.protection.ownerPassword || randomPassword(),
       permissions: toUserPermissions(options.protection.permissions),
     });
   }
