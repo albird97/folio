@@ -442,8 +442,16 @@ size in the export worker (`OffscreenCanvas` re-encoding: 15.5 MB → 351 KB) an
 question when quitting. Background windows of WKWebView do not repaint until brought to the front,
 which only affects automation.
 
-Not tried on the Mac yet: the native save dialogs, printing, drag and drop, recent files, Connect
-to Chrome, updates, Ask Claude with the Keychain, VoiceOver.
+A second session tried Save As through the native dialog, Open Recent, drag and drop from Finder,
+the menus, Check for Updates (it reports that the private feed has no release information) and
+printing. Printing was broken on macOS since Phase 4: WKWebView resolves `vw`/`vh` and the
+`orientation` media query against the window, not the paper, so portrait pages printed turned and
+shrunk, and after 60 s the print preview showed the app instead. macOS now hands the PDF to PDFKit
+(`print_pdf`), like Preview: pages fill the paper upright, the dialog can stay open, text prints as
+text. Elsewhere the image layout stays until the dialog closes.
+
+Not tried on the Mac yet: Connect to Chrome, an installed update, Ask Claude with the Keychain,
+VoiceOver.
 
 #### Not yet verified anywhere
 
@@ -608,8 +616,8 @@ nothing beyond that is claimed here.
 - **macOS and Windows:** the native dialogs, drag and drop, menus, shortcuts, file association,
   Save, printing, recovery, recent files, single instance and native messaging are built in CI
   and tested on Linux, but have not been tried on a real Mac or Windows PC.
-- **Printing** sends pages as images (150 dpi up to 100 pages, 110 up to 300, 72 beyond), so
-  printed text is not vector text.
+- **Printing** on Windows and in Chrome sends pages as images (150 dpi up to 100 pages, 110 up to
+  300, 72 beyond), so printed text is not vector text there; macOS prints the PDF itself (PDFKit).
 - **Recovery data is not encrypted.** The comments and edits of a password-protected document are
   stored readable in Folio's data folder (or the extension's storage) until it is saved, closed or
   discarded; the original file stays encrypted.

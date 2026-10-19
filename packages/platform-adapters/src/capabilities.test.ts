@@ -70,7 +70,8 @@ describe('capability matrix', () => {
       clipboard: both,
       // Tried on a Mac: Save wrote filled-in form values and recognized text back.
       save: ['windows'],
-      printing: both,
+      // Tried on a Mac: PDFKit prints the pages upright and fitted to the paper.
+      printing: ['windows'],
       recovery: both,
       'recent-files': ['windows'],
       'single-instance': both,

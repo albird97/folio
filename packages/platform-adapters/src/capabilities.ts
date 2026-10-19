@@ -542,14 +542,16 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     feature: 'Print',
     plannedPhase: 4,
     targets: {
-      macos: unverified('macos', PRINT_NOTE),
+      macos: triedOnMac(
+        'All, current or chosen pages, with or without comments, through the system print dialog. Folio prints the PDF itself with PDFKit, like Preview: pages scaled to the paper and turned to its orientation, text as text.',
+      ),
       windows: unverified('windows', PRINT_NOTE),
       chrome: full(
         'All, current or chosen pages, with or without comments, through Chrome’s print dialog. Folio draws the pages at print resolution on this device first.',
       ),
     },
     verification:
-      'E2E (Chromium) prints through the print layout to a PDF and counts its pages; unit tests for page ranges and print resolution.',
+      'E2E (Chromium) prints through the print layout to a PDF and counts its pages; on macOS a Rust test runs the PDFKit print operation to a file and reads back every page on the paper with its text, and the print dialog was used in a release build on a Mac; unit tests for choosing the platform’s PDF printing, permissions, page ranges and print resolution.',
     runtimeFeature: 'printing',
   },
   {
