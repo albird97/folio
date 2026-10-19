@@ -40,11 +40,47 @@ async function tool(page: Page, item: string, dialog: string) {
 const notice = (page: Page, text: string | RegExp) =>
   expect(page.getByRole('status').filter({ hasText: text }).first()).toBeVisible();
 
+/** axe in the light theme, then the dark one (once the app has switched), then light again. */
+async function expectAccessibleInBothThemes(page: Page, label: string) {
+  const root = page.locator('html');
+  await expectAccessible(page, label);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(root).toHaveAttribute('data-theme', 'dark');
+  await expectAccessible(page, `${label} (dark)`);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(root).toHaveAttribute('data-theme', 'light');
+}
+
+/** A large JPEG photo at high quality, made by the browser (gradients with grain). */
+async function browserJpeg(page: Page, width: number, height: number): Promise<Uint8Array> {
+  const bytes = await page.evaluate(
+    async ([w, h]) => {
+      const canvas = new OffscreenCanvas(w, h);
+      const context = canvas.getContext('2d')!;
+      const image = context.createImageData(w, h);
+      for (let index = 0; index < w * h; index += 1) {
+        const grain = Math.random() * 16 - 8;
+        const x = index % w;
+        image.data.set(
+          [90 + (x / w) * 120 + grain, 140 + grain, 200 - (x / w) * 90, 255],
+          index * 4,
+        );
+      }
+      context.putImageData(image, 0, 0);
+      const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
+      return [...new Uint8Array(await blob.arrayBuffer())];
+    },
+    [width, height],
+  );
+  return new Uint8Array(bytes);
+}
+
 /**
- * A page with one large photo-like image (gradients with grain), stored as
- * Flate the way scanners and many apps do: bigger than it needs to be.
+ * A page with two large photo-like images (gradients with grain): one stored
+ * as Flate, the way scanners and many apps do, the other as a high-quality
+ * JPEG. Both are bigger than they need to be.
  */
-async function photoPdf(): Promise<Uint8Array> {
+async function photoPdf(jpeg: Uint8Array): Promise<Uint8Array> {
   const width = 2400;
   const height = 1600;
   const samples = new Uint8Array(width * height * 3);
@@ -73,9 +109,25 @@ async function photoPdf(): Promise<Uint8Array> {
     }),
   );
   pdfPage.node.setXObject(PDFName.of('Photo'), image);
+  const scan = doc.context.register(
+    doc.context.stream(jpeg, {
+      Type: 'XObject',
+      Subtype: 'Image',
+      Width: 2600,
+      Height: 1700,
+      ColorSpace: 'DeviceRGB',
+      BitsPerComponent: 8,
+      Filter: 'DCTDecode',
+    }),
+  );
+  pdfPage.node.setXObject(PDFName.of('Scan'), scan);
   pdfPage.node.set(
     PDFName.of('Contents'),
-    doc.context.register(doc.context.flateStream('q 720 0 0 480 0 0 cm /Photo Do Q\n')),
+    doc.context.register(
+      doc.context.flateStream(
+        'q 360 0 0 240 0 240 cm /Photo Do Q\nq 360 0 0 240 360 0 cm /Scan Do Q\n',
+      ),
+    ),
   );
   return doc.save({ useObjectStreams: true, addDefaultPage: false });
 }
@@ -90,10 +142,7 @@ test.describe('export tools', () => {
     let dialog = await tool(page, 'Export pages as images…', 'Export pages as images');
     await expect(dialog.getByRole('radio', { name: 'All 6 pages' })).toBeChecked();
     await expect(dialog.getByRole('checkbox', { name: /Include comments/ })).toBeChecked();
-    await expectAccessible(page, 'export images dialog');
-    await page.emulateMedia({ colorScheme: 'dark' });
-    await expectAccessible(page, 'export images dialog (dark)');
-    await page.emulateMedia({ colorScheme: 'light' });
+    await expectAccessibleInBothThemes(page, 'export images dialog');
 
     await dialog.getByRole('textbox', { name: 'Pages to export' }).fill('2-3');
     await expect(dialog.getByRole('radio', { name: /^Pages/ })).toBeChecked();
@@ -165,15 +214,12 @@ test.describe('export tools', () => {
   });
 
   test('reduces the size of a document with a large photo', async ({ page }) => {
-    const original = await photoPdf();
+    const original = await photoPdf(await browserJpeg(page, 2600, 1700));
     await openBytes(page, 'photo.pdf', original);
     await pageRendered(page);
     const dialog = await tool(page, 'Reduce file size…', 'Reduce file size');
     await expect(dialog.getByRole('radio', { name: 'Balanced' })).toBeChecked();
-    await expectAccessible(page, 'reduce file size dialog');
-    await page.emulateMedia({ colorScheme: 'dark' });
-    await expectAccessible(page, 'reduce file size dialog (dark)');
-    await page.emulateMedia({ colorScheme: 'light' });
+    await expectAccessibleInBothThemes(page, 'reduce file size dialog');
 
     await dialog.getByRole('button', { name: 'Reduce file size' }).click();
     await expect(dialog.getByRole('status')).toHaveText(/^[\d.]+ MB → [\d.]+ (KB|MB) \(−\d+%\)$/, {
@@ -194,6 +240,11 @@ test.describe('export tools', () => {
     expect(photo.dict.get(PDFName.of('Filter'))).toBe(PDFName.of('DCTDecode'));
     expect(photo.dict.lookup(PDFName.of('Width'), PDFNumber).asNumber()).toBe(2000);
     expect(photo.dict.lookup(PDFName.of('Height'), PDFNumber).asNumber()).toBe(1333);
+    // The JPEG went through the browser's decoder too, and got smaller.
+    const scan = xobjects.lookup(PDFName.of('Scan'), PDFRawStream);
+    expect(scan.dict.lookup(PDFName.of('Width'), PDFNumber).asNumber()).toBe(2000);
+    expect(scan.dict.lookup(PDFName.of('Height'), PDFNumber).asNumber()).toBe(1308);
+    expect([...scan.contents.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
     await notice(page, 'Downloading photo (compressed).pdf.');
   });
 
@@ -218,10 +269,7 @@ test.describe('export tools', () => {
     await dialog.getByRole('checkbox', { name: 'Restrict printing, copying and changes' }).check();
     await dialog.getByRole('checkbox', { name: 'Printing', exact: true }).check();
     await expect(dialog.getByText(/nobody can lift the restrictions/)).toBeVisible();
-    await expectAccessible(page, 'password protection dialog');
-    await page.emulateMedia({ colorScheme: 'dark' });
-    await expectAccessible(page, 'password protection dialog (dark)');
-    await page.emulateMedia({ colorScheme: 'light' });
+    await expectAccessibleInBothThemes(page, 'password protection dialog');
 
     const copy = await download(page, () => save.click());
     expect(copy.name).toBe('basic-3-pages (protected).pdf');
