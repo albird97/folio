@@ -17,7 +17,6 @@ import {
   glyphlessFont,
   UNITS_PER_EM,
 } from './glyphless-font';
-import { isolatePageEntries, pageOrigin } from './objects';
 
 /**
  * Maps every character code to the same Unicode value. Codes are UTF-16
@@ -84,12 +83,41 @@ const MAX_SCALE = 10_000;
  * font without glyphs that maps character codes straight to Unicode, so
  * every script survives, and stretches each word to the width of its box.
  */
-class RecognizedTextWriter {
+export class RecognizedTextWriter {
   readonly #doc: PDFDocument;
+  readonly #model: DocumentModel;
+  readonly #assets: ReadonlyMap<AssetId, Uint8Array>;
+  readonly #parsed = new Map<AssetId, RecognizedTextData | null>();
   #font: PDFRef | null = null;
 
-  constructor(doc: PDFDocument) {
+  constructor(doc: PDFDocument, model: DocumentModel, assets: ReadonlyMap<AssetId, Uint8Array>) {
     this.#doc = doc;
+    this.#model = model;
+    this.#assets = assets;
+  }
+
+  /**
+   * The recognized text of a page's source page, or null. Copies of a page
+   * get it too: the text belongs to the page's image. Stored text that is
+   * missing or damaged is left out rather than failing the save.
+   */
+  textOf(page: PageModel): RecognizedTextData | null {
+    if (page.source.kind !== 'source') return null;
+    const { sourceId, pageIndex } = page.source;
+    const layer = this.#model.textLayers[sourcePageKey(sourceId, pageIndex)];
+    if (!layer) return null;
+    let data = this.#parsed.get(layer.assetId);
+    if (data === undefined) {
+      const bytes = this.#assets.get(layer.assetId);
+      data = null;
+      try {
+        if (bytes) data = parseRecognizedText(bytes);
+      } catch {
+        // Left out (see above).
+      }
+      this.#parsed.set(layer.assetId, data);
+    }
+    return data && data.words.length > 0 ? data : null;
   }
 
   /** The Type0 font, created once per document and shared by every page. */
@@ -171,45 +199,6 @@ class RecognizedTextWriter {
       );
     }
     ops.push('ET', 'Q');
-    page.node.addContentStream(context.register(context.flateStream(ops.join('\n'))));
-  }
-}
-
-/** Stored text that is missing or damaged is left out rather than failing the save. */
-function readData(bytes: Uint8Array | undefined): RecognizedTextData | null {
-  if (!bytes) return null;
-  try {
-    return parseRecognizedText(bytes);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Adds the recognized text of their source pages to the pages being written.
- * Copies of a page get it too: the text belongs to the page's image.
- */
-export function addRecognizedText(
-  doc: PDFDocument,
-  model: DocumentModel,
-  pages: ReadonlyArray<{ model: PageModel; page: PDFPage }>,
-  assets: ReadonlyMap<AssetId, Uint8Array>,
-): void {
-  const writer = new RecognizedTextWriter(doc);
-  const parsed = new Map<AssetId, RecognizedTextData | null>();
-  for (const { model: pageModel, page } of pages) {
-    if (pageModel.source.kind !== 'source') continue;
-    const { sourceId, pageIndex } = pageModel.source;
-    const layer = model.textLayers[sourcePageKey(sourceId, pageIndex)];
-    if (!layer) continue;
-    let data = parsed.get(layer.assetId);
-    if (data === undefined) {
-      data = readData(assets.get(layer.assetId));
-      parsed.set(layer.assetId, data);
-    }
-    if (!data || data.words.length === 0) continue;
-    isolatePageEntries(page);
-    const origin = pageOrigin(page);
-    writer.write(page, data, { dx: origin.x, dy: origin.y });
+    page.node.addContentStream(context.register(context.flateStream(`${ops.join('\n')}\n`)));
   }
 }

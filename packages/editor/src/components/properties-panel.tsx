@@ -1,6 +1,14 @@
-import { primarySource, type DocumentMetadata } from '@folio/document-model';
+import {
+  pageNumberText,
+  primarySource,
+  stampedRange,
+  toStandardFontText,
+  type DocumentMetadata,
+  type DocumentModel,
+  type StampPosition,
+} from '@folio/document-model';
 import { ICON, IconButton } from '@folio/shared-ui';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Pencil } from 'lucide-react';
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { useUi, useWorkspaceContext } from '../context';
 import { formatBytes, formatDate } from '../format';
@@ -44,7 +52,18 @@ function CopyButton({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Row({ label, value, copy }: { label: string; value: ReactNode; copy?: string }) {
+function Row({
+  label,
+  value,
+  copy,
+  action,
+}: {
+  label: string;
+  value: ReactNode;
+  copy?: string;
+  /** A button for the value, where others have their copy button. */
+  action?: ReactNode;
+}) {
   return (
     <div className="group grid grid-cols-[5.75rem_1fr] items-start gap-x-2 py-1">
       <dt className="pt-0.5 text-xs text-ink-muted">{label}</dt>
@@ -53,7 +72,7 @@ function Row({ label, value, copy }: { label: string; value: ReactNode; copy?: s
           {value}
         </span>
         <span className="-my-1 w-7 shrink-0">
-          {copy ? <CopyButton label={label} value={copy} /> : null}
+          {copy ? <CopyButton label={label} value={copy} /> : action}
         </span>
       </dd>
     </div>
@@ -132,6 +151,61 @@ function KeywordsRow({
         );
       }}
     />
+  );
+}
+
+const POSITION_NAMES: Record<StampPosition, string> = {
+  'top-left': 'top left',
+  'top-center': 'top centre',
+  'top-right': 'top right',
+  'middle-left': 'middle left',
+  center: 'centre',
+  'middle-right': 'middle right',
+  'bottom-left': 'bottom left',
+  'bottom-center': 'bottom centre',
+  'bottom-right': 'bottom right',
+};
+
+/**
+ * The page numbers and watermark added to the pages when saved, as they will
+ * show, each with a way to change it.
+ */
+function StampsSection({ doc, model }: { doc: WorkspaceDocument; model: DocumentModel }) {
+  const { ui } = useWorkspaceContext();
+  const { pageNumbers, watermark } = model.stamps;
+  if (!pageNumbers && !watermark) return null;
+  const shown = (text: string) => `“${toStandardFontText(text).text}”`;
+  const edit = (kind: 'page-numbers' | 'watermark', label: string) => (
+    <IconButton
+      label={label}
+      size="icon-sm"
+      tooltipSide="left"
+      icon={<Pencil size={ICON.sm} strokeWidth={ICON.stroke} aria-hidden />}
+      onClick={() => ui.getState().openDialog({ kind, docKey: doc.key })}
+    />
+  );
+  const first = pageNumbers ? stampedRange(pageNumbers.pages, model.pages.length) : null;
+  return (
+    <Section title="Page numbers and watermark">
+      {pageNumbers ? (
+        <Row
+          label="Page numbers"
+          value={
+            first
+              ? `${shown(pageNumberText(pageNumbers, first.first, model.pages.length)!)}, ${POSITION_NAMES[pageNumbers.position]}`
+              : 'Not on any page'
+          }
+          action={edit('page-numbers', 'Edit page numbers')}
+        />
+      ) : null}
+      {watermark ? (
+        <Row
+          label="Watermark"
+          value={`${shown(watermark.text)}, ${watermark.layer} the content`}
+          action={edit('watermark', 'Edit watermark')}
+        />
+      ) : null}
+    </Section>
   );
 }
 
@@ -215,6 +289,7 @@ export function PropertiesPanel({ doc }: { doc: WorkspaceDocument }) {
             <Row label="Application" value={textValue(model.metadata.creator)} />
             <Row label="PDF producer" value={textValue(model.metadata.producer)} />
           </Section>
+          <StampsSection doc={doc} model={model} />
           <Section title="File">
             <Row label="Name" value={source.fileName} copy={source.fileName} />
             <Row

@@ -228,7 +228,7 @@ describe('exportPdf: recognized text', () => {
     const stream = contents.lookup(contents.size() - 1, PDFStream) as PDFRawStream;
     const ops = new TextDecoder().decode(decodePDFRawStream(stream).decode());
     expect(ops.startsWith(`q\nBT\n3 Tr\n${fontName!.asString()} 16 Tf\n`)).toBe(true);
-    expect(ops.endsWith('ET\nQ')).toBe(true);
+    expect(ops.endsWith('ET\nQ\n')).toBe(true);
     // "The" as UTF-16 character codes.
     expect(ops).toContain('<005400680065> Tj');
   });
@@ -301,6 +301,31 @@ describe('exportPdf: recognized text', () => {
       'Recognized again',
     );
     await expectValidPdf(extracted.bytes);
+  });
+
+  it('goes with page numbers on the same page', async () => {
+    const { model, sourceId, sources } = await modelOf(readFixture('scanned-pages.pdf'));
+    const edited = withText(model, [{ sourceId, pageIndex: 0, data: SAMPLE }]);
+    const stamped = applyOperation(edited.model, {
+      type: 'stamps/set',
+      stamps: {
+        pageNumbers: {
+          format: 'Page {page} of {total}',
+          position: 'bottom-center',
+          fontFamily: 'sans',
+          fontSize: 10,
+          color: '#1f2328',
+          margin: 24,
+          startNumber: 1,
+          pages: { from: 1, to: null },
+        },
+      },
+    }).model;
+    const { bytes } = await exportPdf({ model: stamped, sources, assets: edited.assets, now: NOW });
+    const { text } = await textItems(bytes);
+    expect(text).toContain('The lighthouse keeper');
+    expect(text).toContain('Page 1 of 2');
+    await expectValidPdf(bytes);
   });
 
   it('writes characters beyond the Basic Multilingual Plane as U+FFFD', async () => {

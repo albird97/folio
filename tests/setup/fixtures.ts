@@ -118,9 +118,13 @@ export async function makePng(
   return png;
 }
 
-/** Runs `qpdf --check`; resolves null when qpdf is not installed. */
+/**
+ * Runs `qpdf --check` (with the open password of a protected file); resolves
+ * null when qpdf is not installed.
+ */
 export async function qpdfCheck(
   bytes: Uint8Array,
+  password?: string,
 ): Promise<{ ok: boolean; output: string } | null> {
   const { spawnSync } = await import('node:child_process');
   const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
@@ -129,7 +133,8 @@ export async function qpdfCheck(
   try {
     const file = join(dir, 'check.pdf');
     writeFileSync(file, bytes);
-    const result = spawnSync('qpdf', ['--check', file], { encoding: 'utf8' });
+    const args = password === undefined ? [] : [`--password=${password}`];
+    const result = spawnSync('qpdf', [...args, '--check', file], { encoding: 'utf8' });
     if (result.error) return null;
     // Exit code 3 means warnings only; 2 means errors.
     return { ok: result.status === 0, output: `${result.stdout}${result.stderr}` };
