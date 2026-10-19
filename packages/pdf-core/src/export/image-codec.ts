@@ -28,6 +28,8 @@ function canvas2d(width: number, height: number): Canvas2D {
     const context = canvas.getContext('2d');
     if (context) return { canvas, context };
   }
+  // Workers without OffscreenCanvas have no canvas at all: images stay as they are.
+  if (typeof document === 'undefined') throw new Error('No canvas is available to draw images.');
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;

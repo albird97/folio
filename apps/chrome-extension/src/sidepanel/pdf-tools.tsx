@@ -154,7 +154,7 @@ export function PdfTools({
     switch (tool) {
       case 'rotate':
         void run('Rotating…', async () => {
-          const { exportPdf } = await import('@folio/pdf-core/export');
+          const { exportInWorker } = await import('@folio/pdf-core/export');
           const { created, sources } = await model();
           const pageIds = positions.map((position) => created.pages[position]!.id);
           const { model: turned } = applyOperation(created, {
@@ -162,16 +162,20 @@ export function PdfTools({
             pageIds,
             delta: Number(rotation) as Rotation,
           });
-          const { bytes: out } = await exportPdf({ model: turned, sources, assets: new Map() });
+          const { bytes: out } = await exportInWorker({
+            model: turned,
+            sources,
+            assets: new Map(),
+          });
           downloadBytes(fileNameFor('pdf', `${baseName} (rotated)`), out);
         });
         break;
       case 'extract':
         void run('Extracting…', async () => {
-          const { exportPdf } = await import('@folio/pdf-core/export');
+          const { exportInWorker } = await import('@folio/pdf-core/export');
           const { created, sources } = await model();
           const pageIds = positions.map((position) => created.pages[position]!.id);
-          const { bytes: out } = await exportPdf({
+          const { bytes: out } = await exportInWorker({
             model: created,
             sources,
             assets: new Map(),

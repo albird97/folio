@@ -67,6 +67,15 @@ test.describe('extension security', () => {
     ]);
     await pageRendered(page);
     expect(await violations(), 'editor with a document').toEqual([]);
+    // Saving writes the file in a worker, loaded from the extension itself.
+    const worker = page.waitForEvent('worker', (started) =>
+      /\/export\.worker-[\w-]+\.js$/.test(started.url()),
+    );
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download PDF' }).click();
+    await download;
+    expect((await worker).url().startsWith(extensionUrl('assets/'))).toBe(true);
+    expect(await violations(), 'editor after saving').toEqual([]);
   });
 
   test('the content security policy blocks sending data to other servers', async ({
