@@ -295,6 +295,15 @@ pub fn failure_notice(stage: Stage, error: &UpdaterError) -> Notice {
              Download and install it yourself."
                 .to_owned(),
         ),
+        // The feed answered without Folio's release information (for example
+        // while releases are private): the connection is fine, so don't say so.
+        UpdaterError::ReleaseNotFound => notice(
+            Level::Warning,
+            "Folio could not find update information",
+            "The update server did not provide Folio\u{2019}s release information. Try again \
+             later, or download the newest version yourself."
+                .to_owned(),
+        ),
         UpdaterError::PreviousAppNotRestored(kept) => notice(
             Level::Error,
             "Folio could not install the update",
@@ -766,7 +775,7 @@ mod tests {
             (
                 Stage::Check,
                 UpdaterError::ReleaseNotFound,
-                "could not check",
+                "did not provide",
             ),
             (Stage::Check, io(), "could not check"),
             (
