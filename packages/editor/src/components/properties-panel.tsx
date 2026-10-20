@@ -223,6 +223,7 @@ export function PropertiesPanel({ doc }: { doc: WorkspaceDocument }) {
   const model = doc.editor?.model;
   const info = doc.info;
   const source = model ? primarySource(model) : null;
+  const sha256 = doc.diskSha256 ?? source?.sha256 ?? '';
   const editable = doc.permissions.modify;
   const set = (patch: Partial<DocumentMetadata>) =>
     workspace.getState().updateMetadata(doc.key, patch);
@@ -297,11 +298,12 @@ export function PropertiesPanel({ doc }: { doc: WorkspaceDocument }) {
             <Row label="PDF producer" value={textValue(model.metadata.producer)} />
           </Section>
           <StampsSection doc={doc} model={model} />
+          {/* The file last opened or saved; the model keeps describing the opened one. */}
           <Section title="File">
-            <Row label="Name" value={source.fileName} copy={source.fileName} />
+            <Row label="Name" value={doc.fileName} copy={doc.fileName} />
             <Row
               label="Size"
-              value={<span className="tabular">{formatBytes(source.byteLength)}</span>}
+              value={<span className="tabular">{formatBytes(doc.byteLength)}</span>}
             />
             <Row label="Pages" value={<span className="tabular">{source.pageCount}</span>} />
             <Row label="PDF version" value={source.pdfVersion ?? empty} />
@@ -309,11 +311,11 @@ export function PropertiesPanel({ doc }: { doc: WorkspaceDocument }) {
             <Row
               label="SHA-256"
               value={
-                <span className="font-mono text-2xs whitespace-nowrap" title={source.sha256}>
-                  {source.sha256.slice(0, 16)}…
+                <span className="font-mono text-2xs whitespace-nowrap" title={sha256}>
+                  {sha256.slice(0, 16)}…
                 </span>
               }
-              copy={source.sha256}
+              copy={sha256}
             />
           </Section>
           <Section title="Security">

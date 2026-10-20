@@ -38,7 +38,8 @@ type Run =
   | { status: 'choosing' }
   /** `done` is null until the images are being re-encoded. */
   | { status: 'running'; done: number | null; total: number }
-  | { status: 'done'; bytes: Uint8Array; warnings: ExportWarning[] }
+  /** `before`: the size of the document as it is now, without compression. */
+  | { status: 'done'; bytes: Uint8Array; warnings: ExportWarning[]; before: number }
   | { status: 'failed'; message: string };
 
 /** "12.4 MB → 3.1 MB (−75%)". */
@@ -88,6 +89,12 @@ function ReduceFileSize({ doc }: { doc: WorkspaceDocument }) {
     try {
       // Loaded with the exporter, which the workspace loads on first use.
       const { COMPRESSION_PRESETS } = await import('@folio/pdf-core/export');
+      // An unchanged document is the file it was opened from; a changed one
+      // is what saving it would write, which can be much larger (added images).
+      const before = doc.editor?.history.past.length
+        ? (await workspace.getState().exportDocument(doc.key)).bytes.length
+        : doc.byteLength;
+      if (signal.aborted) return;
       const { bytes, warnings } = await workspace.getState().exportDocument(doc.key, {
         compression: {
           images: COMPRESSION_PRESETS[preset],
@@ -97,7 +104,7 @@ function ReduceFileSize({ doc }: { doc: WorkspaceDocument }) {
           },
         },
       });
-      if (!signal.aborted) setRun({ status: 'done', bytes, warnings });
+      if (!signal.aborted) setRun({ status: 'done', bytes, warnings, before });
     } catch (error) {
       if (!signal.aborted) setRun({ status: 'failed', message: exportFailureMessage(error) });
     } finally {
@@ -124,7 +131,7 @@ function ReduceFileSize({ doc }: { doc: WorkspaceDocument }) {
     }
   };
 
-  const smaller = run.status === 'done' && run.bytes.length < doc.byteLength;
+  const smaller = run.status === 'done' && run.bytes.length < run.before;
   return (
     <DialogContent aria-describedby={`${id}-description`}>
       <form onSubmit={(event) => void start(event)}>
@@ -189,7 +196,7 @@ function ReduceFileSize({ doc }: { doc: WorkspaceDocument }) {
         ) : run.status === 'done' ? (
           <p role="status" className="mt-4 text-sm">
             {smaller
-              ? sizeChange(doc.byteLength, run.bytes.length)
+              ? sizeChange(run.before, run.bytes.length)
               : 'This document is already as small as Folio can make it.'}
           </p>
         ) : (

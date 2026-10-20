@@ -75,8 +75,11 @@ export function useSaveAs(): (key: string, options?: SaveAsOptions) => Promise<b
         if (!flattened) current.markSaved(key);
         if (result.status === 'saved' && result.handle) {
           const handle = result.handle;
-          current.setSaveTarget(key, { handle, name: result.name }, await sha256Hex(bytes), () =>
-            adapter.releaseHandle(handle),
+          current.setSaveTarget(
+            key,
+            { handle, name: result.name },
+            { sha256: await sha256Hex(bytes), byteLength: bytes.byteLength },
+            () => adapter.releaseHandle(handle),
           );
         }
         current.showNotice(
