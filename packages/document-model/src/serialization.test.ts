@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createViewState } from './create';
 import { createEditorState, execute, isDirty, markSaved } from './history';
-import { newAnnotationId, newAssetId } from './ids';
+import { newAnnotationId, newAssetId, newPageId } from './ids';
 import { parseRecoverySnapshot, serializeRecoverySnapshot, SnapshotError } from './serialization';
 import { sampleModel } from './test-helpers';
 import type { AddedImageAnnotation, AssetRef } from './types';
@@ -102,6 +102,46 @@ describe('recovery snapshots', () => {
     expect(() => parseRecoverySnapshot(JSON.stringify(renamed))).toThrowError(
       expect.objectContaining({ code: 'inconsistent' }) as Error,
     );
+  });
+
+  it('keeps the images of pages copied from another document', () => {
+    const asset: AssetRef = {
+      id: newAssetId(),
+      mimeType: 'image/jpeg',
+      byteLength: 120,
+      sha256: 'd'.repeat(64),
+    };
+    let state = createEditorState(sampleModel(1));
+    const page = { ...state.model.pages[0]!, id: newPageId() };
+    const image: AddedImageAnnotation = {
+      id: newAnnotationId(),
+      pageId: page.id,
+      author: '',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      modifiedAt: '2026-01-01T00:00:00.000Z',
+      color: '#000000',
+      opacity: 1,
+      kind: 'added-image',
+      rect: { x: 10, y: 10, width: 50, height: 50 },
+      assetId: asset.id,
+      rotation: 0,
+    };
+    state = execute(
+      state,
+      {
+        type: 'pages/insert',
+        entries: [{ index: 1, page }],
+        annotations: [image],
+        sources: [],
+        assets: [asset],
+      },
+      { label: 'Copy 1 page from other.pdf' },
+    );
+    const restored = parseRecoverySnapshot(
+      serializeRecoverySnapshot(state, createViewState(state.model)),
+    ).editor;
+    expect(restored).toEqual(state);
+    expect(restored.history.past[0]?.operation).toMatchObject({ assets: [asset] });
   });
 
   it('does not echo document content in validation errors', () => {

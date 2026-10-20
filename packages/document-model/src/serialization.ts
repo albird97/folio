@@ -238,6 +238,7 @@ const operation: z.ZodType = z.lazy(() =>
       entries: z.array(z.object({ index: z.number().int().nonnegative(), page })),
       annotations: z.array(annotation),
       sources: z.array(source),
+      assets: z.array(asset).optional(),
     }),
     z.object({ type: z.literal('pages/remove'), pageIds: z.array(id('page')) }),
     z.object({ type: z.literal('metadata/update'), patch: metadata.partial() }),

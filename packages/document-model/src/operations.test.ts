@@ -146,6 +146,55 @@ describe('page operations', () => {
     expect(back.model.sources[source.id]).toEqual(source);
   });
 
+  it('registers the images of annotations on inserted pages and keeps them after an undo', () => {
+    const model = sampleModel(1);
+    const asset = {
+      id: newAssetId(),
+      mimeType: 'image/png' as const,
+      byteLength: 10,
+      sha256: 'c'.repeat(64),
+    };
+    const page: PageModel = { ...model.pages[0]!, id: newPageId() };
+    const { position: _position, contents: _contents, ...common } = note(model, 0);
+    const image: Annotation = {
+      ...common,
+      pageId: page.id,
+      kind: 'signature',
+      rect: { x: 0, y: 0, width: 10, height: 10 },
+      assetId: asset.id,
+      rotation: 0,
+    };
+    const insert = (assets?: (typeof asset)[]): Operation => ({
+      type: 'pages/insert',
+      entries: [{ index: 1, page }],
+      annotations: [image],
+      sources: [],
+      ...(assets ? { assets } : {}),
+    });
+    // An image the document does not know is refused, like annotations/add.
+    expect(() => applyOperation(model, insert())).toThrowError(
+      expect.objectContaining({ code: 'unknown-asset' }) as Error,
+    );
+    const forward = applyOperation(model, insert([asset]));
+    expect(forward.model.assets[asset.id]).toEqual(asset);
+    expect(forward.model.annotations[image.id]).toEqual(image);
+    const back = applyOperation(forward.model, forward.inverse);
+    expect(ids(back.model)).toEqual(ids(model));
+    expect(back.model.annotations).toEqual({});
+    expect(back.model.assets[asset.id]).toEqual(asset);
+    // Redo needs nothing new: the image is still known.
+    expect(applyOperation(back.model, insert()).model.annotations[image.id]).toEqual(image);
+    // Without images, the assets keep their identity.
+    expect(
+      applyOperation(model, {
+        type: 'pages/insert',
+        entries: [{ index: 0, page }],
+        annotations: [],
+        sources: [],
+      }).model.assets,
+    ).toBe(model.assets);
+  });
+
   it('reports unknown pages', () => {
     const model = sampleModel(1);
     expect(() =>
