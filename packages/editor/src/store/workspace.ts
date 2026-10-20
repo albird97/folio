@@ -7,8 +7,11 @@ import {
   execute,
   markSaved as markEditorSaved,
   movePagesOperation,
+  newAnnotationId,
   newAssetId,
   newDocumentId,
+  newPageId,
+  newSourceId,
   OperationError,
   parseRecognizedText,
   parseRecoverySnapshot,
@@ -29,8 +32,10 @@ import {
   type FormFieldValue,
   type Operation,
   type PageId,
+  type PageModel,
   type RecognizedText,
   type RecognizedTextData,
+  type SourceDocument,
   type SourceId,
   type ZoomMode,
 } from '@folio/document-model';
@@ -58,6 +63,15 @@ import { pageTextWithRecognized } from '../ocr/page-text';
 import { DEFAULT_SEARCH_OPTIONS, type SearchOptions, type TextMatch } from '../search/match';
 import { searchDocument, type SearchableRun } from '../search/run';
 import { clampZoom, stepZoom } from '../viewer/zoom';
+import {
+  activateIn,
+  afterClose,
+  setSplit,
+  showIn,
+  SINGLE_PANE,
+  type PaneSide,
+  type SplitPanes,
+} from './split';
 import {
   ALL_PERMISSIONS,
   applyPageInfo,
@@ -195,6 +209,8 @@ export interface ExportRequest {
 export interface WorkspaceState {
   documents: WorkspaceDocument[];
   activeKey: string | null;
+  /** Split view: the document beside the active one (see `split.ts`). */
+  split: SplitPanes;
   /** A short, transient message (e.g. skipped non-PDF files). Never contains document content. */
   notice: { id: number; message: string } | null;
 
@@ -203,6 +219,10 @@ export interface WorkspaceState {
   close(key: string): Promise<void>;
   activate(key: string): void;
   activateRelative(delta: 1 | -1): void;
+  /** Turns split view on or off (the UI store keeps the preference). */
+  setSplitView(on: boolean): void;
+  /** Shows a document in a pane of the split view, which gets focus. */
+  showInPane(side: PaneSide, key: string): void;
   setCurrentPage(key: string, pageId: PageId): void;
   /** Records the scroll position reported by the viewer. */
   updatePosition(key: string, pageId: PageId, pageOffset: number): void;
@@ -236,6 +256,17 @@ export interface WorkspaceState {
   deletePages(key: string, pageIds: PageId[]): void;
   duplicatePages(key: string, pageIds: PageId[]): void;
   movePages(key: string, pageIds: PageId[], toIndex: number): void;
+  /**
+   * Copies pages of one open document into another at `index`, with their
+   * comments and recognized text, as one change of the target (the source
+   * document is not changed). Returns false when nothing was copied.
+   */
+  copyPagesToDocument(
+    fromKey: string,
+    pageIds: readonly PageId[],
+    toKey: string,
+    index: number,
+  ): Promise<boolean>;
   insertBlankPage(key: string, index: number): void;
   insertPagesFromFile(
     key: string,
@@ -748,7 +779,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       });
       set((state) => ({
         documents: [...state.documents, ...added],
-        activeKey: added[0]?.key ?? state.activeKey,
+        ...(added[0] ? activateIn(state, added[0].key) : {}),
       }));
       await Promise.all(added.map((doc) => load(doc.key, resources.get(doc.key)?.initialPassword)));
     }
@@ -852,7 +883,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         pagesComplete: opened.every(({ entry: source }) => source.handle.pagesComplete),
         recoveryId: request.recoveryId,
       };
-      set((state) => ({ documents: [...state.documents, doc], activeKey: key }));
+      set((state) => ({ documents: [...state.documents, doc], ...activateIn(state, key) }));
       void Promise.all(opened.map(({ entry: source }) => source.handle.pagesReady)).then(() => {
         if (!resources.has(key)) return;
         flushPageInfo(key);
@@ -1046,6 +1077,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
     return {
       documents: [],
       activeKey: null,
+      split: SINGLE_PANE,
       notice: null,
 
       async openFiles(files) {
@@ -1071,14 +1103,18 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       },
 
       async close(key) {
-        const { documents, activeKey } = get();
-        const index = documents.findIndex((doc) => doc.key === key);
+        const state = get();
+        const index = state.documents.findIndex((doc) => doc.key === key);
         if (index === -1) return;
-        const remaining = documents.filter((doc) => doc.key !== key);
-        const neighbour = remaining[Math.min(index, remaining.length - 1)] ?? null;
+        const remaining = state.documents.filter((doc) => doc.key !== key);
         set({
           documents: remaining,
-          activeKey: activeKey === key ? (neighbour?.key ?? null) : activeKey,
+          ...afterClose(
+            state,
+            key,
+            remaining.map((doc) => doc.key),
+            index,
+          ),
         });
         const entry = resources.get(key);
         resources.delete(key);
@@ -1087,7 +1123,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
       },
 
       activate(key) {
-        if (get().documents.some((doc) => doc.key === key)) set({ activeKey: key });
+        if (get().documents.some((doc) => doc.key === key)) set(activateIn(get(), key));
       },
 
       activateRelative(delta) {
@@ -1095,7 +1131,21 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         if (documents.length < 2) return;
         const index = documents.findIndex((doc) => doc.key === activeKey);
         const next = documents[(index + delta + documents.length) % documents.length];
-        if (next) set({ activeKey: next.key });
+        if (next) set(activateIn(get(), next.key));
+      },
+
+      setSplitView(on) {
+        const state = get();
+        const next = setSplit(
+          state,
+          on,
+          state.documents.map((doc) => doc.key),
+        );
+        if (next !== state) set(next);
+      },
+
+      showInPane(side, key) {
+        if (get().documents.some((doc) => doc.key === key)) set(showIn(get(), side, key));
       },
 
       setCurrentPage(key, pageId) {
@@ -1389,6 +1439,183 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         }
       },
 
+      async copyPagesToDocument(fromKey, pageIds, toKey, index) {
+        const from = find(fromKey);
+        const fromEntry = resources.get(fromKey);
+        const fromModel = from?.editor?.model;
+        const target = find(toKey);
+        if (fromKey === toKey || !from || from.status !== 'ready' || !fromEntry || !fromModel) {
+          return false;
+        }
+        if (!target || target.status !== 'ready') return false;
+        // Both documents' authors have a say: one about copying out, one about assembling.
+        if (!from.permissions.extract) {
+          notify(`${from.fileName}: ${PERMISSION_MESSAGES.extract}`);
+          return false;
+        }
+        if (!target.permissions.assemble) {
+          notify(`${target.fileName}: ${PERMISSION_MESSAGES.assemble}`);
+          return false;
+        }
+        const wanted = new Set(pageIds);
+        const pages = fromModel.pages.filter((page) => wanted.has(page.id));
+        if (pages.length === 0) return false;
+        const label = `Copy ${pagesLabel(pages.length)} from ${from.fileName}`;
+        patch(toKey, { busy: `Copying ${pagesLabel(pages.length)}…` });
+        /** Engine handles opened for the target, until it owns them. */
+        const opened: Array<{ id: SourceId; entry: Omit<SourceEntry, 'unsubscribe'> }> = [];
+        try {
+          // The target reads every source file through its own engine handle,
+          // so closing the source document never breaks it. Files it already
+          // has (the same SHA-256) are shared.
+          const sourceIds = new Map<SourceId, SourceId>();
+          const sources: SourceDocument[] = [];
+          for (const page of pages) {
+            if (page.source.kind !== 'source' || sourceIds.has(page.source.sourceId)) continue;
+            const record = fromModel.sources[page.source.sourceId];
+            const file = fromEntry.sources.get(page.source.sourceId);
+            const toEntry = resources.get(toKey);
+            const toModel = find(toKey)?.editor?.model;
+            if (!record || !file || !toEntry || !toModel) throw new Error('Missing source');
+            const known = Object.values(toModel.sources).find(
+              (source) => source.sha256 === record.sha256 && toEntry.sources.has(source.id),
+            );
+            if (known) {
+              sourceIds.set(record.id, known.id);
+              continue;
+            }
+            const handle = await engine.open(
+              file.bytes,
+              file.password === undefined ? {} : { password: file.password },
+            );
+            const id = newSourceId();
+            // The bytes are shared: nothing changes or transfers source bytes.
+            opened.push({ id, entry: { bytes: file.bytes, handle, password: file.password } });
+            sourceIds.set(record.id, id);
+            sources.push({
+              ...record,
+              id,
+              // A desktop file grant belongs to the document that opened the file.
+              origin:
+                record.origin.kind === 'local-file'
+                  ? { kind: 'local-file', handle: null }
+                  : record.origin,
+            });
+          }
+          const copies = new Map<PageId, PageModel>(
+            pages.map((page) => [
+              page.id,
+              {
+                ...page,
+                id: newPageId(),
+                source:
+                  page.source.kind === 'source'
+                    ? { ...page.source, sourceId: sourceIds.get(page.source.sourceId)! }
+                    : page.source,
+              },
+            ]),
+          );
+
+          // Images and recognized text are kept by the target too (the same
+          // bytes give the same asset).
+          const assetIds = new Map<AssetId, AssetRef>();
+          const copyAsset = async (assetId: AssetId) => {
+            const known = assetIds.get(assetId);
+            if (known) return known;
+            const bytes = fromEntry.assets.get(assetId);
+            const ref = fromModel.assets[assetId];
+            if (!bytes || !ref) return null;
+            const copy = await registerData(toKey, bytes, ref.mimeType);
+            if (copy) assetIds.set(assetId, copy);
+            return copy;
+          };
+          const now = new Date().toISOString();
+          const annotations: Annotation[] = [];
+          const images: AssetRef[] = [];
+          for (const annotation of Object.values(fromModel.annotations)) {
+            const copy = copies.get(annotation.pageId);
+            if (!copy) continue;
+            const moved = {
+              ...annotation,
+              id: newAnnotationId(),
+              pageId: copy.id,
+              createdAt: now,
+              modifiedAt: now,
+            };
+            if ('assetId' in moved) {
+              // An image whose bytes are gone (a damaged recovery) cannot be shown anywhere.
+              const asset = await copyAsset(moved.assetId);
+              if (!asset) continue;
+              moved.assetId = asset.id;
+              if (!images.includes(asset)) images.push(asset);
+            }
+            annotations.push(moved);
+          }
+          const layers: Array<{ key: string; layer: RecognizedText }> = [];
+          const layerAssets: AssetRef[] = [];
+          for (const { source } of pages) {
+            const copy = source.kind === 'source' ? sourceIds.get(source.sourceId) : undefined;
+            if (source.kind !== 'source' || !copy) continue;
+            const layer = fromModel.textLayers[sourcePageKey(source.sourceId, source.pageIndex)];
+            const key = sourcePageKey(copy, source.pageIndex);
+            if (!layer || layers.some((entry) => entry.key === key)) continue;
+            const asset = await copyAsset(layer.assetId);
+            if (!asset) continue;
+            layers.push({ key, layer: { ...layer, assetId: asset.id } });
+            if (!layerAssets.includes(asset)) layerAssets.push(asset);
+          }
+
+          const model = find(toKey)?.editor?.model;
+          if (!model || !resources.has(toKey)) return false;
+          const at = Math.min(Math.max(0, index), model.pages.length);
+          const created = [...copies.values()];
+          // Text the target recognized itself for the same pages stays.
+          const newLayers = layers.filter((entry) => !model.textLayers[entry.key]);
+          const insert: Operation = {
+            type: 'pages/insert',
+            entries: created.map((page, offset) => ({ index: at + offset, page })),
+            annotations,
+            sources,
+            ...(images.length > 0 ? { assets: images } : {}),
+          };
+          const operation: Operation =
+            newLayers.length > 0
+              ? {
+                  type: 'batch',
+                  operations: [
+                    insert,
+                    { type: 'text-layers/set', entries: newLayers, assets: layerAssets },
+                  ],
+                }
+              : insert;
+          if (!apply(toKey, operation, { label })) return false;
+          for (const { id, entry } of opened.splice(0)) addSource(toKey, id, entry);
+          get().selectPages(
+            toKey,
+            created.map((page) => page.id),
+            created[0]?.id ?? null,
+          );
+          navigateTo(toKey, { pageIndex: at, align: 'top' });
+          const protectedPages = pages.some(
+            (page) =>
+              page.source.kind === 'source' &&
+              fromModel.sources[page.source.sourceId]?.encryption !== 'none',
+          );
+          if (protectedPages && find(toKey)?.info?.encryption === 'none') {
+            notify(
+              `The pages from ${from.fileName} will be saved without its password protection, like the rest of ${target.fileName}.`,
+            );
+          }
+          return true;
+        } catch {
+          notify('The pages could not be copied.');
+          return false;
+        } finally {
+          await Promise.all(opened.map(({ entry }) => entry.handle.destroy()));
+          if (resources.has(toKey)) patch(toKey, { busy: null });
+        }
+      },
+
       addAnnotations(key, annotations, options) {
         if (annotations.length === 0 || !allowed(key, 'annotate')) return false;
         const applied = apply(
@@ -1603,7 +1830,11 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
     async destroy() {
       const entries = [...resources.values()];
       resources.clear();
-      store.setState({ documents: [], activeKey: null });
+      store.setState((state) => ({
+        documents: [],
+        activeKey: null,
+        split: { ...state.split, otherKey: null },
+      }));
       await Promise.all(entries.map((entry) => releaseResources(entry)));
     },
   };
