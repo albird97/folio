@@ -32,6 +32,7 @@ export type AppCommand =
   | 'redo'
   | 'toggle-left-panel'
   | 'toggle-right-panel'
+  | 'toggle-split-view'
   | 'cycle-theme'
   | 'zoom-in'
   | 'zoom-out'
@@ -75,6 +76,7 @@ export const APP_COMMANDS: readonly AppCommand[] = [
   'redo',
   'toggle-left-panel',
   'toggle-right-panel',
+  'toggle-split-view',
   'cycle-theme',
   'zoom-in',
   'zoom-out',

@@ -108,6 +108,8 @@ export type DialogRequest =
       rest: IncomingFile[];
     }
   | { kind: 'split'; docKey: string }
+  /** Copy pages of one open document into another (the keyboard's way to drag them). */
+  | { kind: 'copy-pages'; fromKey: string; pageIds: PageId[]; toKey: string }
   | { kind: 'close-document'; docKey: string }
   /** The file changed on disk since Folio read it. */
   | {
@@ -193,11 +195,25 @@ export interface AiSettings {
 
 export const DEFAULT_AI_SETTINGS: AiSettings = { enabled: false, model: DEFAULT_AI_MODEL };
 
+/**
+ * Pages being dragged out of a pages panel: how many, and where they would
+ * land in another document (a gap between its pages, or its page view).
+ */
+export interface PageDrag {
+  fromKey: string;
+  count: number;
+  target: { docKey: string; slot: number } | { docKey: string; slot: 'view' } | null;
+}
+
 /** Workspace chrome state. Persisted per installation; never part of a document. */
 export interface UiState {
   theme: ThemePreference;
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
+  /** Two documents side by side (the panes themselves are workspace state). */
+  splitView: boolean;
+  /** Pages being dragged between documents; held in memory only. */
+  pageDrag: PageDrag | null;
   sidebarTab: SidebarTab;
   tool: Tool;
   /**
@@ -220,6 +236,8 @@ export interface UiState {
   setTheme(theme: ThemePreference): void;
   toggleLeftPanel(): void;
   toggleRightPanel(): void;
+  toggleSplitView(): void;
+  setPageDrag(drag: PageDrag | null): void;
   /** Shows the sidebar on the given tab. */
   showSidebar(tab: SidebarTab): void;
   setSidebarTab(tab: SidebarTab): void;
@@ -244,6 +262,7 @@ type Persisted = Pick<
   | 'theme'
   | 'leftPanelOpen'
   | 'rightPanelOpen'
+  | 'splitView'
   | 'sidebarTab'
   | 'style'
   | 'authorName'
@@ -290,6 +309,7 @@ function sanitize(value: unknown): Partial<Persisted> {
   if (isThemePreference(raw.theme)) out.theme = raw.theme;
   if (typeof raw.leftPanelOpen === 'boolean') out.leftPanelOpen = raw.leftPanelOpen;
   if (typeof raw.rightPanelOpen === 'boolean') out.rightPanelOpen = raw.rightPanelOpen;
+  if (typeof raw.splitView === 'boolean') out.splitView = raw.splitView;
   if (SIDEBAR_TABS.includes(raw.sidebarTab as SidebarTab))
     out.sidebarTab = raw.sidebarTab as SidebarTab;
   const style = sanitizeStyle(raw.style);
@@ -314,6 +334,7 @@ const persistedOf = (state: UiState): Persisted => ({
   theme: state.theme,
   leftPanelOpen: state.leftPanelOpen,
   rightPanelOpen: state.rightPanelOpen,
+  splitView: state.splitView,
   sidebarTab: state.sidebarTab,
   style: state.style,
   authorName: state.authorName,
@@ -333,6 +354,8 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     theme: 'system',
     leftPanelOpen: true,
     rightPanelOpen: true,
+    splitView: false,
+    pageDrag: null,
     sidebarTab: 'pages',
     tool: 'select',
     pendingSignature: null,
@@ -347,6 +370,8 @@ export function createUiStore(storage: KeyValueStorage): StoreApi<UiState> {
     setTheme: (theme) => set({ theme }),
     toggleLeftPanel: () => set((state) => ({ leftPanelOpen: !state.leftPanelOpen })),
     toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
+    toggleSplitView: () => set((state) => ({ splitView: !state.splitView })),
+    setPageDrag: (pageDrag) => set({ pageDrag }),
     showSidebar: (tab) => set({ leftPanelOpen: true, sidebarTab: tab }),
     setSidebarTab: (tab) => set({ sidebarTab: tab }),
     setTool: (tool) =>

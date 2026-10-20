@@ -15,6 +15,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { useUi, useWorkspaceContext } from '../context';
 import { formatBytes, formatDate, parsePageRange } from '../format';
 import { insertFiles } from '../hooks/use-page-commands';
+import { pagesLabel } from '../store/editing';
 import { usePrint } from '../hooks/use-print';
 import { useSave } from '../hooks/use-save';
 import type { DialogRequest } from '../store/ui';
@@ -186,6 +187,86 @@ function SplitDialog({ request }: { request: Of<'split'> }) {
           <Button onClick={close}>Cancel</Button>
           <Button type="submit" variant="primary" disabled={parts.length < 2 || busy}>
             Split
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  );
+}
+
+function CopyPagesDialog({ request }: { request: Of<'copy-pages'> }) {
+  const { workspace, ui } = useWorkspaceContext();
+  const id = useId();
+  const [place, setPlace] = useState<'end' | 'after-current'>('end');
+  const [busy, setBusy] = useState(false);
+  const documents = workspace.getState().documents;
+  const from = documents.find((entry) => entry.key === request.fromKey);
+  const to = documents.find((entry) => entry.key === request.toKey);
+  const pages = to?.editor?.model.pages ?? [];
+  const current = Math.max(
+    0,
+    pages.findIndex((page) => page.id === to?.view?.currentPageId),
+  );
+  const count = request.pageIds.length;
+  const close = () => ui.getState().closeDialog();
+  if (!from || !to) return null;
+
+  const onSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    const state = workspace.getState();
+    const before = state.notice?.id;
+    void state
+      .copyPagesToDocument(
+        request.fromKey,
+        request.pageIds,
+        request.toKey,
+        place === 'end' ? pages.length : current + 1,
+      )
+      .then((copied) => {
+        // Say where they went, unless the copy had something else to say.
+        if (copied && workspace.getState().notice?.id === before) {
+          state.showNotice(`Copied ${pagesLabel(count)} to ${to.fileName}.`);
+        }
+      })
+      .finally(close);
+  };
+
+  return (
+    <DialogContent aria-describedby={`${id}-description`}>
+      <form onSubmit={onSubmit}>
+        <DialogTitle>
+          Copy {pagesLabel(count)} to {to.fileName}
+        </DialogTitle>
+        <DialogDescription id={`${id}-description`}>
+          The pages are copied with their comments. {from.fileName} is not changed.
+        </DialogDescription>
+        <fieldset className="mt-4 space-y-3 text-sm">
+          <legend className="mb-2 font-medium">Where they go</legend>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`${id}-place`}
+              checked={place === 'end'}
+              onChange={() => setPlace('end')}
+            />
+            At the end, after page {pages.length}
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`${id}-place`}
+              checked={place === 'after-current'}
+              onChange={() => setPlace('after-current')}
+            />
+            After page {current + 1}, the page shown
+          </label>
+        </fieldset>
+        <DialogFooter>
+          <Button onClick={close}>Cancel</Button>
+          <Button type="submit" variant="primary" disabled={busy}>
+            Copy
           </Button>
         </DialogFooter>
       </form>
@@ -625,6 +706,8 @@ export function Dialogs() {
         <InsertPasswordDialog key={dialog.file.name} request={dialog} />
       ) : dialog?.kind === 'split' ? (
         <SplitDialog key={dialog.docKey} request={dialog} />
+      ) : dialog?.kind === 'copy-pages' ? (
+        <CopyPagesDialog key={dialog.toKey} request={dialog} />
       ) : dialog?.kind === 'close-document' ? (
         <CloseDocumentDialog request={dialog} />
       ) : dialog?.kind === 'save-conflict' ? (

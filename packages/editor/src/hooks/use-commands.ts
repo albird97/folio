@@ -151,6 +151,9 @@ export function useCommands(): (command: AppCommand) => void {
         case 'toggle-right-panel':
           ui.getState().toggleRightPanel();
           break;
+        case 'toggle-split-view':
+          ui.getState().toggleSplitView();
+          break;
         case 'cycle-theme':
           ui.getState().setTheme(nextThemePreference(ui.getState().theme));
           break;

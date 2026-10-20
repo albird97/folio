@@ -14,6 +14,7 @@ import {
 } from '@folio/shared-ui';
 import {
   ChevronDown,
+  Columns2,
   Download,
   FolderOpen,
   Monitor,
@@ -96,6 +97,8 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
   const rightPanelOpen = useUi((state) => state.rightPanelOpen);
   const toggleLeftPanel = useUi((state) => state.toggleLeftPanel);
   const toggleRightPanel = useUi((state) => state.toggleRightPanel);
+  const splitView = useUi((state) => state.splitView);
+  const toggleSplitView = useUi((state) => state.toggleSplitView);
   const theme = useUi((state) => state.theme);
   const setTheme = useUi((state) => state.setTheme);
   const shortcuts = COMMAND_SHORTCUTS[profile];
@@ -315,6 +318,16 @@ export function WorkspaceToolbar({ onCommand }: { onCommand(command: AppCommand)
           label={`${themeLabel}. Switch to ${nextTheme}`}
           icon={<ThemeIcon size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
           onClick={() => setTheme(nextThemePreference(theme))}
+        />
+      </ToolbarPrimitive.Button>
+      <ToolbarPrimitive.Button asChild>
+        <IconButton
+          label={COMMAND_LABELS['toggle-split-view']}
+          icon={<Columns2 size={ICON.md} strokeWidth={ICON.stroke} aria-hidden />}
+          pressed={doc !== null && splitView}
+          disabled={doc === null}
+          onClick={toggleSplitView}
+          shortcut={shortcut('toggle-split-view')}
         />
       </ToolbarPrimitive.Button>
       <ToolbarPrimitive.Button asChild>

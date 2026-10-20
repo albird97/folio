@@ -46,7 +46,8 @@ import {
 import { PERMISSION_MESSAGES } from '../../store/editing';
 import type { DialogOf } from '../../store/ui';
 import { pickImageFile } from '../../viewer/images';
-import { PAGE_VIEW, PLACING_HINT } from '../../viewer/signature-layer';
+import { pageViewSelector } from '../../viewer/page-overlays';
+import { PLACING_HINT } from '../../viewer/signature-layer';
 import { Paper, SignaturePad, useCanvasPixels } from './signature-pad';
 
 type Source = 'saved' | 'draw' | 'type' | 'image';
@@ -367,7 +368,7 @@ function SignatureForm({
       onCloseAutoFocus={(event) => {
         if (!focusPages.current) return;
         event.preventDefault();
-        document.querySelector<HTMLElement>(PAGE_VIEW)?.focus();
+        document.querySelector<HTMLElement>(pageViewSelector(request.docKey))?.focus();
       }}
     >
       <form onSubmit={(event) => void onSubmit(event)}>

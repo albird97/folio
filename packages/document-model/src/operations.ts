@@ -29,6 +29,12 @@ export type Operation =
       annotations: Annotation[];
       /** Sources the inserted pages reference that the document does not know yet. */
       sources: SourceDocument[];
+      /**
+       * Images the annotations use that the document does not know yet (pages
+       * copied from another document). Like sources, they stay registered
+       * after an undo.
+       */
+      assets?: AssetRef[];
     }
   | { type: 'pages/remove'; pageIds: PageId[] }
   | { type: 'metadata/update'; patch: Partial<DocumentMetadata> }
@@ -150,6 +156,8 @@ function insertPages(
   // an unreferenced source is never exported.
   const sources = { ...model.sources };
   for (const source of op.sources) sources[source.id] ??= source;
+  const assets = op.assets?.length ? { ...model.assets } : model.assets;
+  for (const asset of op.assets ?? []) assets[asset.id] ??= asset;
   const existing = new Set(model.pages.map((page) => page.id));
   const pages = [...model.pages];
   const sorted = [...op.entries].sort((a, b) => a.index - b.index);
@@ -174,10 +182,13 @@ function insertPages(
     if (annotations[annotation.id]) {
       throw new OperationError('duplicate-id', `Annotation ${annotation.id} already exists.`);
     }
+    if ('assetId' in annotation && !assets[annotation.assetId]) {
+      throw new OperationError('unknown-asset', `Unknown image ${annotation.assetId}.`);
+    }
     annotations[annotation.id] = annotation;
   }
   return {
-    model: { ...model, sources, pages, annotations },
+    model: { ...model, sources, pages, annotations, assets },
     inverse: { type: 'pages/remove', pageIds: sorted.map(({ page }) => page.id) },
   };
 }

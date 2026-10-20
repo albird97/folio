@@ -38,6 +38,7 @@ pub const MENU_COMMANDS: &[MenuEntry] = &[
         "Properties Panel",
         Some("CmdOrCtrl+Alt+2"),
     ),
+    ("toggle-split-view", "Split View", Some("CmdOrCtrl+Alt+3")),
     ("cycle-theme", "Switch Theme", None),
     ("zoom-in", "Zoom In", Some("CmdOrCtrl+=")),
     ("zoom-out", "Zoom Out", Some("CmdOrCtrl+-")),
@@ -272,6 +273,7 @@ pub fn build<R: Runtime>(
         .separator()
         .item(&item(app, "toggle-left-panel")?)
         .item(&item(app, "toggle-right-panel")?)
+        .item(&item(app, "toggle-split-view")?)
         .separator()
         .item(&item(app, "next-tab")?)
         .item(&item(app, "previous-tab")?)
@@ -535,6 +537,7 @@ mod tests {
             "save-copy",
             "toggle-left-panel",
             "toggle-right-panel",
+            "toggle-split-view",
             "go-to-page",
         ] {
             let entry = MENU_COMMANDS.iter().find(|(command, _, _)| *command == id);

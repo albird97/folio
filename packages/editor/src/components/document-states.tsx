@@ -17,7 +17,14 @@ export function LoadingState({ doc }: { doc: WorkspaceDocument }) {
   );
 }
 
-export function PasswordState({ doc }: { doc: WorkspaceDocument }) {
+export function PasswordState({
+  doc,
+  autoFocus = true,
+}: {
+  doc: WorkspaceDocument;
+  /** Take focus (not in the pane of a split view without focus). */
+  autoFocus?: boolean;
+}) {
   const submitPassword = useWorkspace((state) => state.submitPassword);
   const close = useCloseDocument();
   const [password, setPassword] = useState('');
@@ -53,7 +60,7 @@ export function PasswordState({ doc }: { doc: WorkspaceDocument }) {
             id={`${id}-password`}
             type="password"
             autoComplete="off"
-            autoFocus
+            autoFocus={autoFocus}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             aria-invalid={doc.passwordRejected || undefined}

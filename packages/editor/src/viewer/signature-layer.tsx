@@ -1,11 +1,11 @@
 import type { Point } from '@folio/document-model';
 import { memo, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
-import { useUi, useWorkspaceContext } from '../context';
+import { useUi, useWorkspace, useWorkspaceContext } from '../context';
 import { clickPlacement, newSignature } from '../signature/placement';
 import { pngDataUrl } from '../signature/remembered';
 import type { SignatureImage } from '../signature/render';
 import { displaySpaceSize } from './geometry';
-import type { PageOverlayProps } from './page-overlays';
+import { pageViewSelector, type PageOverlayProps } from './page-overlays';
 
 /** What the user is told when placing starts (screen readers hear it too). */
 export const PLACING_HINT =
@@ -15,7 +15,7 @@ export const PLACING_HINT =
 const KEEPS_KEYS =
   'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], [role="listbox"]';
 /** The pages, where keyboard focus belongs once a signature is placed. */
-export const PAGE_VIEW = '[role="region"][aria-label="Page view"]';
+const PAGE_VIEW = pageViewSelector();
 
 /** The page the keyboard places on: the current one (or the first, before there is one). */
 const isCurrent = ({ doc, page }: PageOverlayProps) =>
@@ -43,14 +43,17 @@ export const SignatureLayer = memo(
   function SignatureLayer(props: PageOverlayProps) {
     const { workspace, ui } = useWorkspaceContext();
     const pending = useUi((state) => state.pendingSignature);
+    const activeKey = useWorkspace((state) => state.activeKey);
     const placing = props.tool === 'signature' && pending !== null;
     const elsewhere = placing && pending.docKey !== props.doc.key;
 
     // A signature goes into the document it was chosen for (whose digital
-    // signatures the dialog warned about): showing another one gives up.
+    // signatures the dialog warned about): turning to another one gives up.
+    // (The other document of a split view stays in sight meanwhile.)
+    const abandoned = placing && pending.docKey !== activeKey;
     useEffect(() => {
-      if (elsewhere) ui.getState().setTool('select');
-    }, [elsewhere, ui]);
+      if (abandoned) ui.getState().setTool('select');
+    }, [abandoned, ui]);
 
     // The hint about placing goes with it, however placing ends.
     useEffect(() => {
