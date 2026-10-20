@@ -602,8 +602,7 @@ nothing beyond that is claimed here.
   right-to-left text); cancelling discards the whole run; it adds about 19.4 MB to each app.
 - **Ask Claude:** answers are plain text; conversations are lost on reload; desktop requests do not
   use proxy settings from the OS.
-- **Reduce file size:** gray images become RGB JPEGs; the size is compared with the opened file,
-  so a document with many additions may read "already as small as Folio can make it".
+- **Reduce file size:** gray images become RGB JPEGs.
 - **Updates:** checked only at startup; no download progress; the feed is this repository's GitHub
   releases, which users cannot reach while the repository is private.
 - **Page labels:** page numbers are physical positions; `/PageLabels` (such as roman numerals for
