@@ -396,6 +396,19 @@ export const CAPABILITY_MATRIX: readonly FeatureCapability[] = [
     verification: EDITING_VERIFIED,
   },
   {
+    id: 'split-view-copy',
+    area: 'Editing',
+    feature: 'Two documents side by side; copy pages between them',
+    plannedPhase: null,
+    targets: all(
+      full(
+        'Split view (View › Split View, ⌘⌥3 / Ctrl+Alt+3) shows two open documents with their own pages panels; dragging thumbnails onto the other document copies them there with their comments, pictures and recognized text, like Preview, and the pages menu copies them to any open document. One undoable change; the original is unchanged.',
+      ),
+    ),
+    verification:
+      'Model and store unit tests (copies re-opened with PDF.js after the source document closed); e2e (Chromium, desktop UI and extension) dragging pages and reading saved files back with pdf-lib, axe in both themes. Split view and page selection were also used in a release build on a Mac.',
+  },
+  {
     id: 'metadata-edit',
     area: 'Editing',
     feature: 'Edit metadata',

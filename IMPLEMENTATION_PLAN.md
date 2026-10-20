@@ -340,6 +340,9 @@ Status legend: ✅ done · 🔜 next · ⏳ later.
       Finder's open events. Remembered window state.
 - [x] Shortcuts for Save and Print, single-key tool shortcuts, copy/cut/paste of comments and
       pasting images, recent files (start screen and File → Open Recent), a close guard.
+- [x] Split view: two documents side by side; pages dragged (pointer events) or copied from the
+      pages menu into another open document as one undoable change, with comments, pictures and
+      recognized text; the target opens its own copy of each source file.
 - [ ] Verify the native integrations on a real Mac and a real Windows PC (partly done on a Mac:
       see [Phase 6 and 7 results](#phase-6-and-7-results)). The capability matrix
       rates them Limited until then.
@@ -629,6 +632,8 @@ nothing beyond that is claimed here.
 - **Native messaging:** registered for Google Chrome and Chromium only (not Edge, Brave and other
   Chromium browsers). The extension uses a development key until it is published; any unpacked
   extension with the same public key gets the same id (transfers are still confirmed).
+- **Split view** shows two documents at most; form values, page numbers and watermarks are not
+  copied with pages; on narrow windows (< 1100 px) the panes are stacked.
 - **Export pages as images** keeps the images in memory and takes up to 300 pages at a time.
 - **macOS 13.3+:** required. Tailwind CSS 4 needs Safari 16.4-level WebKit.
 - **Dependency pins:** ESLint 9 (end of life) is pinned until `eslint-plugin-jsx-a11y` supports

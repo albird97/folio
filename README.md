@@ -133,6 +133,7 @@ Installers appear under `target/release/bundle/` (or `target/universal-apple-dar
 | Next / previous document | ⌃Tab / ⌃⇧Tab        | Ctrl+Tab / Ctrl+Shift+Tab             |
 | Sidebar                  | ⌘⌥1                 | Ctrl+Alt+1                            |
 | Properties panel         | ⌘⌥2                 | Ctrl+Alt+2                            |
+| Split view               | ⌘⌥3                 | Ctrl+Alt+3                            |
 | Zoom in / out            | ⌘= / ⌘-             | Ctrl+= / Ctrl+-                       |
 | Actual size              | ⌘0                  | Ctrl+0                                |
 | Rotate view right / left | ⌘R / ⌘L             | Ctrl+R / Ctrl+L                       |
@@ -192,6 +193,10 @@ AltGr combinations never trigger shortcuts.
   Watermark…** adds text across the pages at an angle and opacity, over or under their content.
   Both apply to all pages or a range, show at once, can be undone, and are drawn into the pages
   when you save or print, as new text in the standard PDF fonts. The Properties panel lists them.
+- **Two documents side by side:** **View → Split View** (⌘⌥3 / Ctrl+Alt+3) shows two open
+  documents next to each other. Drag pages (select several with Shift or ⌘/Ctrl) from one
+  document's pages panel onto the other's to copy them there, like Preview; the original stays
+  as it was. The pages menu's **Copy pages to…** does the same without dragging.
 - **Clipboard:** with the pages focused, ⌘C/⌘X/⌘V (Ctrl+C/X/V) copy, cut and paste the selected
   comments, also into another open document; an image on the clipboard is pasted as an added
   image. Selected page text is copied as usual.
@@ -284,6 +289,7 @@ ignored while you type in a field:
 | Next / previous document | Alt+PageDown / Alt+PageUp          |
 | Sidebar                  | Ctrl/⌘+Alt+1                       |
 | Properties panel         | Ctrl/⌘+Alt+2                       |
+| Split view               | Ctrl/⌘+Alt+3                       |
 | Zoom in / out, actual    | Ctrl/⌘+= / Ctrl/⌘+- / Ctrl/⌘+0     |
 | Go to page               | Ctrl/⌘+Alt+G                       |
 | Find, next, previous     | Ctrl/⌘+F, Ctrl/⌘+G or F3, Shift+F3 |
