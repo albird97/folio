@@ -20,6 +20,23 @@ describe('ui store', () => {
     });
   });
 
+  it('remembers split view but never a drag in progress', async () => {
+    const storage = createMemoryStorage({ [UI_STORAGE_KEY]: { splitView: 'on' } });
+    const store = createUiStore(storage);
+    await settle();
+    expect(store.getState().splitView).toBe(false);
+    store.getState().toggleSplitView();
+    store.getState().setPageDrag({ fromKey: 'tab-1', count: 2, target: null });
+    await settle();
+    const stored = storage.data.get(UI_STORAGE_KEY) as Record<string, unknown>;
+    expect(stored.splitView).toBe(true);
+    expect(stored).not.toHaveProperty('pageDrag');
+
+    const again = createUiStore(storage);
+    await settle();
+    expect(again.getState()).toMatchObject({ splitView: true, pageDrag: null });
+  });
+
   it('follows changes made by other pages', async () => {
     const listeners: Array<(value: unknown) => void> = [];
     const storage = {
@@ -91,6 +108,7 @@ describe('ui store', () => {
       theme: 'light',
       leftPanelOpen: false,
       rightPanelOpen: true,
+      splitView: false,
       sidebarTab: 'pages',
       style: DEFAULT_STYLE,
       authorName: '',

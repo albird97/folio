@@ -12,6 +12,7 @@ import {
   type TextMarkupAnnotation,
 } from '@folio/document-model';
 import { applyTransform, type PdfDocumentHandle } from '@folio/pdf-core';
+import { cn } from '@folio/shared-ui';
 import {
   Fragment,
   useEffect,
@@ -111,6 +112,8 @@ export interface DocumentViewerProps {
   view: DocumentViewState;
   /** The engine document showing pages of a source file. */
   sourceHandle(sourceId: SourceId): PdfDocumentHandle | null;
+  /** The region's accessible name (it names the document in a split view). */
+  label?: string;
 }
 
 const NO_ANNOTATIONS: readonly Annotation[] = [];
@@ -158,9 +161,19 @@ function useAnnotationsByPage(annotations: Readonly<Record<string, Annotation>>)
  * near the window are mounted, so documents with thousands of pages scroll
  * smoothly; rendering is queued by distance from the window.
  */
-export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewerProps) {
+export function DocumentViewer({
+  doc,
+  pages,
+  view,
+  sourceHandle,
+  label = 'Page view',
+}: DocumentViewerProps) {
   const { workspace, ui } = useWorkspaceContext();
   const tool = useUi((state) => state.tool);
+  /** Pages dragged from the other document of a split view would go after the current page. */
+  const dropTarget = useUi(
+    (state) => state.pageDrag?.target?.docKey === doc.key && state.pageDrag.target.slot === 'view',
+  );
   const key = doc.key;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState<Area | null>(null);
@@ -801,13 +814,17 @@ export function DocumentViewer({ doc, pages, view, sourceHandle }: DocumentViewe
     <div
       ref={scrollRef}
       role="region"
-      aria-label="Page view"
+      aria-label={label}
+      data-page-view={key}
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onClick={onClick}
-      className="h-full w-full touch-pan-x touch-pan-y overflow-auto outline-hidden [scrollbar-gutter:stable] focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
+      className={cn(
+        'h-full w-full touch-pan-x touch-pan-y overflow-auto outline-hidden [scrollbar-gutter:stable] focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus',
+        dropTarget && 'outline-2 outline-solid -outline-offset-2 outline-accent',
+      )}
     >
       {layout ? (
         <div className="relative" style={{ width: layout.width, height: layout.height }}>

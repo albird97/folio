@@ -1,8 +1,11 @@
 import type { DocumentViewState, PageId, PageModel, SourceId } from '@folio/document-model';
 import type { PdfDocumentHandle } from '@folio/pdf-core';
 import { incomingFromFile } from '@folio/platform-adapters';
-import { cn } from '@folio/shared-ui';
+import { cn, ICON } from '@folio/shared-ui';
+import { Plus } from 'lucide-react';
 import {
+  useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -10,28 +13,26 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react';
-import { useWorkspaceContext } from '../context';
+import { createPortal } from 'react-dom';
+import { useUi, useWorkspace, useWorkspaceContext } from '../context';
+import { pagesLabel } from '../store/editing';
+import type { PageDrag } from '../store/ui';
 import type { WorkspaceDocument } from '../store/workspace';
 import { displaySize, pageSource, userRotation } from '../viewer/geometry';
 import { pageFormRevision, PRIORITY, renderCacheKey } from '../viewer/resources';
+import { pageViewSelector } from '../viewer/page-overlays';
 import { ThumbnailView } from '../viewer/thumbnail-view';
 import { useDevicePixelRatio } from '../viewer/use-device-pixel-ratio';
 import { usePageCommands } from '../hooks/use-page-commands';
+import { dropSlot, dropTargetAt, LIST_PADDING, slotTop, THUMBNAIL_SLOT } from './page-drag';
 import { PagesToolbar } from './pages-toolbar';
 
-/** Every thumbnail occupies the same height, so the list virtualizes by arithmetic. */
-export const THUMBNAIL_SLOT = 172;
-const LIST_PADDING = 8;
 const BOX = { width: 128, height: 136 };
 const OVERSCAN = 3;
 /** Pointer travel that turns a press on a thumbnail into a drag. */
 const DRAG_THRESHOLD = 5;
 /** Distance from the list's edge at which a drag scrolls it. */
 const AUTOSCROLL_EDGE = 40;
-
-function slotTop(index: number): number {
-  return LIST_PADDING + index * THUMBNAIL_SLOT;
-}
 
 /** Scrolls the list so the slot is visible; `center` puts it in the middle. */
 function reveal(element: HTMLElement, index: number, center: boolean): void {
@@ -45,36 +46,43 @@ function reveal(element: HTMLElement, index: number, center: boolean): void {
   }
 }
 
-/** The gap a drop at `clientY` lands in: 0 is before the first page. */
-function dropSlot(list: HTMLElement, clientY: number, count: number): number {
-  const y = clientY - list.getBoundingClientRect().top + list.scrollTop - LIST_PADDING;
-  return Math.min(count, Math.max(0, Math.round(y / THUMBNAIL_SLOT)));
-}
-
 interface Drag {
   pointerId: number;
+  /** The thumbnail that has the pointer captured. */
+  element: HTMLElement;
+  startX: number;
   startY: number;
   pageIds: PageId[];
   active: boolean;
 }
 
+/** Where the drag preview goes: below and to the right of the pointer. */
+const previewAt = (x: number, y: number) => `translate(${x + 12}px, ${y + 12}px)`;
+
+const sameTarget = (a: PageDrag['target'], b: PageDrag['target']) =>
+  a === b || (a !== null && b !== null && a.docKey === b.docKey && a.slot === b.slot);
+
 /**
  * The pages panel: thumbnails to move around the document, and the place to
  * select pages and rearrange them (WAI-ARIA multi-select listbox). Pages are
- * reordered by dragging; PDFs dropped between pages are inserted there.
+ * reordered by dragging, and copied by dragging them onto the other
+ * document of a split view; PDFs dropped between pages are inserted there.
  */
 export function ThumbnailsPanel({
   doc,
   pages,
   view,
   sourceHandle,
+  label = 'Pages',
 }: {
   doc: WorkspaceDocument;
   pages: readonly PageModel[];
   view: DocumentViewState;
   sourceHandle(sourceId: SourceId): PdfDocumentHandle | null;
+  /** The list's accessible name (it names the document in a split view). */
+  label?: string;
 }) {
-  const { workspace, adapter } = useWorkspaceContext();
+  const { workspace, adapter, ui } = useWorkspaceContext();
   const docKey = doc.key;
   const commands = usePageCommands(doc);
   const listRef = useRef<HTMLDivElement>(null);
@@ -86,7 +94,17 @@ export function ThumbnailsPanel({
   /** The click that ends a drag must not also select. */
   const suppressClick = useRef(false);
   const [dropAt, setDropAt] = useState<number | null>(null);
-  const autoscroll = useRef<{ frame: number; speed: number } | null>(null);
+  /** The gap pages dragged here from another document would land in. */
+  const incoming = useUi((state) => {
+    const target = state.pageDrag?.target;
+    return target?.docKey === doc.key && target.slot !== 'view' ? target.slot : null;
+  });
+  const splitView = useWorkspace((state) => state.split.on);
+  /** A drag in progress: how many pages (its preview says so) and where it started. */
+  const [dragging, setDragging] = useState<{ count: number; x: number; y: number } | null>(null);
+  const preview = useRef<HTMLDivElement>(null);
+  const copying = useUi((state) => state.pageDrag?.fromKey === doc.key && !!state.pageDrag.target);
+  const autoscroll = useRef<{ element: HTMLElement; frame: number; speed: number } | null>(null);
   const currentIndex = Math.max(
     0,
     pages.findIndex((page) => page.id === view.currentPageId),
@@ -206,18 +224,24 @@ export function ThumbnailsPanel({
     go(next, true);
   };
 
-  // ── Dragging pages to reorder them ──
+  // ── Dragging pages: within the list to move them, onto another document to copy them ──
   const stopAutoscroll = () => {
     if (autoscroll.current) cancelAnimationFrame(autoscroll.current.frame);
     autoscroll.current = null;
   };
-  const runAutoscroll = (speed: number) => {
-    const element = listRef.current;
-    if (!element) return;
-    if (speed === 0) {
-      stopAutoscroll();
-      return;
-    }
+  /** Scrolls a list while the pointer is near its top or bottom edge. */
+  const autoscrollNear = (element: HTMLElement, clientY: number) => {
+    const bounds = element.getBoundingClientRect();
+    const fromTop = clientY - bounds.top;
+    const fromBottom = bounds.bottom - clientY;
+    const speed =
+      fromTop < AUTOSCROLL_EDGE
+        ? -Math.ceil((AUTOSCROLL_EDGE - fromTop) / 4)
+        : fromBottom < AUTOSCROLL_EDGE
+          ? Math.ceil((AUTOSCROLL_EDGE - fromBottom) / 4)
+          : 0;
+    if (speed === 0 || autoscroll.current?.element !== element) stopAutoscroll();
+    if (speed === 0) return;
     if (autoscroll.current) {
       autoscroll.current.speed = speed;
       return;
@@ -227,15 +251,83 @@ export function ThumbnailsPanel({
       element.scrollTop += autoscroll.current.speed;
       autoscroll.current.frame = requestAnimationFrame(step);
     };
-    autoscroll.current = { speed, frame: requestAnimationFrame(step) };
+    autoscroll.current = { element, speed, frame: requestAnimationFrame(step) };
   };
 
+  /** Shows where the pages would land in another document (null: nowhere). */
+  const setTarget = (target: PageDrag['target'], count: number) => {
+    const current = ui.getState().pageDrag;
+    if (current?.fromKey === docKey && sameTarget(current.target, target)) return;
+    ui.getState().setPageDrag({ fromKey: docKey, count, target });
+  };
+
+  /** Ends a drag; Escape and cancelled pointers drop nothing. */
+  const finishDrag = (drop: boolean) => {
+    const current = drag.current;
+    drag.current = null;
+    stopAutoscroll();
+    const slot = dropAt;
+    const target = ui.getState().pageDrag?.target ?? null;
+    setDropAt(null);
+    setDragging(null);
+    ui.getState().setPageDrag(null);
+    if (!current?.active) return;
+    // The click that ends a drag must not also select.
+    suppressClick.current = true;
+    if (current.element.hasPointerCapture(current.pointerId)) {
+      current.element.releasePointerCapture(current.pointerId);
+    }
+    if (!drop) return;
+    if (target) {
+      const into = workspace.getState().documents.find((entry) => entry.key === target.docKey);
+      const shown =
+        into?.editor?.model.pages.findIndex((page) => page.id === into.view?.currentPageId) ?? -1;
+      // The copies are a change of the other document: it becomes the
+      // active one, so Undo takes them back, and the keyboard goes there.
+      state().activate(target.docKey);
+      document
+        .querySelector<HTMLElement>(pageViewSelector(target.docKey))
+        ?.focus({ preventScroll: true });
+      void state().copyPagesToDocument(
+        docKey,
+        current.pageIds,
+        target.docKey,
+        target.slot === 'view' ? shown + 1 : target.slot,
+      );
+      return;
+    }
+    if (slot === null) return;
+    const moving = new Set(current.pageIds);
+    // Where the first moved page lands among the pages that stay.
+    const before = pages.slice(0, slot).filter((page) => !moving.has(page.id)).length;
+    state().movePages(docKey, current.pageIds, before);
+    state().selectPages(docKey, current.pageIds, current.pageIds[0] ?? null);
+  };
+
+  // Escape gives up a drag, before anything else hears the key.
+  const cancelDrag = useEffectEvent(() => finishDrag(false));
+  const isDragging = dragging !== null;
+  useEffect(() => {
+    if (!isDragging) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelDrag();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [isDragging]);
+
   const onPointerDown = (event: PointerEvent<HTMLElement>, index: number) => {
-    if (event.button !== 0 || !canArrange) return;
+    // In a split view, pages can be copied out of a document that cannot be rearranged.
+    if (event.button !== 0 || (!canArrange && !splitView)) return;
     const page = pages[index];
     if (!page) return;
     drag.current = {
       pointerId: event.pointerId,
+      element: event.currentTarget,
+      startX: event.clientX,
       startY: event.clientY,
       // Dragging a selected page moves the whole selection.
       pageIds: selected.has(page.id) ? [...doc.selection.pages] : [page.id],
@@ -248,37 +340,42 @@ export function ThumbnailsPanel({
     const list = listRef.current;
     if (!current || !list || current.pointerId !== event.pointerId) return;
     if (!current.active) {
-      if (Math.abs(event.clientY - current.startY) < DRAG_THRESHOLD) return;
+      const distance = Math.hypot(event.clientX - current.startX, event.clientY - current.startY);
+      if (distance < DRAG_THRESHOLD) return;
       current.active = true;
       event.currentTarget.setPointerCapture(event.pointerId);
+      setDragging({ count: current.pageIds.length, x: event.clientX, y: event.clientY });
     }
-    setDropAt(dropSlot(list, event.clientY, pages.length));
-    const bounds = list.getBoundingClientRect();
-    const fromTop = event.clientY - bounds.top;
-    const fromBottom = bounds.bottom - event.clientY;
-    runAutoscroll(
-      fromTop < AUTOSCROLL_EDGE
-        ? -Math.ceil((AUTOSCROLL_EDGE - fromTop) / 4)
-        : fromBottom < AUTOSCROLL_EDGE
-          ? Math.ceil((AUTOSCROLL_EDGE - fromBottom) / 4)
-          : 0,
-    );
+    // The preview follows the pointer without a render per move.
+    if (preview.current) {
+      preview.current.style.transform = previewAt(event.clientX, event.clientY);
+    }
+    const count = current.pageIds.length;
+    // The preview lets the pointer through, so this finds what is under it.
+    const over = dropTargetAt(document.elementFromPoint(event.clientX, event.clientY));
+    if (!over || over.docKey === docKey) {
+      setTarget(null, count);
+      const inList = over?.kind === 'list';
+      setDropAt(inList && canArrange ? dropSlot(list, event.clientY, pages.length) : null);
+      if (inList) autoscrollNear(list, event.clientY);
+      else stopAutoscroll();
+      return;
+    }
+    setDropAt(null);
+    if (over.kind === 'view') {
+      stopAutoscroll();
+      setTarget({ docKey: over.docKey, slot: 'view' }, count);
+      return;
+    }
+    const into = workspace.getState().documents.find((entry) => entry.key === over.docKey);
+    const slot = dropSlot(over.list, event.clientY, into?.editor?.model.pages.length ?? 0);
+    setTarget({ docKey: over.docKey, slot }, count);
+    autoscrollNear(over.list, event.clientY);
   };
 
   const endDrag = (event: PointerEvent<HTMLElement>, cancelled: boolean) => {
-    const current = drag.current;
-    if (!current || current.pointerId !== event.pointerId) return;
-    drag.current = null;
-    stopAutoscroll();
-    const slot = dropAt;
-    setDropAt(null);
-    if (current.active) suppressClick.current = true;
-    if (!current.active || cancelled || slot === null || !listRef.current) return;
-    const moving = new Set(current.pageIds);
-    // Where the first moved page lands among the pages that stay.
-    const before = pages.slice(0, slot).filter((page) => !moving.has(page.id)).length;
-    state().movePages(docKey, current.pageIds, before);
-    state().selectPages(docKey, current.pageIds, current.pageIds[0] ?? null);
+    if (drag.current?.pointerId !== event.pointerId) return;
+    finishDrag(!cancelled);
   };
 
   // ── Dropping PDF files between pages (browsers; the desktop opens dropped files) ──
@@ -319,6 +416,7 @@ export function ThumbnailsPanel({
     pages.length - 1,
     Math.floor((viewport.top + viewport.height) / THUMBNAIL_SLOT) + OVERSCAN,
   );
+  const indicator = dropAt ?? incoming;
   const indices: number[] = [];
   for (let index = first; index <= last; index += 1) indices.push(index);
   // The current page stays mounted so it keeps the list's single tab stop.
@@ -327,10 +425,15 @@ export function ThumbnailsPanel({
   return (
     <div className="flex h-full flex-col">
       <PagesToolbar doc={doc} commands={commands} />
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto" {...fileDrop}>
+      <div
+        ref={listRef}
+        className="min-h-0 flex-1 overflow-y-auto"
+        data-page-list={docKey}
+        {...fileDrop}
+      >
         <div
           role="listbox"
-          aria-label="Pages"
+          aria-label={label}
           aria-multiselectable
           className="relative"
           style={{ height: slotTop(pages.length) + LIST_PADDING }}
@@ -416,15 +519,30 @@ export function ThumbnailsPanel({
               </div>
             );
           })}
-          {dropAt !== null ? (
+          {indicator !== null ? (
             <div
               aria-hidden
+              data-drop-indicator={indicator}
               className="pointer-events-none absolute inset-x-3 h-0.5 rounded-full bg-accent"
-              style={{ top: slotTop(dropAt) - 1 }}
+              style={{ top: slotTop(indicator) - 1 }}
             />
           ) : null}
         </div>
       </div>
+      {dragging !== null
+        ? createPortal(
+            <div
+              ref={preview}
+              aria-hidden
+              style={{ transform: previewAt(dragging.x, dragging.y) }}
+              className="pointer-events-none fixed top-0 left-0 z-(--z-overlay) flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-ink shadow-pop"
+            >
+              {copying ? <Plus size={ICON.sm} strokeWidth={ICON.stroke} /> : null}
+              {pagesLabel(dragging.count)}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

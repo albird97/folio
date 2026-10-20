@@ -21,6 +21,9 @@ export function PagesToolbar({
   commands: PageCommands;
 }) {
   const selectPages = useWorkspace((state) => state.selectPages);
+  const documents = useWorkspace((state) => state.documents);
+  // Pages copy into the other open documents (split view drags them there).
+  const others = documents.filter((entry) => entry.key !== doc.key && entry.status === 'ready');
   const canArrange = doc.permissions.assemble;
   const count = doc.selection.pages.length;
   const subject = count > 1 ? `${count} pages` : 'page';
@@ -85,6 +88,16 @@ export function PagesToolbar({
           <DropdownMenuItem disabled={!doc.permissions.extract} onSelect={() => commands.split()}>
             Split document…
           </DropdownMenuItem>
+          {others.length > 0 ? <DropdownMenuSeparator /> : null}
+          {others.map((other) => (
+            <DropdownMenuItem
+              key={other.key}
+              disabled={!doc.permissions.extract || !other.permissions.assemble}
+              onSelect={() => commands.copyTo(other.key)}
+            >
+              Copy {subject} to {other.fileName}…
+            </DropdownMenuItem>
+          ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={() =>

@@ -144,10 +144,12 @@ export function CommentsPanel({ doc }: { doc: WorkspaceDocument }) {
         event.currentTarget.closest('ul')?.querySelectorAll<HTMLButtonElement>('button') ?? [],
       );
       const index = items.indexOf(event.currentTarget);
+      // This document's sidebar (a split view has two).
+      const sidebar = event.currentTarget.closest('aside') ?? document;
       deleteAnnotations(doc.key, [annotation.id]);
       requestAnimationFrame(() => {
         const remaining = Array.from(
-          document.querySelectorAll<HTMLButtonElement>('ul[aria-label="Comments"] button'),
+          sidebar.querySelectorAll<HTMLButtonElement>('ul[aria-label="Comments"] button'),
         );
         remaining[Math.min(index, remaining.length - 1)]?.focus();
       });

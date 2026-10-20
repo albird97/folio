@@ -25,6 +25,7 @@ export function Sidebar({
   sourceId,
   sourceHandle,
   onFind,
+  named = false,
 }: {
   doc: WorkspaceDocument;
   pages: readonly PageModel[];
@@ -34,6 +35,8 @@ export function Sidebar({
   sourceId: SourceId | null;
   sourceHandle(sourceId: SourceId): PdfDocumentHandle | null;
   onFind(): void;
+  /** Name the document in the sidebar's labels (split view shows two sidebars). */
+  named?: boolean;
 }) {
   const tab = useUi((state) => state.sidebarTab);
   const setTab = useUi((state) => state.setSidebarTab);
@@ -42,7 +45,7 @@ export function Sidebar({
 
   return (
     <aside
-      aria-label="Sidebar"
+      aria-label={named ? `Sidebar, ${doc.fileName}` : 'Sidebar'}
       className="flex w-64 shrink-0 flex-col border-r border-line bg-surface"
     >
       <Tabs.Root
@@ -87,7 +90,13 @@ export function Sidebar({
           ))}
         </Tabs.List>
         <Tabs.Content value="pages" className="min-h-0 flex-1 outline-hidden">
-          <ThumbnailsPanel doc={doc} pages={pages} view={view} sourceHandle={sourceHandle} />
+          <ThumbnailsPanel
+            doc={doc}
+            pages={pages}
+            view={view}
+            sourceHandle={sourceHandle}
+            label={named ? `Pages, ${doc.fileName}` : 'Pages'}
+          />
         </Tabs.Content>
         <Tabs.Content value="outline" className="min-h-0 flex-1 outline-hidden">
           <OutlinePanel

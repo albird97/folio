@@ -4,6 +4,13 @@ import type { Tool } from '../store/ui';
 import type { WorkspaceDocument } from '../store/workspace';
 import type { PageBox } from './layout';
 
+/**
+ * The page view of a document (it carries the document's key), or of any
+ * document. Split view shows two.
+ */
+export const pageViewSelector = (docKey?: string) =>
+  docKey === undefined ? '[data-page-view]' : `[data-page-view="${docKey}"]`;
+
 /** What a layer drawn over one page of the viewer gets. */
 export interface PageOverlayProps {
   doc: WorkspaceDocument;

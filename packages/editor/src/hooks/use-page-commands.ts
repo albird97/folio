@@ -19,6 +19,8 @@ export interface PageCommands {
   insertFiles(files: IncomingFile[], index: number): Promise<void>;
   extract(): void;
   split(): void;
+  /** Asks where in another open document copies of the pages go. */
+  copyTo(toKey: string): void;
 }
 
 /** "pages 2–4" / "page 7" / "5 pages", for file names. */
@@ -167,6 +169,14 @@ export function usePageCommands(doc: WorkspaceDocument | null): PageCommands {
       },
       split() {
         if (key) ui.getState().openDialog({ kind: 'split', docKey: key });
+      },
+      copyTo(toKey) {
+        if (!key) return;
+        if (!current()?.permissions.extract) {
+          workspace.getState().showNotice(PERMISSION_MESSAGES.extract);
+          return;
+        }
+        ui.getState().openDialog({ kind: 'copy-pages', fromKey: key, pageIds: targets(), toKey });
       },
     }),
     [adapter, workspace, ui, key, current, targets, afterTargets, insert],

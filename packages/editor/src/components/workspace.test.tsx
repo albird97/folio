@@ -151,6 +151,35 @@ describe('workspace', () => {
     });
   });
 
+  describe('split view', () => {
+    it('shows two documents side by side and follows the pane in use', async () => {
+      const { workspace, ui, opening } = setup();
+      opening.locked = true;
+      await act(() => workspace.getState().openFiles([file('a.pdf'), file('b.pdf')]));
+      expect(screen.queryByRole('region', { name: /^Left pane/ })).toBeNull();
+      act(() => {
+        fireEvent.keyDown(document.body, { key: '3', code: 'Digit3', ctrlKey: true, altKey: true });
+      });
+      expect(ui.getState().splitView).toBe(true);
+      const left = await screen.findByRole('region', { name: 'Left pane, a.pdf' });
+      const right = screen.getByRole('region', { name: 'Right pane, b.pdf' });
+      expect(left.dataset.active).toBe('true');
+      // Both ask for their password; only the pane in use takes focus.
+      expect(screen.getAllByLabelText('Password')).toHaveLength(2);
+      expect(left.contains(document.activeElement)).toBe(true);
+
+      fireEvent.pointerDown(right);
+      expect(workspace.getState().activeKey).toBe(workspace.getState().documents[1]!.key);
+      expect(right.dataset.active).toBe('true');
+      expect(tab('b.pdf').getAttribute('aria-current')).toBe('page');
+
+      // The toolbar button turns it off again.
+      fireEvent.click(screen.getByRole('button', { name: 'Show two documents side by side' }));
+      expect(screen.queryByRole('region', { name: /^Left pane/ })).toBeNull();
+      expect(screen.getByRole('main').getAttribute('aria-label')).toBe('b.pdf');
+    });
+  });
+
   describe('shortcuts while typing a password', () => {
     async function passwordField(options: Parameters<typeof setup>[0]) {
       const stores = setup(options);
