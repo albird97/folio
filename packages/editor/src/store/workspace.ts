@@ -331,13 +331,14 @@ export interface WorkspaceState {
   /** Records that the document's current state was saved. */
   markSaved(key: string): void;
   /**
-   * Points Save at a file (after Save As) whose contents hash to `sha256`.
-   * `release` gives up the file's handle when the document closes.
+   * Points Save at a file (after Save or Save As) with the contents just
+   * written (`written`): the document's file name, size and hash are then
+   * that file's. `release` gives up the file's handle when the document closes.
    */
   setSaveTarget(
     key: string,
     target: { handle: string; name: string } | null,
-    sha256: string | null,
+    written: { sha256: string; byteLength: number } | null,
     release?: () => void,
   ): void;
   /** Re-creates a document from a crash-recovery record. */
@@ -1730,7 +1731,7 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         update(key, (doc) => (doc.editor ? { editor: markEditorSaved(doc.editor) } : null));
       },
 
-      setSaveTarget(key, target, sha256, release) {
+      setSaveTarget(key, target, written, release) {
         const entry = resources.get(key);
         if (!entry) {
           release?.();
@@ -1741,8 +1742,9 @@ export function createWorkspaceStore(engine: PdfEngine): WorkspaceStore {
         entry.releaseSaveTarget = release ?? null;
         update(key, () => ({
           saveTarget: target,
-          diskSha256: sha256,
+          diskSha256: written?.sha256 ?? null,
           ...(target ? { fileName: target.name } : {}),
+          ...(written ? { byteLength: written.byteLength } : {}),
         }));
       },
 

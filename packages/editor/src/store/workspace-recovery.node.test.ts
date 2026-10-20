@@ -207,18 +207,34 @@ describe('workspace store: save targets', () => {
     const { store, key } = await openFixture('basic-3-pages.pdf');
     const first = vi.fn();
     const second = vi.fn();
-    store.getState().setSaveTarget(key, { handle: 'h1', name: 'Copy.pdf' }, 'a'.repeat(64), first);
+    const sourceSha256 = Object.values(doc(store, key).editor!.model.sources)[0]!.sha256;
+    store
+      .getState()
+      .setSaveTarget(
+        key,
+        { handle: 'h1', name: 'Copy.pdf' },
+        { sha256: 'a'.repeat(64), byteLength: 1234 },
+        first,
+      );
     expect(doc(store, key)).toMatchObject({
       saveTarget: { handle: 'h1', name: 'Copy.pdf' },
       diskSha256: 'a'.repeat(64),
       fileName: 'Copy.pdf',
+      byteLength: 1234,
     });
+    // The opened file stays the document's source: recovery keeps its bytes by this hash.
+    expect(Object.values(doc(store, key).editor!.model.sources)[0]!.sha256).toBe(sourceSha256);
     store
       .getState()
-      .setSaveTarget(key, { handle: 'h2', name: 'Final.pdf' }, 'b'.repeat(64), second);
+      .setSaveTarget(
+        key,
+        { handle: 'h2', name: 'Final.pdf' },
+        { sha256: 'b'.repeat(64), byteLength: 5678 },
+        second,
+      );
     expect(first).toHaveBeenCalledOnce();
     expect(second).not.toHaveBeenCalled();
-    expect(doc(store, key).fileName).toBe('Final.pdf');
+    expect(doc(store, key)).toMatchObject({ fileName: 'Final.pdf', byteLength: 5678 });
 
     await store.getState().close(key);
     await vi.waitFor(() => expect(second).toHaveBeenCalledOnce());

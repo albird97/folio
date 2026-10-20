@@ -41,7 +41,10 @@ export function useSave(): (key: string) => Promise<boolean> {
         } else if (result.status === 'saved') {
           const state = workspace.getState();
           state.markSaved(key);
-          state.setSaveTarget(key, target, await sha256Hex(bytes));
+          state.setSaveTarget(key, target, {
+            sha256: await sha256Hex(bytes),
+            byteLength: bytes.byteLength,
+          });
           state.showNotice(
             [
               `Saved ${target.name}.`,

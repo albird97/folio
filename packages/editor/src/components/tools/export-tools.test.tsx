@@ -210,6 +210,50 @@ describe('reduce file size dialog', () => {
     expect(workspace.getState().notice?.message).toBe('Saved doc (compressed).pdf.');
   });
 
+  it('compares with the document as it is now, not as it was opened', async () => {
+    // A small scan that grew with a large added image.
+    const { open, workspace, doc, exports } = await setup({ byteLength: 46 * 1024 });
+    const firstPage = doc().editor!.model.pages[0]!.id;
+    act(() => workspace.getState().rotatePages(doc().key, [firstPage], 90));
+    workspace.setState({
+      exportDocument: async (_key, request = {}) => {
+        exports.push(request);
+        return {
+          bytes: new Uint8Array((request.compression ? 250 : 1536) * 1024),
+          warnings: [],
+        };
+      },
+    });
+    open('reduce-file-size');
+    const reduce = dialog('Reduce file size');
+    fireEvent.click(within(reduce).getByRole('radio', { name: 'Small' }));
+    fireEvent.click(within(reduce).getByRole('button', { name: 'Reduce file size' }));
+    await within(reduce).findByText('1.5 MB → 250 KB (−84%)', {}, LOADING_EXPORTER);
+    // First as saving would write it, then compressed.
+    expect(exports.map((request) => request.compression?.images ?? null)).toEqual([
+      null,
+      { maxSize: 1400, quality: 0.65 },
+    ]);
+    expect(within(reduce).getByRole('button', { name: 'Save as…' })).toBeTruthy();
+  });
+
+  it('says when a changed document cannot get smaller', async () => {
+    const { open, workspace, doc, exportReturns } = await setup({ byteLength: 46 * 1024 });
+    const firstPage = doc().editor!.model.pages[0]!.id;
+    act(() => workspace.getState().rotatePages(doc().key, [firstPage], 90));
+    // Compressing gains nothing over saving as it is.
+    exportReturns({ bytes: new Uint8Array(1536 * 1024), warnings: [] });
+    open('reduce-file-size');
+    const reduce = dialog('Reduce file size');
+    fireEvent.click(within(reduce).getByRole('button', { name: 'Reduce file size' }));
+    await within(reduce).findByText(
+      'This document is already as small as Folio can make it.',
+      {},
+      LOADING_EXPORTER,
+    );
+    expect(within(reduce).queryByRole('button', { name: 'Save as…' })).toBeNull();
+  });
+
   it('says when a document cannot get smaller, and keeps images the author protects', async () => {
     const { open, exports, exportReturns } = await setup({
       byteLength: 1024,
