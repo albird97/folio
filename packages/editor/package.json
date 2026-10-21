@@ -16,7 +16,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0",
+    "@anthropic-ai/sdk": "^0.137.0",
     "@folio/document-model": "workspace:*",
     "@folio/pdf-core": "workspace:*",
     "@folio/platform-adapters": "workspace:*",

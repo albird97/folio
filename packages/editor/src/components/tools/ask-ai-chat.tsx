@@ -47,6 +47,11 @@ function usageText(usage: AiUsage): string {
   return `${input} in${cached}, ${usage.output.toLocaleString()} out`;
 }
 
+/** What an unrecognized failure was, small and selectable, for reporting it. */
+function FailureDetail({ detail }: { detail: string }) {
+  return <p className="mt-1 font-mono text-2xs break-all select-text">Details: {detail}</p>;
+}
+
 function problemMessage(problem: AiProblem): string {
   switch (problem.kind) {
     case 'no-text':
@@ -196,7 +201,9 @@ function Turn({
                 </Button>
               ) : null
             }
-          />
+          >
+            {turn.failure.detail ? <FailureDetail detail={turn.failure.detail} /> : null}
+          </Banner>
         ) : null}
       </div>
       {turn.status !== 'answering' && text.trim() ? (
@@ -354,7 +361,11 @@ export function AskAiChat({
               </Button>
             ) : null
           }
-        />
+        >
+          {conversation.problem.kind === 'failed' && conversation.problem.failure.detail ? (
+            <FailureDetail detail={conversation.problem.failure.detail} />
+          ) : null}
+        </Banner>
       ) : null}
 
       <ol

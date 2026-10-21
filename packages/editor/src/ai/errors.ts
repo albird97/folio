@@ -1,4 +1,5 @@
 import {
+  AnthropicError,
   APIConnectionError,
   APIConnectionTimeoutError,
   APIError,
@@ -15,16 +16,45 @@ export interface AiFailure {
   message: string;
   /** Setting up the key again is the way out. */
   fixKey: boolean;
+  /**
+   * For failures Folio does not recognize: the error's type and message, so
+   * the user can report what went wrong. Never document text (errors carry
+   * none) and never the API's own message.
+   */
+  detail?: string;
 }
 
 const failure = (message: string, fixKey = false): AiFailure => ({ message, fixKey });
+
+const MAX_DETAIL = 200;
+
+/** "TypeError: …", on one line and short. */
+function detailOf(error: unknown): string {
+  const text =
+    error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : `${typeof error}: ${String(error)}`;
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > MAX_DETAIL ? `${line.slice(0, MAX_DETAIL - 1)}…` : line;
+}
 
 /**
  * Turns what a request to Anthropic failed with into a message for the
  * user. The SDK's typed errors are checked most specific first; errors in
  * the middle of an answer carry no HTTP status, only the API's error type.
  */
-export function describeAiError(error: unknown): AiFailure {
+export function describeAiError(error: unknown, depth = 0): AiFailure {
+  // The SDK's message stream wraps anything that fails while an answer
+  // streams (Folio's own transport errors included) in a plain AnthropicError
+  // that keeps the original as its cause.
+  if (
+    error instanceof AnthropicError &&
+    !(error instanceof APIError) &&
+    error.cause !== undefined &&
+    depth < 3
+  ) {
+    return describeAiError(error.cause, depth + 1);
+  }
   if (error instanceof AiTransportError) {
     switch (error.code) {
       case 'invalid-key':
@@ -87,5 +117,8 @@ export function describeAiError(error: unknown): AiFailure {
   if (error instanceof APIError) {
     return failure('Anthropic’s service had a problem. Try again.');
   }
-  return failure('Something went wrong while asking Claude. Try again.');
+  return {
+    ...failure('Something went wrong while asking Claude. Try again.'),
+    detail: detailOf(error),
+  };
 }

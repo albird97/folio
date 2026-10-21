@@ -1,4 +1,5 @@
 import {
+  AnthropicError,
   APIConnectionError,
   APIConnectionTimeoutError,
   APIError,
@@ -56,5 +57,24 @@ describe('Ask Claude error messages', () => {
     }
     expect(apiError(401, 'authentication_error')).toBeInstanceOf(AuthenticationError);
     expect(apiError(429, 'rate_limit_error')).toBeInstanceOf(RateLimitError);
+  });
+
+  it('looks inside the plain errors the message stream wraps failures in', () => {
+    // The stream wraps what failed while an answer streamed, keeping it as the cause.
+    const wrapped = new AnthropicError('The answer stopped part-way.');
+    (wrapped as { cause?: unknown }).cause = new AiTransportError('network', 'x');
+    expect(describeAiError(wrapped).message).toContain('could not reach Anthropic');
+    expect(describeAiError(wrapped).detail).toBeUndefined();
+  });
+
+  it('says what an unrecognized failure was, briefly, so it can be reported', () => {
+    const failure = describeAiError(new TypeError('body.getReader is not a function'));
+    expect(failure.message).toContain('Something went wrong');
+    expect(failure.detail).toBe('TypeError: body.getReader is not a function');
+    const long = describeAiError(new Error(`line one\n${'x'.repeat(500)}`));
+    expect(long.detail).toHaveLength(200);
+    expect(long.detail).not.toContain('\n');
+    // Recognized failures need no details.
+    expect(describeAiError(apiError(529, 'overloaded_error')).detail).toBeUndefined();
   });
 });
