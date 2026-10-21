@@ -35,9 +35,9 @@ target adds a thin platform adapter.
 > - **Chrome tools:** the side panel rotates and extracts pages, turns pages into images and
 >   extracts text; the popup saves the current page as PDF through Chrome's print dialog; any
 >   document can be handed to the desktop app (native messaging), which asks before opening it.
-> - On macOS and Windows, the native integrations (dialogs, Save, printing, menus, recent files,
->   recovery, single instance, native messaging) are built in CI and tested on Linux, but **not
->   yet verified on a real Mac or Windows PC**.
+> - The native integrations (dialogs, Save, printing, menus, recent files, recovery, single
+>   instance, native messaging) are built in CI and tested on Linux, **partly verified on a real
+>   Mac** and **not yet verified on a real Windows PC**.
 >
 > See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the roadmap and
 > [PLATFORM_CAPABILITIES.md](PLATFORM_CAPABILITIES.md) for the support matrix.
@@ -47,6 +47,110 @@ ask a question (then the text of the chosen pages goes to Anthropic with your ow
 desktop app makes no other network requests, except checking for updates when you choose **Check
 for Updates…** or turn on automatic checks; the extension downloads a PDF only from a site you
 allow, when you ask it to.
+
+## Download
+
+The newest release of the desktop app, for anyone who has access to this repository:
+
+| System  | Installer                                                                                                                   |
+| ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| macOS   | [**Folio-macOS.dmg**](https://github.com/albird97/folio/releases/latest/download/Folio-macOS.dmg) (Intel and Apple silicon) |
+| Windows | [**Folio-Windows-setup.exe**](https://github.com/albird97/folio/releases/latest/download/Folio-Windows-setup.exe) (64-bit)  |
+
+All files of every release, including the Chrome extension zip, are on the
+[Releases page](https://github.com/albird97/folio/releases).
+
+- The repository is private: sign in to GitHub with an account that has access, or the links
+  show "404".
+- The installers are not code-signed yet, so the system warns the first time:
+  - **macOS:** open the DMG and drag Folio to Applications. The first time, right-click Folio
+    and choose **Open**, then **Open** again (or **System Settings → Privacy & Security → Open
+    Anyway**).
+  - **Windows:** run the setup. If SmartScreen says "Windows protected your PC", click **More
+    info → Run anyway**. Folio installs for the current user only; no administrator rights are
+    needed.
+
+## Features
+
+The screenshots show the desktop app; the Chrome extension's editor looks and works the same.
+
+### Read, search and annotate
+
+Open one or more PDFs as tabs. The page list on the left shows thumbnails, bookmarks and
+comments; the Properties panel on the right shows the document's details. Highlight, underline or
+strike through text, add notes, draw, add shapes, text and pictures from the toolbar, and undo any
+change.
+
+### Fill in forms
+
+Forms are filled in right on the page: text fields, check boxes, radio buttons and lists. **Save**
+keeps the values in the PDF, so other PDF apps see them too.
+
+![Filling in a form](docs/screenshots/forms.png)
+
+### Sign
+
+**Tools → Add a signature…**: draw your signature, type your name or choose a picture of it, then
+click where it goes. Move and resize it like any other item. Folio can remember up to five
+signatures on your device. (It is a picture of a signature, not a digital certificate.)
+
+<p>
+  <img src="docs/screenshots/signature.png" alt="Typing a signature" width="49%">
+  <img src="docs/screenshots/signature-placed.png" alt="The signature placed on the page" width="49%">
+</p>
+
+### Page numbers and watermarks
+
+**Tools → Page numbers…** and **Tools → Watermark…** add page numbers or a text watermark such as
+"DRAFT" to every page (or a range). Change or remove them later in the Properties panel.
+
+![A DRAFT watermark and page numbers](docs/screenshots/stamps.png)
+
+### Make scanned pages searchable (OCR)
+
+**Tools → Recognize text (OCR)…** reads the text on scanned pages, on your device (English,
+Indonesian and Chinese). Then you can search, select and copy that text, and it is saved with the
+document.
+
+![Searching a scanned page after OCR](docs/screenshots/ocr.png)
+
+### Two documents side by side
+
+The **split view** button in the toolbar shows two documents next to each other, each with its own
+page list. Select pages on one side and drag them into the other document's page list to **copy**
+them there (the original stays as it is), like in Preview on a Mac. Without dragging: the page
+list's **⋯ → Copy pages to …**.
+
+![Two documents side by side](docs/screenshots/split-view.png)
+
+### Tools
+
+The **Tools** menu has everything beyond reading and annotating: signatures, page numbers,
+watermarks, OCR, exporting pages as images (PNG or JPEG) or the text (TXT), reducing the file
+size, password protection and Ask Claude. The page list's buttons insert, rotate, duplicate,
+delete, extract and split pages.
+
+![The Tools menu](docs/screenshots/tools.png)
+
+### Password protection
+
+**Tools → Password protection…** saves a protected copy: require a password to open it, and/or
+restrict printing, copying and changes. The open document stays as it is, and Folio does not keep
+the passwords.
+
+![Password protection](docs/screenshots/protect.png)
+
+### Ask Claude (optional)
+
+**Tools → Ask Claude about this document…** lets you ask questions about the document, summarize
+it or find things in it, with your own Anthropic API key. It is off until you turn it on, and
+nothing is sent until you ask; then only the text of the pages and your question go to
+Anthropic.
+
+![Turning on Ask Claude](docs/screenshots/ask-claude.png)
+
+The screenshots are taken from test documents by `node docs/screenshots/take.mjs` (after
+`pnpm build:desktop:web`).
 
 ## Repository layout
 
@@ -426,7 +530,9 @@ The NSIS installer installs per user. Unsigned installers trigger SmartScreen wa
 the macOS and Windows installers with the release overlay `tauri.release.conf.json`, signs the
 updater artifacts with the `TAURI_SIGNING_PRIVATE_KEY` secrets, and attaches them, `latest.json`
 and the Chrome extension zip to a **draft** GitHub release that you publish by hand. The release
-notes come from the annotated tag's message. Normal builds need no key.
+notes come from the annotated tag's message. Normal builds need no key. It also adds copies
+named `Folio-macOS.dmg` and `Folio-Windows-setup.exe`, which the [Download](#download) links
+point to; they always lead to the newest published (not draft) release.
 
 The app's update feed is the single value `plugins.updater.endpoints` in
 `apps/desktop/src-tauri/tauri.conf.json` (this repository's latest release). **While the

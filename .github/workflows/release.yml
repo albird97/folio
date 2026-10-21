@@ -187,3 +187,47 @@ jobs:
               --data-binary "@${zip}" \
               "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${name}"
           done
+
+  # The README links to releases/latest/download/<name>: copies of the
+  # installers under names that do not change from version to version.
+  stable-names:
+    name: Installers under stable names
+    needs: [draft, desktop]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Copy the DMG and the Windows installer under stable names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.draft.outputs.id }}
+        run: |
+          assets="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")"
+          copy() {
+            pattern="$1"
+            stable="$2"
+            source="$(jq -r --arg p "${pattern}" '[.[] | select(.name | test($p))][0] // empty | "\(.id) \(.name)"' <<<"${assets}")"
+            if [ -z "${source}" ]; then
+              echo "::error::No release asset matches ${pattern}."
+              exit 1
+            fi
+            id="${source%% *}"
+            # A rerun replaces the copy made before.
+            jq -r --arg n "${stable}" '.[] | select(.name == $n) | .id' <<<"${assets}" |
+              while read -r old; do
+                gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${old}"
+              done
+            curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/octet-stream" \
+              -o "${stable}" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${id}"
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@${stable}" \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${stable}" > /dev/null
+          }
+          copy '_universal\.dmg$' Folio-macOS.dmg
+          copy '_x64-setup\.exe$' Folio-Windows-setup.exe
