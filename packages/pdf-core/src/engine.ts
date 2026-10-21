@@ -295,6 +295,31 @@ function withExtraText(
   };
 }
 
+/**
+ * A page's text content, as `page.getTextContent` returns it. PDF.js reads
+ * its stream with `for await`, which WebKit (Safari and the macOS webview)
+ * does not support for a `ReadableStream`, so this reads it with a reader.
+ */
+async function readTextContent(page: PDFPageProxy): Promise<TextContentLike> {
+  const reader = page.streamTextContent({ includeMarkedContent: false }).getReader();
+  const items: Array<TextContentLike['items'][number]> = [];
+  const styles: Record<string, unknown> = Object.create(null);
+  let lang: string | null = null;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const part = value as TextContentLike & { lang?: string | null };
+      lang ??= part.lang ?? null;
+      Object.assign(styles, part.styles);
+      items.push(...part.items);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { items, styles, lang } as TextContentLike;
+}
+
 function classify(error: unknown, usedPassword: boolean): PdfError {
   if (error instanceof PdfError) return error;
   if (error instanceof PasswordException) {
@@ -469,9 +494,7 @@ class PdfJsDocumentHandle implements PdfDocumentHandle {
       this.#textCache.set(pageIndex, cached);
       return cached;
     }
-    const content = this.#getPage(pageIndex).then(
-      (page) => page.getTextContent({ includeMarkedContent: false }) as Promise<TextContentLike>,
-    );
+    const content = this.#getPage(pageIndex).then(readTextContent);
     content.catch(() => this.#textCache.delete(pageIndex));
     this.#textCache.set(pageIndex, content);
     if (this.#textCache.size > TEXT_CACHE_SIZE) {

@@ -94,6 +94,22 @@ describe('text extraction', () => {
     await handle.destroy();
   });
 
+  it('reads text where streams cannot be iterated with for await (WebKit)', async () => {
+    const proto = ReadableStream.prototype as unknown as Record<symbol, unknown>;
+    const iterate = Object.getOwnPropertyDescriptor(proto, Symbol.asyncIterator);
+    delete proto[Symbol.asyncIterator];
+    try {
+      const handle = await engine.open(readFixture('outline-and-text.pdf'));
+      const text = await handle.getPageText(2);
+      expect(text.items.map((item) => item.str).join(' ')).toContain(
+        'Foxes visit the Café at dawn.',
+      );
+      await handle.destroy();
+    } finally {
+      if (iterate) Object.defineProperty(proto, Symbol.asyncIterator, iterate);
+    }
+  });
+
   it('rejects pages that do not exist', async () => {
     const handle = await engine.open(readFixture('basic-3-pages.pdf'));
     await expect(handle.getPageText(3)).rejects.toThrow(RangeError);
